@@ -8,7 +8,9 @@
 !collector/__main__.py
 !collector/events.py
 !collector/pipeline.py
+!collector/silver.py
 !collector/sources.py
+!collector/spool.py
 !collector/test_collection.py
 !collector/schema.sql
 !collector/requirements.txt

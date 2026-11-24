@@ -10,13 +10,40 @@ from google.auth.transport.requests import AuthorizedSession
 from google.oauth2.credentials import Credentials
 
 from tools.channel_probe.providers import gmail_get
-from .events import COMPANY, DISCORD_CHANNEL, GMAIL_LABEL, ROOT, already_received, atomic_json, make_event, stage, status
+from .events import COMPANY, DISCORD_CHANNEL, GMAIL_LABEL, ROOT, make_event, status
+from .spool import CaptureStore, Checkpoint, Scope
 
 
 def human_message(msg):
     author = msg.get("author") or {}
     return bool(author.get("id") and not author.get("bot") and not msg.get("webhook_id")
                 and msg.get("type", 0) in (0, 19))
+
+
+def discord_event(msg, raw, origin, scope, thread, channel_name=None):
+    if msg.get("channel_id") != scope.source or not human_message(msg):
+        return None
+    return make_event("discord", scope.connection, msg["id"], origin, raw,
+                      channel_id=scope.source, is_thread=thread, channel_name=channel_name)
+
+
+def init_discord_checkpoint(store, root, scope, starting_position):
+    current = store.checkpoint(scope)
+    if current is not None:
+        return current
+    legacy = root / "cursors" / f"discord-{scope.company}-{scope.source}.json"
+    position = str(int(json.loads(legacy.read_bytes()))) if legacy.exists() else starting_position
+    return store.initialize(scope, Checkpoint(position))
+
+
+def save_discord_history(store, scope, checkpoint, page, thread, channel_name=None):
+    messages = sorted(page, key=lambda msg: int(msg["id"]))
+    events = (discord_event(msg, msg, "discord_history", scope, thread, channel_name) for msg in messages)
+    position = messages[-1]["id"]
+    if int(position) <= int(checkpoint.position):
+        raise ValueError("Discord history did not advance")
+    return store.save_page(scope, checkpoint, (e for e in events if e is not None),
+                           advance=Checkpoint(position))
 
 
 async def run_discord():
@@ -26,43 +53,34 @@ async def run_discord():
     intents.guilds = intents.guild_messages = intents.message_content = True
     client = discord.Client(intents=intents, enable_debug_events=True, max_messages=None)
     fail = asyncio.get_running_loop().create_future()
-    cursor_file = ROOT / "cursors" / f"discord-{COMPANY}-{channel_id}.json"
-    if not cursor_file.exists():
-        atomic_json(cursor_file, str(discord.utils.time_snowflake(datetime.now(timezone.utc))))
+    store = CaptureStore(ROOT)
+    starting_position = str(discord.utils.time_snowflake(datetime.now(timezone.utc)))
     channel = None
     history_task = None
 
-    async def record(msg, raw, origin, guild, thread):
-        if msg.get("channel_id") != str(channel_id) or not human_message(msg):
-            return
-        event = make_event("discord", str(guild), msg["id"], origin, raw,
-                           channel_id=str(channel_id), is_thread=thread)
-        if await asyncio.to_thread(stage, ROOT, event):
-            print(f"수집 discord event={event['event_id']} {origin}", flush=True)
-
     async def history():
-        # Only REST-confirmed pages advance this cursor. A later live event cannot skip a gap.
-        cursor = int(json.loads(cursor_file.read_text()))
+        scope = Scope(COMPANY, "discord", str(channel.guild.id), str(channel_id))
+        init_discord_checkpoint(store, ROOT, scope, starting_position)
         while True:
-            await asyncio.sleep(15)
-            if not client.is_ready() or channel is None:
-                continue
-            try:
-                can_read = channel.permissions_for(channel.guild.me).read_message_history
-                if can_read:
-                    while True:
-                        page = await client.http.logs_from(channel_id, 100, after=cursor)
+            if client.is_ready():
+                try:
+                    can_read = channel.permissions_for(channel.guild.me).read_message_history
+                    checkpoint = store.checkpoint(scope)
+                    if not can_read:
+                        store.save_page(scope, checkpoint, issues=[("history_permission_missing", checkpoint.position)])
+                    while can_read:
+                        page = await client.http.logs_from(channel_id, 100, after=int(checkpoint.position))
                         if not page:
                             break
-                        for msg in sorted(page, key=lambda m: int(m["id"])):
-                            await record(msg, msg, "discord_history", channel.guild.id, isinstance(channel, discord.Thread))
-                        cursor = max(int(m["id"]) for m in page)
-                        await asyncio.to_thread(atomic_json, cursor_file, str(cursor), replace=True)
-                        if len(page) < 100:
+                        saved = await asyncio.to_thread(save_discord_history, store, scope, checkpoint, page,
+                                                        isinstance(channel, discord.Thread), channel.name)
+                        if not saved or len(page) < 100:
                             break
-                status("discord", "ready", channel_id=str(channel_id), history=bool(can_read))
-            except discord.HTTPException as exc:
-                status("discord", "live_history_retry", channel_id=str(channel_id), http=exc.status)
+                        checkpoint = store.checkpoint(scope)
+                    status("discord", "ready", channel_id=str(channel_id), history=bool(can_read))
+                except discord.HTTPException as exc:
+                    status("discord", "live_history_retry", channel_id=str(channel_id), http=exc.status)
+            await asyncio.sleep(15)
 
     def history_done(task):
         if not task.cancelled() and task.exception() and not fail.done():
@@ -97,7 +115,10 @@ async def run_discord():
                 msg = raw["d"]
                 if msg.get("guild_id") and msg.get("channel_id") == str(channel_id):
                     thread = msg.get("channel_type") in (10, 11, 12) or isinstance(channel, discord.Thread)
-                    await record(msg, raw, "discord_gateway", msg["guild_id"], thread)
+                    scope = Scope(COMPANY, "discord", str(msg["guild_id"]), str(channel_id))
+                    event = discord_event(msg, raw, "discord_gateway", scope, thread, getattr(channel, "name", None))
+                    if event and await asyncio.to_thread(store.stage, event):
+                        print(f"수집 discord event={event['event_id']} discord_gateway", flush=True)
         except Exception as exc:
             if not fail.done():
                 fail.set_exception(exc)
@@ -117,38 +138,89 @@ async def run_discord():
             await asyncio.gather(connection, return_exceptions=True)
 
 
-def poll_gmail(session, mailbox, label_id):
-    page_token = None
-    while True:
+def gmail_candidate(session, store, mailbox, label_id, ident):
+    event = make_event("gmail", mailbox, ident, "gmail_api", {}, label=GMAIL_LABEL)
+    if store.contains(event["event_id"]):
+        return None, None
+    url = "https://gmail.googleapis.com/gmail/v1/users/me/messages/" + ident
+    for fmt in ("minimal", "full"):
+        response = session.get(url, params={"format": fmt}, timeout=15)
+        if response.status_code == 404:
+            return None, ("message_unavailable", ident)
+        response.raise_for_status()
+        raw = response.json()
+        if label_id not in raw.get("labelIds", []):
+            return None, ("label_removed", ident)
+    if raw["id"] != ident:
+        raise ValueError("Gmail source ID mismatch")
+    event["raw"] = raw
+    return event, None
+
+
+def save_gmail_page(session, store, scope, state, ids, advance):
+    # Large MIME messages are persisted individually. Commit the last item and
+    # the final cursor together; a crash earlier will re-read this range.
+    ids = list(dict.fromkeys(ids))
+    for index, ident in enumerate(ids):
+        event, issue = gmail_candidate(session, store, scope.connection, scope.source, ident)
+        if not store.save_page(scope, state, [event] if event else (),
+                               issues=[issue] if issue else (),
+                               advance=advance if index == len(ids) - 1 else None):
+            return False
+    return True if ids else store.save_page(scope, state, advance=advance)
+
+
+def gmail_baseline(session):
+    return Checkpoint(str(int(gmail_get(session, "profile")["historyId"])), "bootstrap")
+
+
+def poll_gmail(session, mailbox, label_id, store):
+    scope = Scope(COMPANY, "gmail", mailbox, label_id)
+    state = store.checkpoint(scope)
+    if state is None:
+        state = store.initialize(scope, gmail_baseline(session))
+    if state.phase == "bootstrap":
         params = {"labelIds": label_id, "maxResults": 100}
-        if page_token:
-            params["pageToken"] = page_token
-        page = gmail_get(session, "messages", **params)
-        for entry in page.get("messages", []):
-            event = make_event("gmail", mailbox, entry["id"], "gmail_api", {}, label=GMAIL_LABEL)
-            if already_received(ROOT, event):
-                continue
-            # Labels may change between listing and fetching. Never fetch full content
-            # for a message that is already known to have lost the selected label.
-            item = "messages/" + entry["id"]
-            meta = session.get("https://gmail.googleapis.com/gmail/v1/users/me/" + item,
-                               params={"format":"minimal"}, timeout=15)
-            if meta.status_code == 404:
-                continue
-            meta.raise_for_status()
-            if label_id not in meta.json().get("labelIds", []):
-                continue
-            resp = session.get("https://gmail.googleapis.com/gmail/v1/users/me/" + item,
-                               params={"format":"full"}, timeout=15)
-            if resp.status_code == 404:
-                continue
-            resp.raise_for_status()
-            event["raw"] = resp.json()
-            if label_id in event["raw"].get("labelIds", []) and stage(ROOT, event):
-                print(f"수집 gmail event={event['event_id']}", flush=True)
-        page_token = page.get("nextPageToken")
-        if not page_token:
-            break
+        while True:
+            page = gmail_get(session, "messages", **params)
+            token = page.get("nextPageToken")
+            ids = [entry["id"] for entry in page.get("messages", [])]
+            active = Checkpoint(state.position)
+            if not save_gmail_page(session, store, scope, state, ids, None if token else active):
+                return "sync_retry"
+            if not token:
+                state = active
+                break
+            params["pageToken"] = token
+
+    params = {"startHistoryId": state.position, "labelId": label_id, "maxResults": 100,
+              "historyTypes": ["messageAdded", "labelAdded"]}
+    while True:
+        response = session.get("https://gmail.googleapis.com/gmail/v1/users/me/history",
+                               params=params, timeout=15)
+        if response.status_code == 404:
+            store.save_page(scope, state, advance=gmail_baseline(session),
+                            issues=[("history_expired", state.position)])
+            return "resync_pending"
+        response.raise_for_status()
+        page = response.json()
+        ids = []
+        for change in page.get("history", []):
+            ids.extend(item["message"]["id"] for item in change.get("messagesAdded", []))
+            ids.extend(item["message"]["id"] for item in change.get("labelsAdded", [])
+                       if label_id in item["labelIds"])
+        token = page.get("nextPageToken")
+        advance = None
+        if not token:
+            position = int(page["historyId"])
+            if position < int(state.position):
+                raise ValueError("Gmail history position regressed")
+            advance = Checkpoint(str(position))
+        if not save_gmail_page(session, store, scope, state, ids, advance):
+            return "sync_retry"
+        if not token:
+            return "ready"
+        params["pageToken"] = token
 
 
 def run_gmail():
@@ -157,6 +229,7 @@ def run_gmail():
     if set(saved.get("scopes", [])) != set(scopes):
         raise ValueError("기존 gmail.readonly 테스트 계정의 token.json을 사용하세요")
     creds = Credentials.from_authorized_user_info(saved, scopes)
+    store = CaptureStore(ROOT)
     with AuthorizedSession(creds) as session:
         mailbox = gmail_get(session, "profile")["emailAddress"].casefold()
         last_state = None
@@ -165,7 +238,7 @@ def run_gmail():
             label = next((x for x in labels if x["name"] == GMAIL_LABEL and x.get("type") == "user"), None)
             state = "waiting_label" if label is None else "ready"
             if label:
-                poll_gmail(session, mailbox, label["id"])
+                state = poll_gmail(session, mailbox, label["id"], store)
             status("gmail", state, label=GMAIL_LABEL)
             if last_state != state:
                 print(f"Gmail {state} label={GMAIL_LABEL}", flush=True)

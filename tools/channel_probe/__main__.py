@@ -36,7 +36,7 @@ def main(argv=None):
         ("discord-webhook", "웹훅으로 테스트 메시지 1건을 게시하고 Discord 응답 저장"),
         ("discord-receive", "지정 채널에서 사람이 작성한 Gateway 이벤트 1건 수신"),
         ("gmail", "OAuth로 승인한 사서함에서 표식이 일치하는 원본 1건 수신"),
-        ("regenerate", "저장된 두 채널 원본으로 standard.json만 다시 생성"),
+        ("regenerate", "저장된 두 채널 원본으로 표준 메시지와 분류 입력 예시 다시 생성"),
         ("verify", "두 수신 원본으로 표준화 결과와 공통 입력 재검증"),
     ]
     for name, help_text in modes:
@@ -47,29 +47,29 @@ def main(argv=None):
         if name == "discord-receive":
             cmd.add_argument("--channel-id", required=True, type=snowflake, help="테스트 채널 또는 스레드 ID")
         if name == "verify":
-            cmd.add_argument("--expect", help="양쪽 analysis_text가 이 문장과 같은지도 검사")
+            cmd.add_argument("--expect", help="Discord의 RUN 표식을 제외한 양쪽 본문이 이 문장과 같은지도 검사")
     args = parser.parse_args(argv)
     try:
         if args.command == "regenerate":
             regenerate(BASE, args.run)
-            print("Discord·Gmail의 standard.json을 표준 스키마 v2로 다시 생성했습니다.")
+            print("Discord·Gmail의 standard.json과 classifier-input.json을 Silver v4에 맞게 다시 생성했습니다.")
             return 0
         if args.command == "verify":
             requests = verify(BASE, args.run, args.expect)
             print("PASS · Discord Gateway와 Gmail 원본 재변환 및 공통 키·자료형 일치")
             for channel, value in requests.items():
-                print(f"{channel}: {value['ticket_id']} / 본문 {len(value['analysis_text'])}자")
+                print(f"{channel} {value['event_id']} / 본문 {len(value['model_text'])}자")
             if args.expect is not None:
-                print("PASS · 두 채널의 analysis_text가 기대 문장과 일치")
+                print("PASS · 두 채널의 수신 본문이 기대 문장과 일치")
             return 0
         if args.command == "discord-webhook":
             folder = post_webhook(BASE, args.run)
             print(f"웹훅 게시 확인 · 요청 request.json / Discord 응답 raw.json\n{folder}")
             return 0
         if args.command == "discord-receive":
-            raw, is_thread = asyncio.run(receive_discord(args.run, args.channel_id, secret("DISCORD_BOT_TOKEN"), args.timeout))
+            raw, is_thread, channel_name = asyncio.run(receive_discord(args.run, args.channel_id, secret("DISCORD_BOT_TOKEN"), args.timeout))
             folder = save_inbound(BASE, args.run, "discord", raw, raw["d"]["guild_id"],
-                                  channel_id=args.channel_id, is_thread=is_thread)
+                                  channel_id=args.channel_id, is_thread=is_thread, channel_name=channel_name)
         else:
             raw, mailbox = receive_gmail(BASE, args.run, args.timeout)
             folder = save_inbound(BASE, args.run, "gmail", raw, mailbox)

@@ -58,22 +58,26 @@ class FormatTests(unittest.TestCase):
         self.assertEqual(read_json(a / "raw.json"), gateway())
         self.assertEqual(read_json(b / "raw.json"), gmail())
         requests = verify(self.base, RUN, SAMPLE_TEXT)
-        self.assertEqual(set(requests["gmail"]), {"schema_version","ticket_id","body_version","analysis_text"})
-        self.assertNotEqual(requests["gmail"]["ticket_id"], requests["discord"]["ticket_id"])
+        self.assertEqual(set(requests["gmail"]), {"event_id", "preprocess_version", "body_version", "model_text"})
+        self.assertNotEqual(requests["gmail"]["event_id"], requests["discord"]["event_id"])
         chat, mail = (read_json(d / "standard.json") for d in (a, b))
-        columns = {"schema_version", "company_id", "channel", "connection_id", "ticket_id", "body_version",
-                   "received_at", "raw_ref", "source_message_id", "source_conversation_id",
-                   "sender_ref", "title", "body_text", "occurred_at"}
+        columns = {"schema_version", "event_id", "company_id", "channel", "connection_id", "body_version",
+                   "received_at", "source_message_id", "source_conversation_id", "source_channel_id",
+                   "source_channel_name", "reply_to_message_id", "message_kind", "sender_ref",
+                   "sender_display_name", "title", "body_text", "occurred_at", "source_metadata"}
         for record in (chat, mail):
             self.assertEqual(set(record), columns)
-            self.assertEqual((record["schema_version"], record["body_version"]), (2, 1))
-            self.assertIsNone(record["title"])
+            self.assertEqual((record["schema_version"], record["body_version"]), (4, 1))
+            self.assertEqual(record["message_kind"], "unknown")
+            self.assertEqual(record["body_text"], requests[record["channel"]]["model_text"])
             self.assertRegex(record["received_at"], r"T\d{2}:\d{2}:\d{2}\.\d{6}Z$")
             self.assertEqual(record["occurred_at"], "2024-01-01T00:00:00.000000Z")
-        self.assertEqual(chat["raw_ref"], "96fe0f3d-e352-5208-bf29-2d4da24405f1")
-        self.assertEqual(mail["raw_ref"], "ec1b3d87-7864-5738-b8a3-683ed7046767")
-        self.assertEqual(chat["ticket_id"], "VOC-f8658e5646ca580dbf55f4f6653e6e72")
-        self.assertEqual(mail["ticket_id"], "VOC-2552f1560f7451e19b8d5725777ffd27")
+        self.assertEqual(chat["event_id"], "96fe0f3d-e352-5208-bf29-2d4da24405f1")
+        self.assertEqual(mail["event_id"], "ec1b3d87-7864-5738-b8a3-683ed7046767")
+        self.assertIsNone(chat["title"])
+        self.assertEqual(mail["title"], f"[{RUN}]")
+        self.assertEqual(mail["source_metadata"], {"label_ids": ["INBOX", "UNREAD"], "to_addresses": []})
+        self.assertEqual(mail["sender_display_name"], "Test")
         self.assertEqual(mail["source_conversation_id"], "conversation-1")
         self.assertEqual(mail["sender_ref"], "sender@example.invalid")
 
@@ -102,21 +106,26 @@ class FormatTests(unittest.TestCase):
         headers[0]["value"] = "  [결제] 카드 승인 오류  "
         headers.append({"name": "Date", "value": "Tue, 2 Jan 2024 09:00:00 +0900"})
         capture = {"company_id": "tenant-a", "connection_id": "mailbox", "received_at": "2024-01-02T03:00:00Z"}
-        value, _ = transform("gmail", raw, capture)
+        with self.assertRaisesRegex(ProbeError, "internalDate"):
+            transform("gmail", raw, capture)
+        raw["internalDate"] = "1704153600000"
+        value, request = transform("gmail", raw, capture)
         self.assertEqual(value["title"], "[결제] 카드 승인 오류")
+        self.assertEqual(request["model_text"], SAMPLE_TEXT)
         self.assertEqual(value["source_message_id"], "00aBf")
         self.assertEqual(value["occurred_at"], "2024-01-02T00:00:00.000000Z")
-        self.assertNotEqual(value["raw_ref"], transform("gmail", raw, {**capture, "company_id": "tenant-b"})[0]["raw_ref"])
-        headers.clear()
+        self.assertNotEqual(value["event_id"], transform("gmail", raw, {**capture, "company_id": "tenant-b"})[0]["event_id"])
+        raw.pop("internalDate")
+        headers[:] = [h for h in headers if h["name"] == "Date"]
         missing, _ = transform("gmail", raw, capture)
         self.assertIsNone(missing["title"])
         self.assertIsNone(missing["occurred_at"])
         self.assertIsNone(missing["sender_ref"])
 
-    def test_offline_replay_only_replaces_standard_files(self):
+    def test_offline_replay_upgrades_both_derived_files(self):
         folders = self.discord(), self.mail()
-        standards = {d / "standard.json": (d / "standard.json").read_bytes() for d in folders}
-        originals = {f: f.read_bytes() for d in folders for f in d.iterdir() if f.name != "standard.json"}
+        standards = {f: f.read_bytes() for d in folders for f in (d / "standard.json", d / "classifier-input.json")}
+        originals = {f: f.read_bytes() for d in folders for f in (d / "raw.json", d / "capture.json")}
         for path in standards:
             write_json(path, {"schema_version": 1})
         for _ in range(2):
@@ -143,18 +152,64 @@ class FormatTests(unittest.TestCase):
     def test_thread_and_unresolved_reply(self):
         raw = gateway()
         raw["d"]["type"] = 19
-        with self.assertRaises(ProbeError):
-            self.discord(raw)
-        self.assertEqual(len(list((self.base / "runs" / RUN).glob("review-discord-*/raw.json"))), 1)
-        folder = self.discord(raw, True)
-        self.assertEqual(read_json(folder / "standard.json")["source_conversation_id"], CHANNEL)
+        raw["d"]["message_reference"] = {"message_id": "1000"}
+        folder = self.discord(raw)
+        reply = read_json(folder / "standard.json")
+        self.assertEqual(reply["reply_to_message_id"], "1000")
+        self.assertIsNone(reply["source_conversation_id"])
+        capture = {**read_json(folder / "capture.json"), "is_thread": True, "channel_name": "문의"}
+        thread, _ = transform("discord", raw, capture)
+        self.assertEqual((thread["source_conversation_id"], thread["source_channel_name"]), (CHANNEL, "문의"))
+
+    def test_discord_parent_validation_and_channel_defaults(self):
+        for reference in ({}, {"message_id": "1001"}, {"type": 1, "message_id": "1000"}):
+            raw = gateway()
+            raw["d"].update(type=19, message_reference=reference)
+            with self.assertRaisesRegex(ProbeError, "부모"):
+                self.discord(raw)
+        root = self.base / "runs" / RUN
+        self.assertEqual(len(list(root.glob("review-discord-*/raw.json"))), 3)
+        self.assertFalse((root / "discord").exists())
+
+        raw = gateway()
+        raw["d"].update(member={"nick": "  "}, author={"id": "", "global_name": "이름", "username": "계정"},
+                        content=f"  [{RUN}] 첫 줄\r\n둘째 줄  ", message_reference={"type": 1, "message_id": "1000"})
+        folder = self.discord(raw)
+        standard = read_json(folder / "standard.json")
+        self.assertEqual(standard["source_conversation_id"], "1001")
+        self.assertIsNone(standard["reply_to_message_id"])
+        self.assertIsNone(standard["sender_ref"])
+        self.assertEqual(standard["sender_display_name"], "이름")
+        self.assertEqual(standard["body_text"], f"[{RUN}] 첫 줄\r\n둘째 줄")
+        self.assertEqual(standard["body_text"], read_json(folder / "classifier-input.json")["model_text"])
+
+    def test_gmail_encoded_and_repeated_headers(self):
+        raw = gmail()
+        headers = raw["payload"]["headers"]
+        headers[:] = [
+            {"name": "Subject", "value": "=?UTF-8?Q?=5BVOC-unit=5D_=E2=9C=93?="},
+            {"name": "From", "value": "=?UTF-8?B?7ZmN6ri464+Z?= <Sender@example.test>"},
+            {"name": "To", "value": 'Team: "Doe, Jo" <jo@example.test>, other@example.test;'},
+            {"name": "To", "value": "<desk+voc@example.test>"},
+            {"name": "Auto-Submitted", "value": "no"},
+            {"name": "Auto-Submitted", "value": "auto-replied; owner=desk"},
+        ]
+        folder = self.mail(raw)
+        standard = read_json(folder / "standard.json")
+        self.assertEqual((standard["sender_ref"], standard["sender_display_name"]), ("Sender@example.test", "홍길동"))
+        self.assertEqual(standard["title"], f"[{RUN}] ✓")
+        self.assertEqual(standard["source_metadata"]["to_addresses"], ["jo@example.test", "other@example.test", "desk+voc@example.test"])
+        self.assertEqual(standard["message_kind"], "other")
 
     def test_html_only_and_equal_subject(self):
         raw = gmail()
         raw["payload"]["headers"][0]["value"] += " " + SAMPLE_TEXT
         raw["payload"]["parts"] = [part(f"<head>title</head><p>{SAMPLE_TEXT}</p><style>other</style>", "text/html")]
         output = self.mail(raw)
-        self.assertEqual(read_json(output / "classifier-input.json")["analysis_text"], SAMPLE_TEXT)
+        self.assertEqual(read_json(output / "classifier-input.json")["model_text"], SAMPLE_TEXT)
+        html = ("<div title='<style>'>line  1<style>.private {color:red}</style></div>"
+                "<!-- <style> --><table><tr><td>A</td><td>B</td></tr></table><script>hidden()</script>")
+        self.assertEqual(mail_text(part(html, "text/html"))[1], "line 1\nA\nB")
 
     def test_empty_or_unusable_body_keeps_raw_for_review(self):
         for bad_body in ({"data": "@@@"}, {"size":0}, {"attachmentId":"external-text"}):
@@ -202,6 +257,7 @@ class FormatTests(unittest.TestCase):
 
     def test_only_exact_gmail_subject_gets_full_body(self):
         matching = gmail()
+        matching["payload"]["headers"][0]["value"] = "=?UTF-8?Q?=5BVOC-unit=5D?="
         other = {"payload":{"headers":[{"name":"Subject","value":"other "+RUN}]}}
         plan = [
             {"messages":[{"id":"other"}],"nextPageToken":"next"}, other,
@@ -263,9 +319,10 @@ class FormatTests(unittest.TestCase):
             async def close(self):
                 pass
         with patch.object(discord, "Client", FakeClient), patch("builtins.print") as output:
-            raw, is_thread = asyncio.run(providers.receive_discord(RUN,CHANNEL,"unit-only",2))
+            raw, is_thread, channel_name = asyncio.run(providers.receive_discord(RUN,CHANNEL,"unit-only",2))
         self.assertEqual(raw,gateway())
         self.assertFalse(is_thread)
+        self.assertEqual(channel_name, "문의-테스트")
         lines = [call.args[0] for call in output.call_args_list]
         self.assertIn("https://discord.com/channels/3003/2002", lines[0])
         self.assertEqual(len(lines), 4)  # READY plus one hint per skip reason.

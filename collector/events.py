@@ -32,6 +32,39 @@ def make_event(channel, connection, message_id, origin, raw, **context):
             "context": context, "raw": raw}
 
 
+def _gmail_text_parts(part):
+    """Compare only inline MIME text bodies. Transport headers and labels may vary on replay."""
+    if not isinstance(part, dict) or part.get("filename"):
+        return
+    headers = part.get("headers") or []
+    if any(isinstance(h, dict) and str(h.get("name", "")).lower() == "content-disposition"
+           and str(h.get("value", "")).strip().lower().startswith("attachment") for h in headers):
+        return
+    mime = str(part.get("mimeType", "")).lower()
+    if mime.startswith("multipart/"):
+        for child in part.get("parts") or []:
+            yield from _gmail_text_parts(child)
+    elif mime in ("text/plain", "text/html"):
+        body = part.get("body")
+        if isinstance(body, dict) and isinstance(body.get("data"), str):
+            # Gmail's base64url representation can omit padding without changing the bytes.
+            yield (mime, "".join(body["data"].split()).rstrip("="))
+
+
+def source_body_changed(channel, first, incoming):
+    if not isinstance(first, dict) or not isinstance(incoming, dict):
+        return False
+    if channel == "discord":
+        def content(raw):
+            message = raw.get("d") if raw.get("t") == "MESSAGE_CREATE" else raw
+            return message.get("content") if isinstance(message, dict) else None
+        before, after = content(first), content(incoming)
+        return isinstance(before, str) and isinstance(after, str) and before != after
+    before, after = first.get("payload"), incoming.get("payload")
+    return (isinstance(before, dict) and isinstance(after, dict) and before.get("mimeType") and after.get("mimeType")
+            and tuple(_gmail_text_parts(before)) != tuple(_gmail_text_parts(after)))
+
+
 def archive_path(root, event):
     # Separate accounts without exposing mailbox addresses in paths.
     scope = hashlib.sha256(json.dumps([event["company_id"], event["connection_id"]]).encode()).hexdigest()[:24]
@@ -60,20 +93,6 @@ def atomic_json(path, value, *, replace=False):
         return True
     finally:
         tmp_path.unlink(missing_ok=True)
-
-
-def pending_path(root, event):
-    return root / "pending" / (event["event_id"] + ".json")
-
-
-def already_received(root, event):
-    return archive_path(root, event).is_file() or pending_path(root, event).is_file()
-
-
-def stage(root, event):
-    if already_received(root, event):
-        return False
-    return atomic_json(pending_path(root, event), event)
 
 
 def status(role, state, **details):

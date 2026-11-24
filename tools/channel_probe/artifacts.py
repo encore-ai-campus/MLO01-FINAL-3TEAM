@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from shutil import rmtree
 
-from .normalize import ProbeError, transform
+from .normalize import ProbeError, marked_text, transform
 
 
 BASE = Path(__file__).resolve().parents[2] / ".local" / "channel-probe"
@@ -84,10 +84,11 @@ def replay_capture(base, run, channel):
 
 
 def regenerate(base, run):
-    # Validate both captures before replacing either standard file.
+    # Replay both original captures before upgrading their derived artifacts.
     pair = [replay_capture(base, run, channel) for channel in ORIGINS]
-    for directory, common, _ in pair:
+    for directory, common, request in pair:
         write_json(directory / "standard.json", common)
+        write_json(directory / "classifier-input.json", request)
 
 
 def verify(base, run, expected=None):
@@ -96,14 +97,17 @@ def verify(base, run, expected=None):
         directory, rebuilt_common, rebuilt_request = replay_capture(base, run, channel)
         common = read_json(directory / "standard.json")
         request = read_json(directory / "classifier-input.json")
-        if common != rebuilt_common or request != rebuilt_request:
+        if (common != rebuilt_common or request != rebuilt_request
+                or type(common["schema_version"]) is not int or type(common["body_version"]) is not int):
             raise ProbeError(f"{channel} 저장본과 원본 재변환 결과가 다릅니다.")
-        types = {"schema_version": int, "ticket_id": str, "body_version": int, "analysis_text": str}
+        types = {"event_id": str, "body_version": int, "preprocess_version": int, "model_text": str}
         if set(request) != set(types) or any(type(request[k]) is not t for k, t in types.items()):
             raise ProbeError(f"{channel} 분류 입력의 키 또는 자료형이 다릅니다.")
-        if expected is not None and request["analysis_text"] != expected:
-            raise ProbeError(f"{channel} analysis_text가 기대 문장과 다릅니다. {directory / 'classifier-input.json'}")
+        text = request["model_text"]
+        comparable = marked_text(text, run) if channel == "discord" else text
+        if expected is not None and comparable != expected:
+            raise ProbeError(f"{channel} 수신 본문이 기대 문장과 다릅니다. {directory / 'classifier-input.json'}")
         requests[channel] = request
-    if requests["discord"]["ticket_id"] == requests["gmail"]["ticket_id"]:
-        raise ProbeError("서로 다른 채널의 티켓 번호가 충돌했습니다.")
+    if requests["discord"]["event_id"] == requests["gmail"]["event_id"]:
+        raise ProbeError("서로 다른 채널의 이벤트 ID가 충돌했습니다.")
     return requests

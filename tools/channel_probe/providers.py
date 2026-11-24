@@ -11,7 +11,7 @@ import time
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from .artifacts import read_json, write_json
-from .normalize import ProbeError, SAMPLE_TEXT, discord_message_status, header, marked_text
+from .normalize import ProbeError, SAMPLE_TEXT, decoded_header, discord_message_status, header, marked_text
 
 
 def secret(name):
@@ -109,7 +109,7 @@ async def receive_discord(run, channel_id, token, timeout):
         event = frame if isinstance(frame, dict) else json.loads(frame)
         status = discord_message_status(event, run, channel_id)
         if status == "match":
-            result.set_result((event, isinstance(target, discord.Thread)))
+            result.set_result((event, isinstance(target, discord.Thread), target.name))
         elif status is not None and status not in reported:
             reported.add(status)
             print(f"건너뜀 · {skip_reasons[status]}\n[{run}] {SAMPLE_TEXT}", flush=True)
@@ -190,7 +190,7 @@ def find_gmail(session, run):
         for entry in page.get("messages", []):
             resource = "messages/" + entry["id"]
             meta = gmail_get(session, resource, format="metadata", metadataHeaders="Subject")
-            if marked_text(header(meta.get("payload", {}), "Subject"), run) is None:
+            if marked_text(decoded_header(header(meta.get("payload", {}), "Subject")), run) is None:
                 continue
             message = gmail_get(session, resource, format="full")
             if "INBOX" in message.get("labelIds", []):
