@@ -1,0 +1,9 @@
+/.local/
+/.venv*/
+__pycache__/
+*.py[cod]
+.env
+.env.local
+credentials.json
+token.json
+client_secret_*.json
