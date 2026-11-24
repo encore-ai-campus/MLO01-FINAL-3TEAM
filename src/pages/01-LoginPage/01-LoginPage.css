@@ -162,3 +162,7 @@
 
     [hidden] { display: none !important; }
     .demo-entry { position: fixed; right: 24px; bottom: 19px; color: var(--heading); font-size: 13px; }
+
+    .login-page .field-message:empty { display: block; position: absolute; margin: 0; }
+    .login-page .message.success { color: var(--ink); }
+    .login-page .help-dialog form { margin: 0; }
