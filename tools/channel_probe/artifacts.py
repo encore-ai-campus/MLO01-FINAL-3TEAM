@@ -72,17 +72,30 @@ def save_inbound(base, run, channel, raw, connection_id, **details):
             rmtree(temp)
 
 
+def replay_capture(base, run, channel):
+    directory = base / "runs" / run / channel
+    if not directory.is_dir():
+        raise ProbeError(f"{channel} 수신 기록이 없습니다. 웹훅 게시 결과만으로는 수신 검증이 되지 않습니다.")
+    capture = read_json(directory / "capture.json")
+    if capture.get("origin") != ORIGINS[channel] or capture.get("run") != run:
+        raise ProbeError(f"{channel} 원본의 수신 방식 또는 RUN이 다릅니다.")
+    common, request = transform(channel, read_json(directory / "raw.json"), capture)
+    return directory, common, request
+
+
+def regenerate(base, run):
+    # Validate both captures before replacing either standard file.
+    pair = [replay_capture(base, run, channel) for channel in ORIGINS]
+    for directory, common, _ in pair:
+        write_json(directory / "standard.json", common)
+
+
 def verify(base, run, expected=None):
     requests = {}
-    for channel, origin in ORIGINS.items():
-        directory = base / "runs" / run / channel
-        if not directory.is_dir():
-            raise ProbeError(f"{channel} 수신 기록이 없습니다. 웹훅 게시 결과만으로는 수신 검증이 되지 않습니다.")
-        raw, capture, common, request = [read_json(directory / name) for name in
-                                         ("raw.json", "capture.json", "standard.json", "classifier-input.json")]
-        if capture.get("origin") != origin or capture.get("run") != run:
-            raise ProbeError(f"{channel} 원본의 수신 방식 또는 RUN이 다릅니다.")
-        rebuilt_common, rebuilt_request = transform(channel, raw, capture)
+    for channel in ORIGINS:
+        directory, rebuilt_common, rebuilt_request = replay_capture(base, run, channel)
+        common = read_json(directory / "standard.json")
+        request = read_json(directory / "classifier-input.json")
         if common != rebuilt_common or request != rebuilt_request:
             raise ProbeError(f"{channel} 저장본과 원본 재변환 결과가 다릅니다.")
         types = {"schema_version": int, "ticket_id": str, "body_version": int, "analysis_text": str}

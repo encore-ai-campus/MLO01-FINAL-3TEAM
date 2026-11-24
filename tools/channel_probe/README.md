@@ -1,5 +1,7 @@
 # Discord·Gmail 실제 메시지 포맷 테스트
 
+표식이 있는 한 건씩을 비교하는 초기 검증 절차다. 일반 메시지를 계속 수집하려면 [Docker 상시 수집 실행 가이드](../../collector/README.md)를 따른다.
+
 테스트 문장 한 개를 Discord와 Gmail에서 각각 받아 원본 JSON, 공통 메시지 레코드, 분류기 입력을 비교한다. 한 RUN은 한 회사의 독립된 첫 문의를 각 채널에서 한 건씩 비교하는 단위다. 같은 문의를 두 채널에 보내도 두 티켓으로 보존한다.
 
 | 실험 | 필요한 접근 | 캡처하는 데이터 | 성공을 확인할 위치 |
@@ -13,7 +15,7 @@
 Mac의 zsh에서 아래 명령을 실행한다. 새 체크아웃에서는 Python 3.10 이상으로 가상환경을 한 번 생성한다. 이미 `.venv-channel`이 준비된 PC에서는 활성화부터 시작한다.
 
 ```bash
-cd /Users/2eelogan/project/mlo-01-final-team3
+cd /path/to/mlo-01-final-team3
 git switch feature/ticket_list
 python3 -m venv .venv-channel
 source .venv-channel/bin/activate

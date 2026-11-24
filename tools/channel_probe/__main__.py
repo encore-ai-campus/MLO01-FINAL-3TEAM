@@ -6,7 +6,7 @@ import json
 import re
 import sys
 
-from .artifacts import BASE, save_inbound, verify
+from .artifacts import BASE, regenerate, save_inbound, verify
 from .normalize import ProbeError
 from .providers import post_webhook, receive_discord, receive_gmail, secret
 
@@ -36,6 +36,7 @@ def main(argv=None):
         ("discord-webhook", "웹훅으로 테스트 메시지 1건을 게시하고 Discord 응답 저장"),
         ("discord-receive", "지정 채널에서 사람이 작성한 Gateway 이벤트 1건 수신"),
         ("gmail", "OAuth로 승인한 사서함에서 표식이 일치하는 원본 1건 수신"),
+        ("regenerate", "저장된 두 채널 원본으로 standard.json만 다시 생성"),
         ("verify", "두 수신 원본으로 표준화 결과와 공통 입력 재검증"),
     ]
     for name, help_text in modes:
@@ -49,6 +50,10 @@ def main(argv=None):
             cmd.add_argument("--expect", help="양쪽 analysis_text가 이 문장과 같은지도 검사")
     args = parser.parse_args(argv)
     try:
+        if args.command == "regenerate":
+            regenerate(BASE, args.run)
+            print("Discord·Gmail의 standard.json을 표준 스키마 v2로 다시 생성했습니다.")
+            return 0
         if args.command == "verify":
             requests = verify(BASE, args.run, args.expect)
             print("PASS · Discord Gateway와 Gmail 원본 재변환 및 공통 키·자료형 일치")

@@ -9,8 +9,8 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from tools.channel_probe import providers
-from tools.channel_probe.artifacts import read_json, save_inbound, verify, write_json
-from tools.channel_probe.normalize import ProbeError, SAMPLE_TEXT, is_discord_test, mail_text
+from tools.channel_probe.artifacts import read_json, regenerate, save_inbound, verify, write_json
+from tools.channel_probe.normalize import ProbeError, SAMPLE_TEXT, is_discord_test, mail_text, transform
 
 RUN = "VOC-unit"
 CHANNEL = "2002"
@@ -60,11 +60,77 @@ class FormatTests(unittest.TestCase):
         requests = verify(self.base, RUN, SAMPLE_TEXT)
         self.assertEqual(set(requests["gmail"]), {"schema_version","ticket_id","body_version","analysis_text"})
         self.assertNotEqual(requests["gmail"]["ticket_id"], requests["discord"]["ticket_id"])
-        self.assertEqual(set(read_json(a / "standard.json")), set(read_json(b / "standard.json")))
-        mail = read_json(b / "standard.json")
+        chat, mail = (read_json(d / "standard.json") for d in (a, b))
+        columns = {"schema_version", "company_id", "channel", "connection_id", "ticket_id", "body_version",
+                   "received_at", "raw_ref", "source_message_id", "source_conversation_id",
+                   "sender_ref", "title", "body_text", "occurred_at"}
+        for record in (chat, mail):
+            self.assertEqual(set(record), columns)
+            self.assertEqual((record["schema_version"], record["body_version"]), (2, 1))
+            self.assertIsNone(record["title"])
+            self.assertRegex(record["received_at"], r"T\d{2}:\d{2}:\d{2}\.\d{6}Z$")
+            self.assertEqual(record["occurred_at"], "2024-01-01T00:00:00.000000Z")
+        self.assertEqual(chat["raw_ref"], "96fe0f3d-e352-5208-bf29-2d4da24405f1")
+        self.assertEqual(mail["raw_ref"], "ec1b3d87-7864-5738-b8a3-683ed7046767")
+        self.assertEqual(chat["ticket_id"], "VOC-f8658e5646ca580dbf55f4f6653e6e72")
+        self.assertEqual(mail["ticket_id"], "VOC-2552f1560f7451e19b8d5725777ffd27")
         self.assertEqual(mail["source_conversation_id"], "conversation-1")
-        self.assertEqual(mail["occurred_at"], "2024-01-01T00:00:00+00:00")
         self.assertEqual(mail["sender_ref"], "sender@example.invalid")
+
+    def test_offsets_missing_fields_and_opaque_ids(self):
+        raw = gateway()
+        raw["d"].update(id="00001001", timestamp="2024-01-01T09:00:00.005+09:00", author={})
+        capture = {"channel_id": CHANNEL, "is_thread": False, "connection_id": "3003", "run": RUN,
+                   "received_at": "2024-01-01T09:00:01.123456+09:00"}
+        standard, _ = transform("discord", raw, capture)
+        self.assertEqual(standard["source_message_id"], "00001001")
+        self.assertEqual(standard["occurred_at"], "2024-01-01T00:00:00.005000Z")
+        self.assertEqual(standard["received_at"], "2024-01-01T00:00:01.123456Z")
+        self.assertIsNone(standard["sender_ref"])
+        raw["d"].pop("timestamp")
+        self.assertIsNone(transform("discord", raw, capture)[0]["occurred_at"])
+        with self.assertRaisesRegex(ProbeError, "received_at"):
+            transform("discord", raw, {**capture, "received_at": "2024-01-01T09:00:00"})
+        raw["d"]["id"] = 1001
+        with self.assertRaises(ProbeError):
+            transform("discord", raw, capture)
+
+    def test_real_subjects_opaque_mail_ids_and_optional_source_time(self):
+        raw = gmail()
+        raw.update(id="00aBf", internalDate="invalid")
+        headers = raw["payload"]["headers"]
+        headers[0]["value"] = "  [결제] 카드 승인 오류  "
+        headers.append({"name": "Date", "value": "Tue, 2 Jan 2024 09:00:00 +0900"})
+        capture = {"company_id": "tenant-a", "connection_id": "mailbox", "received_at": "2024-01-02T03:00:00Z"}
+        value, _ = transform("gmail", raw, capture)
+        self.assertEqual(value["title"], "[결제] 카드 승인 오류")
+        self.assertEqual(value["source_message_id"], "00aBf")
+        self.assertEqual(value["occurred_at"], "2024-01-02T00:00:00.000000Z")
+        self.assertNotEqual(value["raw_ref"], transform("gmail", raw, {**capture, "company_id": "tenant-b"})[0]["raw_ref"])
+        headers.clear()
+        missing, _ = transform("gmail", raw, capture)
+        self.assertIsNone(missing["title"])
+        self.assertIsNone(missing["occurred_at"])
+        self.assertIsNone(missing["sender_ref"])
+
+    def test_offline_replay_only_replaces_standard_files(self):
+        folders = self.discord(), self.mail()
+        standards = {d / "standard.json": (d / "standard.json").read_bytes() for d in folders}
+        originals = {f: f.read_bytes() for d in folders for f in d.iterdir() if f.name != "standard.json"}
+        for path in standards:
+            write_json(path, {"schema_version": 1})
+        for _ in range(2):
+            regenerate(self.base, RUN)
+            self.assertEqual({p: p.read_bytes() for p in standards}, standards)
+        self.assertEqual({p: p.read_bytes() for p in originals}, originals)
+        verify(self.base, RUN, SAMPLE_TEXT)
+
+        # A broken second capture must not replace the first output.
+        write_json(folders[0] / "standard.json", {"schema_version": 1})
+        write_json(folders[1] / "capture.json", {"run": "another-run"})
+        with self.assertRaises(ProbeError):
+            regenerate(self.base, RUN)
+        self.assertEqual(read_json(folders[0] / "standard.json"), {"schema_version": 1})
 
     def test_gateway_filter(self):
         for field in ({"channel_id":"999"}, {"author":{"id":"bot","bot":True}},

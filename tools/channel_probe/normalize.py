@@ -3,11 +3,13 @@
 import base64
 import binascii
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.message import Message
 from email.utils import parseaddr, parsedate_to_datetime
 from html.parser import HTMLParser
 from uuid import NAMESPACE_URL, uuid5
+
+from collector.events import event_id as bronze_event_id
 
 
 SAMPLE_TEXT = "결제 버튼을 누르면 오류가 납니다."
@@ -35,6 +37,26 @@ def header(part, name):
 
 def clean(value):
     return (value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def source_id(value, field):
+    if not isinstance(value, str) or not value.strip():
+        raise ProbeError(f"{field}에는 비어 있지 않은 원천 문자열 ID가 필요합니다.")
+    return value
+
+
+def utc_timestamp(value):
+    """Return an unambiguous UTC instant at PostgreSQL microsecond precision."""
+    try:
+        if isinstance(value, str):
+            if value.endswith("Z"):
+                value = value[:-1] + "+00:00"
+            value = datetime.fromisoformat(value)
+        if not isinstance(value, datetime) or value.utcoffset() is None:
+            return None
+        return value.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+    except (ValueError, OverflowError):
+        return None
 
 
 class HtmlText(HTMLParser):
@@ -104,23 +126,26 @@ def mail_text(part):
 
 def gmail_fields(raw, run):
     part = raw.get("payload", {})
-    title = marked_text(header(part, "Subject"), run)
-    if title is None or "INBOX" not in raw.get("labelIds", []):
-        raise ProbeError("테스트 제목 표식과 INBOX 라벨이 일치하지 않습니다.")
-    if not raw.get("id") or not raw.get("threadId"):
-        raise ProbeError("Gmail Message의 id와 threadId가 필요합니다.")
+    title = header(part, "Subject")
+    if run is not None:
+        title = marked_text(title, run)
+        if title is None or "INBOX" not in raw.get("labelIds", []):
+            raise ProbeError("테스트 제목 표식과 INBOX 라벨이 일치하지 않습니다.")
     occurred = None
+    millis = raw.get("internalDate")
     try:
-        if raw.get("internalDate"):
-            occurred = datetime.fromtimestamp(int(raw["internalDate"]) / 1000, timezone.utc).isoformat()
-        elif date_header := header(part, "Date"):
-            date = parsedate_to_datetime(date_header)
-            if date.tzinfo is not None:
-                occurred = date.astimezone(timezone.utc).isoformat()
-    except (ValueError, OSError, OverflowError, TypeError):
+        if type(millis) in (int, str):
+            occurred = datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(milliseconds=int(millis))
+    except (ValueError, OverflowError):
         pass
+    if occurred is None and (date_header := header(part, "Date")):
+        try:
+            occurred = parsedate_to_datetime(date_header)
+        except (ValueError, TypeError, OverflowError):
+            pass
     return {
-        "source_message_id": raw["id"], "source_conversation_id": raw["threadId"],
+        "source_message_id": source_id(raw.get("id"), "id"),
+        "source_conversation_id": source_id(raw.get("threadId"), "threadId"),
         "sender_ref": parseaddr(header(part, "From"))[1] or None,
         "title": title, "body_text": mail_text(part)[1], "occurred_at": occurred,
     }
@@ -147,42 +172,57 @@ def is_discord_test(raw, run, channel_id):
 
 
 def discord_fields(raw, run, channel_id, is_thread):
-    if not is_discord_test(raw, run, channel_id):
-        raise ProbeError("지정 채널에서 사람이 보낸 테스트 MESSAGE_CREATE가 필요합니다.")
-    message = raw["d"]
-    if not message.get("id") or not message.get("guild_id") or not message.get("author", {}).get("id"):
-        raise ProbeError("Discord 원본의 메시지·서버·작성자 ID를 확인하세요.")
+    message = raw.get("d") or {}
+    if raw.get("op") != 0 or raw.get("t") != "MESSAGE_CREATE" or message.get("channel_id") != channel_id:
+        raise ProbeError("지정 채널에서 수신한 MESSAGE_CREATE가 필요합니다.")
+    body = message.get("content")
+    if run is not None:
+        if not is_discord_test(raw, run, channel_id):
+            raise ProbeError("지정 채널에서 사람이 보낸 테스트 MESSAGE_CREATE가 필요합니다.")
+        body = marked_text(body, run)
+    message_id = source_id(message.get("id"), "id")
+    author_id = (message.get("author") or {}).get("id")
     if message.get("type") not in (0, None) and not is_thread:
         raise ProbeError("일반 채널의 답글은 원문의 티켓 조회가 필요합니다. 첫 문의로 양 채널을 비교하세요.")
-    conversation = channel_id if is_thread else message["id"]
+    conversation = source_id(channel_id, "channel_id") if is_thread else message_id
     return {
-        "source_message_id": message["id"], "source_conversation_id": conversation,
-        "sender_ref": message["author"]["id"], "title": "",
-        "body_text": marked_text(message["content"], run), "occurred_at": message.get("timestamp"),
+        "source_message_id": message_id, "source_conversation_id": conversation,
+        "sender_ref": source_id(author_id, "author.id") if author_id is not None else None, "title": None,
+        "body_text": body, "occurred_at": message.get("timestamp"),
     }
 
 
 def transform(channel, raw, capture):
-    run = capture["run"]
+    run = capture.get("run")
+    company = capture.get("company_id", "local-test-company" if run is not None else None)
+    company = source_id(company, "company_id")
+    connection = source_id(capture.get("connection_id"), "connection_id")
     if channel == "discord":
         fields = discord_fields(raw, run, capture["channel_id"], capture["is_thread"])
+        if raw["d"].get("guild_id") != connection:
+            raise ProbeError("Discord 서버 ID와 수신 연결 ID가 다릅니다.")
     elif channel == "gmail":
         fields = gmail_fields(raw, run)
     else:
         raise ProbeError("지원하는 수신 채널은 discord와 gmail입니다.")
-    company = "local-test-company"
-    connection = capture["connection_id"]
     ticket_key = json.dumps([company, channel, connection, fields["source_conversation_id"]])
     # Each run compares the first captured inquiry per channel, so its sample body is revision 1.
     ticket_id = "VOC-" + uuid5(NAMESPACE_URL, ticket_key).hex
-    common = {
-        "schema_version": 1, "company_id": company, "connection_id": connection,
-        "channel": channel, "ticket_id": ticket_id, "body_version": 1,
-        "received_at": capture["received_at"], "raw_ref": "raw.json", **fields,
-    }
-    title, body = clean(fields["title"]), clean(fields["body_text"])
+    received = utc_timestamp(capture.get("received_at"))
+    if received is None:
+        raise ProbeError("received_at에 시간대가 포함된 수신 시각이 필요합니다.")
+    fields["title"] = clean(fields["title"]) or None
+    fields["body_text"] = clean(fields["body_text"])
+    fields["occurred_at"] = utc_timestamp(fields["occurred_at"])
+    title, body = fields["title"], fields["body_text"]
     if not body:
         raise ProbeError("분류할 고객 본문이 없습니다. 원본은 raw.json에서 확인하세요.")
+    common = {
+        "schema_version": 2, "company_id": company, "connection_id": connection,
+        "channel": channel, "ticket_id": ticket_id, "body_version": 1,
+        "received_at": received,
+        "raw_ref": bronze_event_id(company, channel, connection, fields["source_message_id"]), **fields,
+    }
     if title and " ".join(title.split()) != " ".join(body.split()):
         body = title + "\n" + body
     classifier = {"schema_version": 1, "ticket_id": ticket_id, "body_version": 1, "analysis_text": body}

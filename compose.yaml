@@ -1,0 +1,143 @@
+name: encore-voc-collector
+x-worker: &worker
+  image: encore-voc-collector:local
+  build:
+    context: .
+    dockerfile: collector/Dockerfile
+  restart: unless-stopped
+  init: true
+  logging:
+    driver: json-file
+    options: {max-size: 5m, max-file: "3"}
+x-spool: &spool
+  - ./.local/collector/data:/data
+x-initialized: &initialized
+  init-db-topics:
+    condition: service_completed_successfully
+x-flink: &flink
+  image: encore-voc-flink:local
+  build: ./collector/flink
+  restart: unless-stopped
+  volumes:
+    - flink_checkpoints:/opt/flink/checkpoints
+  environment:
+    FLINK_PROPERTIES: |
+      jobmanager.rpc.address: jobmanager
+      parallelism.default: 1
+      taskmanager.numberOfTaskSlots: 2
+      execution.checkpointing.interval: 10s
+      execution.checkpointing.dir: file:///opt/flink/checkpoints
+      restart-strategy.type: fixed-delay
+      restart-strategy.fixed-delay.attempts: 2147483647
+      restart-strategy.fixed-delay.delay: 5s
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: voc
+      POSTGRES_USER: voc
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes: [pg_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD","pg_isready","-U","voc","-d","voc"]
+      interval: 5s
+      timeout: 4s
+      retries: 25
+  kafka:
+    image: apache/kafka:4.1.2
+    restart: unless-stopped
+    environment:
+      CLUSTER_ID: Q29sbGVjdG9yS2Fma2FJRA
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_MESSAGE_MAX_BYTES: 67108864
+      KAFKA_REPLICA_FETCH_MAX_BYTES: 67108864
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes: [kafka_data:/var/lib/kafka/data]
+    healthcheck:
+      test: ["CMD","/opt/kafka/bin/kafka-topics.sh","--bootstrap-server","localhost:9092","--list"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+  init-db-topics:
+    <<: *worker
+    restart: "on-failure"
+    command: ["init"]
+    secrets: [postgres_password]
+    depends_on:
+      postgres: {condition: service_healthy}
+      kafka: {condition: service_healthy}
+  discord:
+    <<: *worker
+    command: ["discord"]
+    environment:
+      VOC_COMPANY: ${VOC_COMPANY:-encore}
+      DISCORD_CHANNEL_ID: ${DISCORD_CHANNEL_ID:?Set DISCORD_CHANNEL_ID in .env}
+    volumes: *spool
+    secrets: [discord_token]
+    healthcheck:
+      test: ["CMD","python","-m","collector","health","discord"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+  gmail:
+    <<: *worker
+    command: ["gmail"]
+    environment:
+      VOC_COMPANY: ${VOC_COMPANY:-encore}
+      GMAIL_LABEL: ${GMAIL_LABEL:-VOC}
+      GMAIL_POLL_SECONDS: "15"
+    volumes: *spool
+    secrets: [gmail_token]
+    healthcheck:
+      test: ["CMD","python","-m","collector","health","gmail"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+  gmail-oauth:
+    <<: *worker
+    profiles: [setup]
+    restart: "no"
+    logging: {driver: none}
+    command: ["gmail-oauth"]
+    ports: ["127.0.0.1:18765:18765"]
+    volumes:
+      - ./.local/channel-probe:/oauth
+  publish:
+    <<: *worker
+    command: ["publish"]
+    volumes: *spool
+    depends_on: *initialized
+  db-worker:
+    <<: *worker
+    command: ["db"]
+    secrets: [postgres_password]
+    depends_on: *initialized
+  jobmanager:
+    <<: *flink
+    command: ["standalone-job","--job-classname","voc.StandardizeJob"]
+    ports: ["127.0.0.1:18081:8081"]
+    depends_on: *initialized
+  taskmanager:
+    <<: *flink
+    command: ["taskmanager"]
+    depends_on: [jobmanager]
+volumes:
+  pg_data:
+  kafka_data:
+  flink_checkpoints:
+secrets:
+  postgres_password: {file: ./.local/collector/postgres-password}
+  discord_token: {file: ./.local/collector/discord-token}
+  gmail_token: {file: ./.local/channel-probe/token.json}
