@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>로그인 | 섭명뭐</title>
+  <style>
+    :root {
+      --primary: #1e1e1e;
+      --heading: #282828;
+      --canvas: #fafafa;
+      --paper: #fff;
+      --ink: #233630;
+      --muted: #526761;
+      --border: #d1ded9;
+      --error: #9b3830;
+      --error-border: #ab453d;
+      font-family: Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+      color: var(--ink);
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--canvas); }
+    h1, h2, p { margin: 0; }
+    input, button { font: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: wait; }
+    :focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+
+    .screen {
+      min-height: 100vh;
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    .login-card {
+      width: min(100%, 472px);
+      min-height: 548px;
+      padding: 39px 55px 40px;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      background: var(--paper);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: var(--heading);
+      font-size: 19px;
+      font-weight: 700;
+    }
+
+    .logo {
+      display: grid;
+      place-items: center;
+      width: 40px;
+      height: 40px;
+      border-radius: 8px;
+      background: var(--primary);
+      color: var(--paper);
+      font-size: 24px;
+    }
+
+    h1 {
+      margin-top: 27px;
+      color: var(--heading);
+      font-size: 30px;
+      line-height: 38px;
+    }
+
+    .intro {
+      margin-top: 11px;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 22px;
+    }
+
+    form { margin-top: 25px; }
+    .field + .field { margin-top: 17px; }
+    label { display: block; margin-bottom: 4px; font-size: 14px; font-weight: 600; line-height: 20px; }
+
+    input {
+      display: block;
+      width: 100%;
+      height: 48px;
+      padding: 0 13px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--paper);
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    input::placeholder { color: var(--muted); opacity: 1; }
+    input[aria-invalid="true"] { border-color: var(--error-border); }
+    .password { position: relative; }
+    .password input { padding-right: 74px; }
+
+    .text-button {
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--heading);
+      font-weight: 600;
+    }
+
+    .visibility {
+      position: absolute;
+      inset: 2px 2px auto auto;
+      width: 58px;
+      height: 44px;
+      font-size: 13px;
+    }
+
+    .message {
+      color: var(--error);
+      font-size: 13px;
+      line-height: 18px;
+    }
+
+    .field-message { margin-top: 4px; }
+    .field-message:empty { display: none; }
+
+    .auth-message {
+      min-height: 38px;
+      padding-top: 7px;
+    }
+
+    .primary-button {
+      width: 100%;
+      min-height: 48px;
+      padding: 8px 16px;
+      border: 0;
+      border-radius: 9px;
+      background: var(--primary);
+      color: var(--paper);
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .primary-button:disabled { opacity: .65; }
+    .help-button { width: 100%; min-height: 38px; margin-top: 12px; font-size: 14px; }
+
+    .help-dialog {
+      width: min(calc(100% - 32px), 440px);
+      min-height: 314px;
+      max-height: calc(100% - 32px);
+      padding: 30px 31px 31px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--paper);
+    }
+
+    .help-dialog::backdrop { background: rgb(0 0 0 / 34%); }
+    .help-dialog h2 { color: var(--heading); font-size: 23px; line-height: 30px; }
+    .help-dialog p { color: var(--muted); font-size: 15px; line-height: 23px; }
+    .help-dialog p:first-of-type { margin-top: 21px; min-height: 46px; }
+    .help-dialog p + p { margin-top: 39px; }
+    .help-dialog .primary-button { margin-top: 22px; }
+
+    @media (max-width: 500px) {
+      .screen { padding: 16px; }
+      .login-card { padding-inline: 24px; }
+      .help-dialog { padding-inline: 24px; }
+    }
+
+    [hidden] { display: none !important; }
+    .demo-entry { position: fixed; right: 24px; bottom: 19px; color: var(--heading); font-size: 13px; }
+    .desk { --desk-line: #e4e4e4; --desk-soft: #f3f3f3; --desk-muted: #626262; --rail: 200px; --bar: 64px; color: var(--heading); }
+    .desk a { color: inherit; text-decoration: none; }
+    .desk svg { width: 19px; height: 19px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
+    .desk-bar { display: flex; align-items: center; gap: 18px; padding: 0 24px; position: fixed; z-index: 2; inset: 0 0 auto; height: var(--bar); background: var(--paper); border-bottom: 1px solid var(--desk-line); }
+    .desk-bar .logo { width: 30px; height: 30px; border-radius: 6px; font-size: 18px; }
+    .desk-bar .brand { margin-right: auto; gap: 10px; font-size: 18px; }
+    .desk-account { display: flex; align-items: center; gap: 8px; border-left: 1px solid var(--desk-line); padding-left: 14px; font-size: 13px; font-weight: 600; }
+    .desk-account svg { width: 14px; height: 14px; }
+    .desk-avatar { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 50%; background: var(--desk-soft); font-size: 12px; }
+    .desk-nav { display: flex; flex-direction: column; gap: 6px; position: fixed; inset: var(--bar) auto 0 0; width: var(--rail); padding: 22px 12px 16px; background: var(--paper); border-right: 1px solid var(--desk-line); }
+    .desk-nav-item { display: flex; align-items: center; gap: 11px; min-height: 42px; padding: 0 12px; border-radius: 8px; font-size: 14px; }
+    .desk-nav-item[aria-current] { background: var(--desk-soft); font-weight: 600; }
+    .desk-nav-settings { margin-top: auto; }
+    .desk-content { margin-left: var(--rail); padding: calc(var(--bar) + 23px) 32px 40px; }
+    .desk-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+    .desk h1 { margin: 0; font-size: 28px; line-height: 42px; }
+    .desk-sub { margin-top: 0; color: var(--desk-muted); font-size: 14px; line-height: 22px; }
+    .desk-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 38px; padding: 0 14px; border: 1px solid var(--desk-line); border-radius: 8px; background: var(--paper); color: var(--heading); font-size: 13px; font-weight: 600; white-space: nowrap; }
+    .desk-button svg { width: 17px; height: 17px; }
+    .desk-button-solid { min-width: 96px; color: var(--paper); background: var(--primary); border-color: var(--primary); }
+    .desk-stack { display: grid; gap: 16px; }
+    .desk-card { padding: 14px 21px 16px; border: 1px solid var(--desk-line); border-radius: 12px; background: var(--paper); }
+    .desk-card h2 { display: flex; align-items: center; gap: 12px; font-size: 18px; line-height: 27px; }
+    .desk-card p { color: var(--desk-muted); font-size: 13px; line-height: 21px; }
+    .desk-count, .desk-badge { display: inline-block; padding: 4px 9px; border-radius: 5px; background: #f1f1f1; color: #555; font-size: 11px; line-height: 16px; font-weight: 600; }
+    .desk-badge-needed { background: #f7efe0; color: #72501e; }
+    .desk-badge-active { background: #ebf1f7; color: #35536c; }
+    .desk-table { width: 100%; margin-top: 11px; border-collapse: collapse; table-layout: fixed; text-align: left; }
+    .desk-table th { padding: 7px 9px; background: var(--desk-soft); font-size: 12px; color: var(--desk-muted); }
+    .desk-table th:nth-child(1) { width: 68%; }
+    .desk-table th:nth-child(2) { width: 17%; }
+    .desk-table td { height: 49px; padding: 7px 9px; border-bottom: 1px solid var(--desk-line); font-size: 12px; color: var(--desk-muted); }
+    .desk-table tr:last-child td { border-bottom: 0; }
+    .desk-table strong, .desk-request strong { font-size: 14px; color: var(--heading); }
+    .desk-ticket-id { display: inline-block; width: 63px; font-weight: 600; }
+    .desk-time { white-space: nowrap; }
+    .desk-time svg { float: right; width: 16px; height: 16px; }
+    .desk-request { display: grid; grid-template-columns: minmax(0, 1fr) 31% 14%; align-items: center; min-height: 46px; border-bottom: 1px solid var(--desk-line); color: var(--desk-muted); font-size: 12px; }
+    .desk-request:first-of-type { margin-top: 9px; }
+    .desk-request:last-child { border-bottom: 0; }
+    .desk-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 13px; }
+    .desk-metric { padding: 10px 16px; min-height: 82px; border-radius: 8px; background: var(--desk-soft); color: var(--desk-muted); font-size: 12px; }
+    .desk-metric strong { display: block; margin-top: 4px; color: var(--heading); font-size: 23px; line-height: 34px; }
+    .desk-back { display: inline-block; margin-bottom: 9px; font-size: 13px; font-weight: 600; }
+    .desk-settings-card { margin-top: 21px; padding-bottom: 16px; }
+    .desk-setting-head, .desk-setting-row { display: grid; grid-template-columns: minmax(0, 1fr) 96px 96px; align-items: center; }
+    .desk-setting-head { margin-top: 16px; padding: 7px 0 7px 16px; background: var(--desk-soft); border-radius: 5px; font-size: 12px; color: var(--desk-muted); }
+    .desk-setting-row { min-height: 68px; padding-left: 16px; border-bottom: 1px solid var(--desk-line); }
+    .desk-setting-title { display: flex; align-items: center; gap: 14px; min-width: 0; }
+    .desk-setting-title strong { display: block; font-size: 14px; }
+    .desk-setting-title small { color: var(--desk-muted); font-size: 12px; }
+    .desk-grip { display: inline-flex; color: var(--desk-muted); cursor: grab; }
+    .desk-switch { position: relative; width: 42px; height: 24px; padding: 0; border: 0; border-radius: 12px; background: #8a8a8a; }
+    .desk-switch[aria-checked="true"] { background: var(--primary); }
+    .desk-switch::after { content: ""; position: absolute; left: 3px; top: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--paper); }
+    .desk-switch[aria-checked="true"]::after { left: 21px; }
+    .desk-arrows { display: flex; gap: 7px; }
+    .desk-arrow { width: 36px; height: 34px; border: 1px solid var(--desk-line); border-radius: 6px; background: var(--paper); color: var(--desk-muted); }
+    .desk-arrow:disabled { color: #bdbdbd; cursor: default; }
+    .desk-arrow svg { width: 17px; height: 17px; vertical-align: middle; }
+    .desk-actions { display: flex; gap: 10px; margin-top: 16px; }
+    .desk-actions :first-child { margin-right: auto; }
+    @media (max-width: 760px) {
+      .desk { --rail: 130px; }
+      .desk-content { padding-left: 14px; padding-right: 14px; }
+      .desk-table th:first-child { width: 50%; }
+      .desk-table th:nth-child(2) { width: 24%; }
+      .desk-time svg { display: none; }
+      .desk-request { grid-template-columns: 1fr 26% 23%; }
+      .desk-setting-head, .desk-setting-row { grid-template-columns: minmax(0, 1fr) 58px 80px; }
+      .desk-actions { flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+  <main id="login-screen" class="screen">
+    <section class="login-card" aria-labelledby="login-title">
+      <div class="brand"><span class="logo" aria-hidden="true">?</span><span>섭명뭐</span></div>
+      <h1 id="login-title">로그인</h1>
+      <p class="intro">회사 이메일과 비밀번호를 입력해 주세요.</p>
+
+      <form id="login-form" method="post" novalidate>
+        <div class="field">
+          <label for="email">회사 이메일</label>
+          <input id="email" name="email" type="email" autocomplete="username"
+            placeholder="name@company.com" aria-describedby="email-message auth-message" required>
+          <p id="email-message" class="message field-message" aria-live="polite"></p>
+        </div>
+
+        <div class="field">
+          <label for="password">비밀번호</label>
+          <div class="password">
+            <input id="password" name="password" type="password" autocomplete="current-password"
+              placeholder="비밀번호를 입력해 주세요" aria-describedby="auth-message" required>
+            <button id="visibility" class="text-button visibility" type="button"
+              aria-label="비밀번호 표시" aria-controls="password">표시</button>
+          </div>
+        </div>
+
+        <p id="auth-message" class="message auth-message" aria-live="polite"></p>
+        <button id="submit" class="primary-button" type="submit">로그인</button>
+      </form>
+
+      <button id="open-help" class="text-button help-button" type="button"
+        aria-haspopup="dialog">비밀번호를 잊으셨나요?</button>
+    </section>
+  </main>
+
+  <a id="desk-demo-entry" class="demo-entry" href="#02-01">업무 홈 시안 보기(임시)</a>
+
+  <svg aria-hidden="true" width="0" height="0" style="position:absolute">
+    <symbol id="desk-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10H3zM9 20v-6h6v6"/></symbol>
+    <symbol id="desk-ticket" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M8 10h8m-8 4h5"/></symbol>
+    <symbol id="desk-inbox" viewBox="0 0 24 24"><path d="M6 4h12l3 8v7a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-7zM3 12h5l2 3h4l2-3h5"/></symbol>
+    <symbol id="desk-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="desk-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16M8 5v4m8 1v4m-6 1v4"/></symbol>
+    <symbol id="desk-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></symbol>
+    <symbol id="desk-up" viewBox="0 0 24 24"><path d="m6 14 6-6 6 6"/></symbol>
+    <symbol id="desk-down" viewBox="0 0 24 24"><path d="m6 10 6 6 6-6"/></symbol>
+    <symbol id="desk-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+    <symbol id="desk-grip" viewBox="0 0 24 24"><path d="M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01" stroke-width="3"/></symbol>
+  </svg>
+
+  <div id="desk" class="desk" hidden>
+    <header class="desk-bar">
+      <a class="brand" href="#02-01"><span class="logo" aria-hidden="true">?</span><span>섭명뭐</span></a>
+      <span title="알림"><svg aria-label="알림" role="img"><use href="#desk-bell"/></svg></span>
+      <span class="desk-account" aria-label="내 계정 한서윤"><span class="desk-avatar" aria-hidden="true">한</span>한서윤<svg aria-hidden="true"><use href="#desk-down"/></svg></span>
+    </header>
+    <nav class="desk-nav" aria-label="업무 메뉴">
+      <a class="desk-nav-item" href="#02-01" aria-current="page"><svg aria-hidden="true"><use href="#desk-home"/></svg>업무 홈</a>
+      <span class="desk-nav-item" aria-disabled="true"><svg aria-hidden="true"><use href="#desk-ticket"/></svg>티켓 목록</span>
+      <span class="desk-nav-item" aria-disabled="true"><svg aria-hidden="true"><use href="#desk-inbox"/></svg>받은 요청</span>
+      <span class="desk-nav-item" aria-disabled="true"><svg aria-hidden="true"><use href="#desk-clock"/></svg>팔로업</span>
+      <span class="desk-nav-item desk-nav-settings" aria-disabled="true"><svg aria-hidden="true"><use href="#desk-settings"/></svg>설정</span>
+    </nav>
+    <main class="desk-content">
+      <section id="desk-home-view" aria-labelledby="desk-home-title">
+        <div class="desk-heading">
+          <div><h1 id="desk-home-title">업무 홈</h1><p class="desk-sub">한서윤님의 오늘 업무를 확인하세요.</p></div>
+          <a class="desk-button" href="#02-02"><svg aria-hidden="true"><use href="#desk-settings"/></svg>화면 설정</a>
+        </div>
+        <div id="desk-cards" class="desk-stack">
+          <section class="desk-card" data-card="tickets">
+            <h2>내게 할당된 티켓 <span class="desk-count">3건</span></h2>
+            <p>오늘 배정되었거나 아직 처리가 남은 티켓</p>
+            <table class="desk-table">
+              <thead><tr><th scope="col">티켓</th><th scope="col">상태</th><th scope="col">배정</th></tr></thead>
+              <tbody>
+                <tr><td><span class="desk-ticket-id">#1048</span><strong>환불 진행 상황을 알고 싶어요</strong></td><td><span class="desk-badge desk-badge-needed">답변 필요</span></td><td class="desk-time">오늘 10:42 <svg aria-hidden="true"><use href="#desk-right"/></svg></td></tr>
+                <tr><td><span class="desk-ticket-id">#1046</span><strong>예약 확인서를 다시 보내 주세요</strong></td><td><span class="desk-badge desk-badge-active">처리 중</span></td><td class="desk-time">오늘 09:20 <svg aria-hidden="true"><use href="#desk-right"/></svg></td></tr>
+                <tr><td><span class="desk-ticket-id">#1031</span><strong>결제 취소 내역을 확인해 주세요</strong></td><td><span class="desk-badge desk-badge-needed">답변 필요</span></td><td class="desk-time">전날 16:35 <svg aria-hidden="true"><use href="#desk-right"/></svg></td></tr>
+              </tbody>
+            </table>
+          </section>
+          <section class="desk-card" data-card="requests">
+            <h2>받은 요청 <span class="desk-count">2건</span></h2>
+            <p>나에게 들어온 검토 요청</p>
+            <div class="desk-request"><strong>환불 안내 답변 검토</strong><span>박유진 · #1048</span><span class="desk-time">오늘 10:08 <svg aria-hidden="true"><use href="#desk-right"/></svg></span></div>
+            <div class="desk-request"><strong>배송 지연 안내 검토</strong><span>이도윤 · #1042</span><span class="desk-time">오늘 09:36 <svg aria-hidden="true"><use href="#desk-right"/></svg></span></div>
+          </section>
+          <section class="desk-card" data-card="performance">
+            <h2>내 실적</h2><p>처리 건수</p>
+            <div class="desk-metrics"><div class="desk-metric">오늘<strong>12건</strong></div><div class="desk-metric">전날<strong>15건</strong></div></div>
+          </section>
+        </div>
+        <p id="desk-empty" class="desk-card" hidden>표시할 카드가 없습니다. 화면 설정에서 카드를 추가할 수 있습니다.</p>
+      </section>
+      <section id="desk-settings-view" aria-labelledby="desk-settings-title" hidden>
+        <a class="desk-back" href="#02-01">‹ 업무 홈</a>
+        <h1 id="desk-settings-title">화면 설정</h1>
+        <p class="desk-sub">업무 홈에 표시할 카드와 순서를 설정하세요.</p>
+        <section class="desk-card desk-settings-card" aria-labelledby="desk-card-settings-title">
+          <h2 id="desk-card-settings-title">카드 표시 및 순서</h2>
+          <p>위아래 버튼이나 드래그로 카드 순서를 변경할 수 있습니다.</p>
+          <div class="desk-setting-head" aria-hidden="true"><span>카드</span><span>표시</span><span>순서</span></div>
+          <div id="desk-settings-rows"></div>
+          <div class="desk-actions">
+            <button type="button" class="desk-button" id="desk-reset">기본 배치로 되돌리기</button>
+            <a href="#02-01" class="desk-button">취소</a>
+            <button type="button" class="desk-button desk-button-solid" id="desk-save">저장</button>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="password-help" class="help-dialog" aria-labelledby="help-title"
+    aria-describedby="help-description">
+    <h2 id="help-title">비밀번호 분실 안내</h2>
+    <div id="help-description">
+      <p>사내 관리자에게 비밀번호 초기화를 요청해 주세요. 요청할 때 회사 이메일을 함께 알려주면 관리자가 계정을 확인할 수 있습니다.</p>
+      <p>관리자가 비밀번호를 초기화하면 전달받은 비밀번호로 로그인해 주세요.</p>
+    </div>
+    <form method="dialog" style="margin: 0">
+      <button class="primary-button" autofocus>확인</button>
+    </form>
+  </dialog>
+
+  <script>
+    const loginForm = document.querySelector('#login-form');
+    const email = document.querySelector('#email');
+    const password = document.querySelector('#password');
+    const visibility = document.querySelector('#visibility');
+    const emailMessage = document.querySelector('#email-message');
+    const authMessage = document.querySelector('#auth-message');
+    const submit = document.querySelector('#submit');
+    const openHelp = document.querySelector('#open-help');
+    const help = document.querySelector('#password-help');
+
+    visibility.addEventListener('click', () => {
+      const show = password.type === 'password';
+      password.type = show ? 'text' : 'password';
+      visibility.textContent = show ? '숨기기' : '표시';
+      visibility.setAttribute('aria-label', show ? '비밀번호 숨기기' : '비밀번호 표시');
+    });
+
+    openHelp.addEventListener('click', () => help.showModal());
+
+    function clearErrors() {
+      email.removeAttribute('aria-invalid');
+      password.removeAttribute('aria-invalid');
+      emailMessage.textContent = '';
+      authMessage.textContent = '';
+    }
+
+    loginForm.addEventListener('input', clearErrors);
+
+    function setPending(pending) {
+      submit.disabled = pending;
+      email.readOnly = pending;
+      password.readOnly = pending;
+      submit.textContent = pending ? '로그인 중…' : '로그인';
+      loginForm.setAttribute('aria-busy', String(pending));
+    }
+
+    loginForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (submit.disabled) return;
+
+      clearErrors();
+      if (!email.value || email.validity.typeMismatch) {
+        email.setAttribute('aria-invalid', 'true');
+        emailMessage.textContent = email.value ? '회사 이메일 형식을 확인해 주세요.' : '회사 이메일을 입력해 주세요.';
+        email.focus();
+        return;
+      }
+      if (!password.value) {
+        password.setAttribute('aria-invalid', 'true');
+        authMessage.textContent = '비밀번호를 입력해 주세요.';
+        password.focus();
+        return;
+      }
+
+      // 시안 확인용으로 로그인 요청 중과 인증 실패 상태를 순서대로 표시한다.
+      // 로그인 API 계약이 확정되면 이 지연을 실제 요청과 응답 처리로 교체한다.
+      setPending(true);
+      await new Promise(resolve => setTimeout(resolve, 800));
+      setPending(false);
+      email.setAttribute('aria-invalid', 'true');
+      password.setAttribute('aria-invalid', 'true');
+      authMessage.textContent = '이메일 또는 비밀번호를 확인해 주세요.';
+    });
+
+    const desk = document.querySelector('#desk');
+    const deskHome = document.querySelector('#desk-home-view');
+    const deskSettings = document.querySelector('#desk-settings-view');
+    const deskCards = document.querySelector('#desk-cards');
+    const deskRows = document.querySelector('#desk-settings-rows');
+    const cardDefinitions = {
+      tickets: ['내게 할당된 티켓', '오늘 배정된 티켓과 처리가 남은 티켓'],
+      requests: ['받은 요청', '나에게 들어온 검토 요청'],
+      performance: ['내 실적', '오늘과 전날의 처리 건수']
+    };
+    const defaultCards = () => Object.keys(cardDefinitions).map(id => ({ id, visible: true }));
+    const cardElements = new Map([...deskCards.children].map(card => [card.dataset.card, card]));
+    const storageKey = 'voc.work-home.han-seoyun.v1';
+
+    function loadDeskCards() {
+      try {
+        const cards = JSON.parse(localStorage.getItem(storageKey));
+        const ids = Object.keys(cardDefinitions);
+        if (Array.isArray(cards) && cards.length === ids.length &&
+            new Set(cards.map(card => card?.id)).size === ids.length &&
+            cards.every(card => ids.includes(card?.id) && typeof card.visible === 'boolean')) return cards;
+      } catch {
+        // A local file preview can run with browser storage disabled.
+      }
+      return defaultCards();
+    }
+
+    let savedCards = loadDeskCards();
+    let editingCards = defaultCards();
+    let draggedCard = null;
+
+    function renderDeskHome() {
+      for (const { id, visible } of savedCards) {
+        const element = cardElements.get(id);
+        element.hidden = !visible;
+        deskCards.append(element);
+      }
+      document.querySelector('#desk-empty').hidden = savedCards.some(card => card.visible);
+    }
+
+    function deskIcon(id) {
+      return '<svg aria-hidden="true"><use href="#desk-' + id + '"/></svg>';
+    }
+
+    function renderDeskSettings() {
+      deskRows.innerHTML = editingCards.map(({ id, visible }, index) => {
+        const [title, description] = cardDefinitions[id];
+        const disabledUp = index === 0 ? ' disabled' : '';
+        const disabledDown = index === editingCards.length - 1 ? ' disabled' : '';
+        return '<div class="desk-setting-row" data-id="' + id + '">' +
+          '<div class="desk-setting-title"><span class="desk-grip" draggable="true">' + deskIcon('grip') + '</span>' +
+          '<span><strong>' + title + '</strong><small>' + description + '</small></span></div>' +
+          '<button type="button" class="desk-switch" role="switch" aria-label="' + title + ' 표시" aria-checked="' + visible + '"></button>' +
+          '<div class="desk-arrows"><button type="button" class="desk-arrow" data-direction="up" aria-label="' + title + ' 위로 이동"' + disabledUp + '>' + deskIcon('up') + '</button>' +
+          '<button type="button" class="desk-arrow" data-direction="down" aria-label="' + title + ' 아래로 이동"' + disabledDown + '>' + deskIcon('down') + '</button></div></div>';
+      }).join('');
+    }
+
+    function moveDeskCard(id, destination) {
+      const index = editingCards.findIndex(card => card.id === id);
+      if (index < 0 || destination < 0 || destination >= editingCards.length || index === destination) return;
+      const [card] = editingCards.splice(index, 1);
+      editingCards.splice(destination, 0, card);
+      renderDeskSettings();
+    }
+
+    deskRows.addEventListener('click', event => {
+      const button = event.target.closest('button');
+      if (!button) return;
+      const { id } = button.closest('[data-id]').dataset;
+      const index = editingCards.findIndex(card => card.id === id);
+      if (button.getAttribute('role') === 'switch') {
+        editingCards[index].visible = !editingCards[index].visible;
+        button.setAttribute('aria-checked', String(editingCards[index].visible));
+        return;
+      }
+      const direction = button.dataset.direction;
+      moveDeskCard(id, index + (direction === 'up' ? -1 : 1));
+      const row = deskRows.querySelector('[data-id="' + id + '"]');
+      (row.querySelector('[data-direction="' + direction + '"]:not(:disabled)') ||
+        row.querySelector('.desk-arrow:not(:disabled)'))?.focus();
+    });
+
+    deskRows.addEventListener('dragstart', event => {
+      const handle = event.target.closest('.desk-grip');
+      if (!handle) return;
+      draggedCard = handle.closest('[data-id]').dataset.id;
+      event.dataTransfer.setData('text/plain', draggedCard);
+      event.dataTransfer.effectAllowed = 'move';
+    });
+    deskRows.addEventListener('dragover', event => {
+      if (draggedCard && event.target.closest('[data-id]')) event.preventDefault();
+    });
+    deskRows.addEventListener('drop', event => {
+      const row = event.target.closest('[data-id]');
+      if (!draggedCard || !row) return;
+      event.preventDefault();
+      moveDeskCard(draggedCard, editingCards.findIndex(card => card.id === row.dataset.id));
+      draggedCard = null;
+    });
+    deskRows.addEventListener('dragend', () => { draggedCard = null; });
+
+    document.querySelector('#desk-reset').addEventListener('click', () => {
+      editingCards = defaultCards();
+      renderDeskSettings();
+    });
+    document.querySelector('#desk-save').addEventListener('click', () => {
+      savedCards = editingCards.map(card => ({ ...card }));
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(savedCards));
+      } catch {
+        // The current preview keeps its preferences in memory.
+      }
+      location.hash = '02-01';
+    });
+
+    function showScreenFromHash() {
+      const settings = location.hash === '#02-02';
+      const workHome = settings || location.hash === '#02-01';
+      document.querySelector('#login-screen').hidden = workHome;
+      document.querySelector('#desk-demo-entry').hidden = workHome;
+      desk.hidden = !workHome;
+      deskHome.hidden = settings;
+      deskSettings.hidden = !settings;
+      document.title = (settings ? '화면 설정' : workHome ? '업무 홈' : '로그인') + ' | 섭명뭐';
+      if (workHome && help.open) help.close();
+      if (settings) {
+        editingCards = savedCards.map(card => ({ ...card }));
+        renderDeskSettings();
+      } else if (workHome) {
+        renderDeskHome();
+      }
+      window.scrollTo(0, 0);
+    }
+    window.addEventListener('hashchange', showScreenFromHash);
+    showScreenFromHash();
+  </script>
+</body>
+</html>
