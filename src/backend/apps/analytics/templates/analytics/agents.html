@@ -1,1 +1,42 @@
-<section class="analytics-card"><h2>상담사별 실적</h2></section>
+{% if agent %}
+  {% include "analytics/metrics.html" %}
+  {% if agent.done is not None %}
+    <section class="analytics-card analytics-distribution">
+      <h2>기간별 처리 완료 비교</h2>
+      <table class="analytics-table">
+        <thead><tr><th scope="col">기간</th><th scope="col">처리 완료 건수</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">선택 기간</th><td>{{ agent.done }}건</td></tr>
+          <tr><th scope="row">비교 기간</th><td>{{ agent.previous_done }}건</td></tr>
+        </tbody>
+      </table>
+    </section>
+  {% endif %}
+  {% if chart and pending %}
+    <div class="analytics-detail-grid analytics-distribution">
+      {% include "analytics/chart.html" with chart_title="배정·처리 완료 추이" table_title="일별 건수 보기" %}
+      {% include "analytics/pending.html" with pending_title="현재 미처리 티켓 구성" %}
+    </div>
+  {% endif %}
+{% else %}
+  <section class="analytics-card analytics-individual"><h2>상담사별 실적</h2>
+    <div class="analytics-table-scroll"><table class="analytics-table">
+      <thead><tr>
+        <th scope="col">상담사</th><th scope="col">소속 팀</th><th scope="col">기간 내 배정</th>
+        <th scope="col">기간 내 처리 완료</th><th scope="col">미처리 할당</th><th scope="col">미처리 이관</th>
+        <th scope="col">미회신 검토</th><th scope="col">첫 답변 중앙값</th>
+      </tr></thead>
+      <tbody>{% for row in agents %}<tr>
+        <th scope="row"><a class="analytics-agent-link" href="{% querystring agent=row.id %}">{{ row.name }}</a></th>
+        <td>{{ row.team|default:"—" }}</td>
+        <td>{% if row.assigned is None %}—{% else %}{{ row.assigned }}건{% endif %}</td>
+        <td>{% if row.done is None %}—{% else %}{{ row.done }}건{% endif %}</td>
+        <td>{% if row.pending_assigned is None %}—{% else %}{{ row.pending_assigned }}건{% endif %}</td>
+        <td>{% if row.pending_transferred is None %}—{% else %}{{ row.pending_transferred }}건{% endif %}</td>
+        <td>{% if row.review_pending is None %}—{% else %}{{ row.review_pending }}건{% endif %}</td>
+        <td>{{ row.first_answer }}</td>
+      </tr>{% empty %}<tr><td colspan="8">조회할 상담사가 없습니다.</td></tr>{% endfor %}</tbody>
+    </table></div>
+    <p class="analytics-muted analytics-individual-notes">처리 완료는 실제 완료한 상담사를 기준으로 합니다. 미처리와 미회신 검토는 조회 시점 기준입니다.</p>
+  </section>
+{% endif %}

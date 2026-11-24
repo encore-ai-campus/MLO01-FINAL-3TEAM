@@ -167,3 +167,5 @@
 .analytics-period { margin: -12px 0 14px; }
 .analytics-chart-table summary { cursor: pointer; color: var(--desk-muted); font-size: 13px; }
 .analytics-distribution { margin-top: 16px; }
+.analytics-source-note { margin: 0 0 12px; padding: 7px 10px; background: #fff3dc; border-radius: 6px; }
+.analytics-agent-heading + .analytics-period { margin-top: 6px; }

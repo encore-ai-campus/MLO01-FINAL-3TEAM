@@ -3,8 +3,13 @@
 {% block styles %}<link rel="stylesheet" href="{% static 'analytics/analytics.css' %}">{% endblock %}
 {% block content %}
 <section class="analytics" aria-labelledby="analytics-title">
-  <h1 id="analytics-title">VoC 분석 대시보드</h1>
-  <div class="analytics-toolbar">
+  {% if agent %}
+    <a class="desk-button analytics-detail-back" href="{% querystring agent=None %}">‹ 상담사별 실적</a>
+    <div class="analytics-agent-heading">
+      <div><h1 id="analytics-title">{{ agent.name }} 상담사 상세</h1><p class="analytics-muted">{{ agent.team|default:"소속 팀 없음" }}</p></div>
+    </div>
+  {% else %}<h1 id="analytics-title">VoC 분석 대시보드</h1>{% endif %}
+  {% if not agent %}<div class="analytics-toolbar">
     <nav aria-label="분석 보기">
       <a class="desk-button" {% if tab == "summary" %}aria-current="page"{% endif %} href="{% url 'workspace:analytics' %}?tab=summary&amp;period={{ period }}&amp;scope={{ scope }}">조직·팀 실적</a>
       <a class="desk-button" {% if tab == "agents" %}aria-current="page"{% endif %} href="{% url 'workspace:analytics' %}?tab=agents&amp;period={{ period }}&amp;scope={{ scope }}">상담사별 실적</a>
@@ -15,8 +20,10 @@
       <label>조직 범위<select name="scope">{% for key, label in scopes %}<option value="{{ key }}" {% if key == scope %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
       <button class="desk-button" type="submit">조회</button>
     </form>
-  </div>
+  </div>{% endif %}
   <p class="analytics-muted analytics-period">{{ scope_name }} · {{ bounds.dates|first|date:"Y-m-d" }} ~ {{ bounds.dates|last|date:"Y-m-d" }} · 한국시간 · 비교 {{ bounds.compare_dates|first|date:"Y-m-d" }} ~ {{ bounds.compare_dates|last|date:"Y-m-d" }}</p>
+  {% if unavailable %}<p class="analytics-muted analytics-source-note">이력 연결 대기 · {{ unavailable|join:", " }}</p>{% endif %}
+  {% if missing_completions %}<p class="analytics-muted analytics-source-note">선택 범위에서 완료 이력이 확인되지 않은 티켓 {{ missing_completions }}건은 완료 수에 포함되지 않습니다.</p>{% endif %}
   {% if tab == "agents" %}
     {% include "analytics/agents.html" %}
   {% else %}
