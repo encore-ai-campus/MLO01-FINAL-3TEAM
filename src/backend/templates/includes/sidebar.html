@@ -1,0 +1,8 @@
+<nav class="desk-nav" aria-label="업무 메뉴">
+  <a class="desk-nav-item" href="/home/" {% if active == "home" %}aria-current="page"{% endif %}><svg aria-hidden="true"><use href="#desk-home"></use></svg>업무 홈</a>
+  <a class="desk-nav-item" href="/tickets/" {% if active == "tickets" or active == "mine" or active == "detail" %}aria-current="page"{% endif %}><svg aria-hidden="true"><use href="#desk-ticket"></use></svg>티켓 목록</a>
+  <a class="desk-nav-item" href="/inbox/" {% if active == "inbox" %}aria-current="page"{% endif %}><svg aria-hidden="true"><use href="#desk-inbox"></use></svg>받은 요청</a>
+  <span class="desk-nav-item" aria-disabled="true"><svg aria-hidden="true"><use href="#desk-clock"></use></svg>팔로업</span>
+  <a class="desk-nav-item" href="/analytics/" {% if active == "analytics" %}aria-current="page"{% endif %}><svg aria-hidden="true"><use href="#desk-analytics"></use></svg>분석 대시보드</a>
+  <span class="desk-nav-item desk-nav-settings" aria-disabled="true"><svg aria-hidden="true"><use href="#desk-settings"></use></svg>설정</span>
+</nav>

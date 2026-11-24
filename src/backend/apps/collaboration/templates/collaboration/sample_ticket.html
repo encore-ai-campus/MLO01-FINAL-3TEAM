@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% load static %}
+{% block title %}티켓 #{{ row.id }}{% endblock %}
+{% block styles %}<link rel="stylesheet" href="{% static 'collaboration/inbox.css' %}">{% endblock %}
+{% block content %}
+<section class="inbox-page">
+  <a class="desk-button" href="{% url 'workspace:inbox' %}">‹ 받은 요청</a>
+  <h1>{{ row.title }}</h1><p class="inbox-ticket-meta">#{{ row.id }} · 예시 티켓</p>
+  <dl class="inbox-detail-meta"><dt>접수일자</dt><dd>{{ profile.receivedAt }}</dd><dt>카테고리</dt><dd>{{ row.category }}</dd><dt>감성</dt><dd>{{ row.sentiment }}</dd><dt>상태</dt><dd>{{ row.status }}</dd></dl>
+  {% for item in requests %}<section class="inbox-note"><h2>{{ item.title }}</h2><p>{{ item.memo }}</p></section>{% endfor %}
+</section>
+{% endblock %}

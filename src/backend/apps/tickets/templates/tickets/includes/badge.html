@@ -1,0 +1,1 @@
+{% load ticket_ui %}{% with color=value|badge_color %}{% if color %}<span class="ticket-badge badge-{{ color }}">{{ value }}</span>{% else %}{{ value }}{% endif %}{% endwith %}

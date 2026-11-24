@@ -1,0 +1,85 @@
+{% extends 'base.html' %}
+{% load static ticket_ui %}
+{% block title %}티켓 목록{% endblock %}
+{% block styles %}<link rel="stylesheet" href="{% static 'tickets/list.css' %}">{% endblock %}
+{% block content %}
+{% list_controls request.GET options page page_size total as ui %}
+<section class="ticket-list" aria-labelledby="ticket-list-title">
+  <h1 id="ticket-list-title">티켓 목록</h1>
+  <nav class="ticket-tabs" aria-label="티켓 범위">
+    <a class="desk-button" href="{% querystring scope='all' page=None %}" {% if scope != 'mine' %}aria-current="page"{% endif %}>전체 티켓</a>
+    <a class="desk-button" href="{% querystring scope='mine' page=None %}" {% if scope == 'mine' %}aria-current="page"{% endif %}>내게 할당된 티켓</a>
+  </nav>
+  <form class="ticket-search" method="get">
+    {% retained_fields request.GET 'search_by q page' as fields %}
+    {% include 'tickets/includes/hidden_fields.html' %}
+    <select name="search_by" aria-label="검색 대상">
+      <option value="title">제목</option>
+      <option value="customer" {% if request.GET.search_by == 'customer' %}selected{% endif %}>고객 ID</option>
+      <option value="id" {% if request.GET.search_by == 'id' %}selected{% endif %}>티켓 ID</option>
+    </select>
+    <input type="search" name="q" aria-label="검색어" value="{{ request.GET.q }}" maxlength="50" placeholder="검색어를 입력해 주세요">
+    <button type="submit" class="desk-button desk-button-solid">검색</button>
+  </form>
+  <div class="ticket-toolbar">
+    <div class="ticket-results" aria-live="polite">
+      <strong>조회 결과 {{ total }}건</strong>
+      {% for label in ui.labels %}<span>{{ label }}</span>{% endfor %}
+      {% if ui.labels or request.GET.q %}<a class="desk-button" href="{% url 'tickets:list' %}?scope={{ scope|urlencode }}">초기화</a>{% endif %}
+    </div>
+    <div class="ticket-tools">
+      <form id="ticket-size-form" method="get">
+        {% retained_fields request.GET 'page_size page' as fields %}{% include 'tickets/includes/hidden_fields.html' %}
+        <label for="ticket-page-size">페이지당</label>
+        <select id="ticket-page-size" name="page_size">
+          {% for size in ui.page_sizes %}<option value="{{ size }}" {% if size == page_size %}selected{% endif %}>{{ size }}건</option>{% endfor %}
+        </select>
+        <noscript><button class="desk-button" type="submit">적용</button></noscript>
+      </form>
+      <button type="button" class="desk-button" id="open-filters" aria-haspopup="dialog" hidden>필터 설정</button>
+    </div>
+  </div>
+  {% include 'tickets/includes/filters.html' %}
+  <div class="ticket-table-wrap">
+    <table class="ticket-table">
+      <colgroup><col style="width:5%"><col style="width:10%"><col style="width:23%"><col style="width:10%"><col style="width:10%"><col style="width:9%"><col style="width:10%"><col style="width:9%"><col style="width:14%"></colgroup>
+      <thead><tr>
+        <th scope="col">행 번호</th><th scope="col">티켓번호</th><th scope="col">제목</th><th scope="col">카테고리</th><th scope="col">담당 부서</th><th scope="col">담당자</th><th scope="col">처리 상태</th><th scope="col">감성</th>
+        <th scope="col" class="ticket-sort-column" aria-sort="{% if ui.descending %}descending{% else %}ascending{% endif %}">
+          <a id="ticket-sort" href="{% querystring sort=ui.next_sort page=None %}"><span class="ticket-sort-title">업데이트 / 접수 <span aria-hidden="true">↕</span></span><span class="ticket-sort-label">{{ ui.sort_label }}</span></a>
+        </th>
+      </tr></thead>
+      <tbody>
+        {% for ticket in items %}
+          <tr data-ticket="{{ ticket.ticket_number }}">
+            <td class="ticket-row-number">{{ forloop.counter|add:ui.offset }}</td><td>#{{ ticket.ticket_number }}</td>
+            <th scope="row"><a class="ticket-detail-link" href="{% url 'tickets:detail' ticket.ticket_uuid %}{% querystring %}">{{ ticket.title }}</a></th>
+            <td>{% include 'tickets/includes/badge.html' with value=ticket|analysis_label:'category' %}</td>
+            <td>{% if ticket.team_name %}{{ ticket.team_name }}{% else %}{% include 'tickets/includes/badge.html' with value='미배정' %}{% endif %}</td>
+            <td>{{ ticket.assignee_name|default:'미지정' }}</td>
+            <td>{% include 'tickets/includes/badge.html' with value=ticket.status %}</td>
+            <td>{% include 'tickets/includes/badge.html' with value=ticket|analysis_label:'sentiment' %}</td>
+            <td class="ticket-updated-cell">
+              <time data-relative datetime="{{ ticket.updated_at|timestamp }}">{{ ticket.updated_at|updated_label }}</time>
+              <time class="ticket-received-date" datetime="{{ ticket.created_at|timestamp }}">접수 {{ ticket.created_at|received_label }}</time>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if not items %}
+      <div class="ticket-empty"><strong>{% if ui.labels or request.GET.q %}검색 조건에 맞는 티켓이 없습니다.{% elif scope == 'mine' %}내게 할당된 티켓이 없습니다.{% else %}접수된 티켓이 없습니다.{% endif %}</strong>
+        {% if ui.labels or request.GET.q %}<a class="desk-button" href="{% url 'tickets:list' %}?scope={{ scope|urlencode }}">조건 초기화</a>{% endif %}
+      </div>
+    {% endif %}
+  </div>
+  {% if ui.pages %}
+    <nav class="ticket-pagination" aria-label="페이지 이동"><div class="ticket-page-controls">
+      {% if ui.previous_group %}<a class="desk-button" aria-label="첫 페이지" href="{% querystring page=1 %}">«</a><a class="desk-button" aria-label="이전 10페이지" href="{% querystring page=ui.previous_group %}">‹</a>{% endif %}
+      {% for number in ui.numbers %}<a class="desk-button" href="{% querystring page=number %}" aria-label="{{ number }}페이지" {% if number == page %}aria-current="page"{% endif %}>{{ number }}</a>{% endfor %}
+      {% if ui.next_group %}<a class="desk-button" aria-label="다음 10페이지" href="{% querystring page=ui.next_group %}">›</a><a class="desk-button" aria-label="마지막 페이지" href="{% querystring page=ui.pages %}">»</a>{% endif %}
+    </div><span class="ticket-page-count">{{ page }} / {{ ui.pages }} 페이지</span></nav>
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}<script src="{% static 'tickets/list.js' %}" defer></script>{% endblock %}

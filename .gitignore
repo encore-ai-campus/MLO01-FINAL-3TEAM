@@ -14,6 +14,7 @@ client_secret_*.json
 !.env.example
 discord-token
 postgres-password
+django-secret-key
 client_secret*.json
 authorized_user*.json
 *.pem
@@ -40,3 +41,4 @@ exports/
 .venv/
 node_modules/
 dist/
+src/backend/staticfiles/

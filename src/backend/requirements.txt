@@ -1,0 +1,5 @@
+Django>=5.2.8,<5.3
+whitenoise>=6.9,<7
+uvicorn>=0.35,<1
+argon2-cffi>=25.1,<26
+psycopg2-binary>=2.9.10,<3

@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}요청을 처리할 수 없습니다{% endblock %}
+{% block content %}
+<section>
+  <h1>요청을 처리할 수 없습니다</h1>
+  <p role="alert">{{ error }}</p>
+  <a class="desk-button" href="{% url 'workspace:home' %}">업무 홈</a>
+</section>
+{% endblock %}

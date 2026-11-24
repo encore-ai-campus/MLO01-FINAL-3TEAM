@@ -2,7 +2,7 @@ name: encore-voc-collector
 x-worker: &worker
   image: encore-voc-collector:local
   build:
-    context: .
+    context: ./src
     dockerfile: collector/Dockerfile
   restart: unless-stopped
   init: true
@@ -16,7 +16,7 @@ x-initialized: &initialized
     condition: service_completed_successfully
 x-flink: &flink
   image: encore-voc-flink:local
-  build: ./collector/flink
+  build: ./src/collector/flink
   restart: unless-stopped
   volumes:
     - flink_checkpoints:/opt/flink/checkpoints
@@ -134,14 +134,13 @@ services:
     secrets: [postgres_password]
     depends_on: *initialized
   ticket-desk:
-    build:
-      context: .
-      dockerfile: services/ticket-desk/Dockerfile
+    build: ./src/backend
     restart: unless-stopped
     init: true
     environment:
       DATABASE_URL: postgresql://voc@postgres/voc
-    secrets: [postgres_password]
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,[::1]}
+    secrets: [postgres_password, django_secret_key]
     ports: ["127.0.0.1:18082:8000"]
     depends_on: *initialized
     healthcheck:
@@ -163,6 +162,7 @@ volumes:
   kafka_data:
   flink_checkpoints:
 secrets:
+  django_secret_key: {file: ./.local/collector/django-secret-key}
   postgres_password: {file: ./.local/collector/postgres-password}
   discord_token: {file: ./.local/collector/discord-token}
   gmail_token: {file: ./.local/channel-probe/token.json}

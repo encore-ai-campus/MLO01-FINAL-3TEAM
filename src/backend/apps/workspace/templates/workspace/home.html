@@ -1,0 +1,55 @@
+{% extends "base.html" %}{% load static %}
+{% block title %}업무 홈{% endblock %}
+{% block styles %}<link rel="stylesheet" href="{% static 'workspace/home.css' %}">{% endblock %}
+{% block content %}
+<section id="desk-home-view" data-owner="{{ actor.company_uuid }}:{{ actor.staff_user_uuid }}" aria-labelledby="desk-home-title">
+  <div class="desk-heading">
+    <div><h1 id="desk-home-title">업무 홈</h1><p class="desk-sub">{{ actor.name|default:actor.email }}님의 오늘 업무를 확인하세요. · 예시 데이터</p></div>
+    <a class="desk-button" href="#02-02"><svg aria-hidden="true"><use href="#desk-settings"/></svg>화면 설정</a>
+  </div>
+  <div id="desk-cards" class="desk-stack">
+    <section class="desk-card" data-card="tickets">
+      <h2>내게 할당된 티켓 <span class="desk-count">3건</span></h2>
+      <p>오늘 배정되었거나 아직 처리가 남은 티켓</p>
+      <a class="desk-ticket-list-link" href="/tickets/?scope=mine">전체 보기</a>
+      <table class="desk-table">
+        <thead><tr><th scope="col">티켓</th><th scope="col">상태</th><th scope="col">배정</th></tr></thead>
+        <tbody>
+          <tr><td><span class="desk-ticket-id">#1048</span><strong>환불 진행 상황을 알고 싶어요</strong></td><td><span class="desk-badge desk-badge-needed">답변 필요</span></td><td class="desk-time">오늘 10:42 <svg aria-hidden="true"><use href="#desk-right"/></svg></td></tr>
+          <tr><td><span class="desk-ticket-id">#1046</span><strong>예약 확인서를 다시 보내 주세요</strong></td><td><span class="desk-badge desk-badge-active">처리 중</span></td><td class="desk-time">오늘 09:20 <svg aria-hidden="true"><use href="#desk-right"/></svg></td></tr>
+          <tr><td><span class="desk-ticket-id">#1031</span><strong>결제 취소 내역을 확인해 주세요</strong></td><td><span class="desk-badge desk-badge-needed">답변 필요</span></td><td class="desk-time">전날 16:35 <svg aria-hidden="true"><use href="#desk-right"/></svg></td></tr>
+        </tbody>
+      </table>
+    </section>
+    <section class="desk-card" data-card="requests">
+      <h2>받은 요청 <span class="desk-count">2건</span></h2>
+      <p>나에게 들어온 검토 요청</p>
+      <a class="desk-ticket-list-link" href="/inbox/?tab=review">전체 보기</a>
+      <a class="desk-request" href="/inbox/?tab=review&amp;request=review-1048"><strong>환불 안내 답변 검토</strong><span>박유진 · #1048</span><span class="desk-time">오늘 10:08 <svg aria-hidden="true"><use href="#desk-right"/></svg></span></a>
+      <a class="desk-request" href="/inbox/?tab=review&amp;request=review-1042"><strong>배송 지연 안내 검토</strong><span>이도윤 · #1042</span><span class="desk-time">오늘 09:36 <svg aria-hidden="true"><use href="#desk-right"/></svg></span></a>
+    </section>
+    <section class="desk-card" data-card="performance">
+      <h2>내 실적</h2><p>처리 건수</p>
+      <div class="desk-metrics"><div class="desk-metric">오늘<strong>12건</strong></div><div class="desk-metric">전날<strong>15건</strong></div></div>
+    </section>
+  </div>
+  <p id="desk-empty" class="desk-card" hidden>표시할 카드가 없습니다. 화면 설정에서 카드를 추가할 수 있습니다.</p>
+</section>
+<section id="desk-settings-view" aria-labelledby="desk-settings-title" hidden>
+  <a class="desk-back" href="#02-01">‹ 업무 홈</a>
+  <h1 id="desk-settings-title">화면 설정</h1>
+  <p class="desk-sub">업무 홈에 표시할 카드와 순서를 설정하세요.</p>
+  <section class="desk-card desk-settings-card" aria-labelledby="desk-card-settings-title">
+    <h2 id="desk-card-settings-title">카드 표시 및 순서</h2>
+    <p>위아래 버튼이나 드래그로 카드 순서를 변경할 수 있습니다.</p>
+    <div class="desk-setting-head" aria-hidden="true"><span>카드</span><span>표시</span><span>순서</span></div>
+    <div id="desk-settings-rows"></div>
+    <div class="desk-actions">
+      <button type="button" class="desk-button" id="desk-reset">기본 배치로 되돌리기</button>
+      <a href="#02-01" class="desk-button">취소</a>
+      <button type="button" class="desk-button desk-button-solid" id="desk-save">저장</button>
+    </div>
+  </section>
+</section>
+{% endblock %}
+{% block scripts %}<script defer src="{% static 'workspace/home.js' %}"></script>{% endblock %}
