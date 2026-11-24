@@ -175,19 +175,39 @@ class FormatTests(unittest.TestCase):
                 pass
             def get_channel(self, channel_id):
                 channel = Mock(spec=discord.TextChannel)
+                channel.name = "문의-테스트"
+                channel.jump_url = "https://discord.com/channels/3003/2002"
                 channel.permissions_for.return_value.view_channel = True
                 return channel
             async def start(self, token):
                 await self.on_ready()
                 await self.on_socket_raw_receive(json.dumps({"t":"READY","op":0,"d":{}}))
+                for changes in (
+                    {"channel_id": "999", "content": "다른 채널 본문"},
+                    {"webhook_id": "55"},
+                    {"content": "표식 없는 문의 본문"},
+                    {"content": "두 번째 표식 없는 문의"},
+                    {"content": ""},
+                ):
+                    frame = gateway()
+                    frame["d"].update(changes)
+                    await self.on_socket_raw_receive(json.dumps(frame))
                 await self.on_socket_raw_receive(json.dumps(gateway()))
                 await asyncio.sleep(60)
             async def close(self):
                 pass
-        with patch.object(discord, "Client", FakeClient), patch("builtins.print"):
+        with patch.object(discord, "Client", FakeClient), patch("builtins.print") as output:
             raw, is_thread = asyncio.run(providers.receive_discord(RUN,CHANNEL,"unit-only",2))
         self.assertEqual(raw,gateway())
         self.assertFalse(is_thread)
+        lines = [call.args[0] for call in output.call_args_list]
+        self.assertIn("https://discord.com/channels/3003/2002", lines[0])
+        self.assertEqual(len(lines), 4)  # READY plus one hint per skip reason.
+        self.assertIn("봇이나 웹훅", lines[1])
+        self.assertIn("표식이 일치하지 않습니다", lines[2])
+        self.assertIn("텍스트가 비어 있습니다", lines[3])
+        self.assertNotIn("문의 본문", "\n".join(lines))
+        self.assertNotIn("다른 채널 본문", "\n".join(lines))
 
 
 if __name__ == "__main__":

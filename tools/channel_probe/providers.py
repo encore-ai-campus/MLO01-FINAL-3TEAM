@@ -11,7 +11,7 @@ import time
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from .artifacts import read_json, write_json
-from .normalize import ProbeError, SAMPLE_TEXT, header, is_discord_test, marked_text
+from .normalize import ProbeError, SAMPLE_TEXT, discord_message_status, header, marked_text
 
 
 def secret(name):
@@ -75,18 +75,30 @@ async def receive_discord(run, channel_id, token, timeout):
     client = discord.Client(intents=intents, enable_debug_events=True, max_messages=None)
     result = asyncio.get_running_loop().create_future()
     target = None
+    reported = set()
+    skip_reasons = {
+        "automated": "봇이나 웹훅이 작성한 글입니다. 사람 계정으로 새 메시지를 보내세요.",
+        "empty": "수신한 글의 텍스트가 비어 있습니다. 아래 테스트 문장을 일반 텍스트로 보내세요.",
+        "unmarked": f"사람이 쓴 글을 받았지만 [{run}] 표식이 일치하지 않습니다.",
+    }
 
     @client.event
     async def on_ready():
         nonlocal target
         try:
-            target = client.get_channel(int(channel_id)) or await client.fetch_channel(int(channel_id))
-            if not isinstance(target, (discord.TextChannel, discord.Thread)):
+            channel = client.get_channel(int(channel_id)) or await client.fetch_channel(int(channel_id))
+            if not isinstance(channel, (discord.TextChannel, discord.Thread)):
                 raise ProbeError("테스트 서버의 텍스트 채널 또는 문의 스레드 ID를 입력하세요.")
-            if not target.permissions_for(target.guild.me).view_channel:
+            if not channel.permissions_for(channel.guild.me).view_channel:
                 raise ProbeError("봇에 해당 채널의 View Channel 권한이 필요합니다.")
-            print(f"READY · Discord 지정 채널에 사람 계정으로 다음 메시지를 보내세요:\n[{run}] {SAMPLE_TEXT}", flush=True)
-        except (discord.DiscordException, ProbeError):
+            target = channel
+            print(f"READY · #{channel.name} ({channel_id}) {channel.jump_url}\n"
+                  f"Discord에서 위 채널을 열고 사람 계정으로 아래 한 줄을 새 메시지로 보내세요.\n"
+                  f"[{run}] {SAMPLE_TEXT}", flush=True)
+        except ProbeError as error:
+            if not result.done():
+                result.set_exception(error)
+        except discord.DiscordException:
             if not result.done():
                 result.set_exception(ProbeError("지정 채널을 확인할 수 없습니다. 채널 ID와 봇의 접근 권한을 확인하세요."))
 
@@ -95,8 +107,12 @@ async def receive_discord(run, channel_id, token, timeout):
         if target is None or result.done():
             return
         event = frame if isinstance(frame, dict) else json.loads(frame)
-        if is_discord_test(event, run, channel_id):
+        status = discord_message_status(event, run, channel_id)
+        if status == "match":
             result.set_result((event, isinstance(target, discord.Thread)))
+        elif status is not None and status not in reported:
+            reported.add(status)
+            print(f"건너뜀 · {skip_reasons[status]}\n[{run}] {SAMPLE_TEXT}", flush=True)
 
     async with client:
         connection = asyncio.create_task(client.start(token))
@@ -107,7 +123,12 @@ async def receive_discord(run, channel_id, token, timeout):
             if connection in done:
                 await connection
                 raise ProbeError("Discord가 메시지 수신 전에 연결을 닫았습니다.")
-            raise ProbeError("Discord 수신 시간 초과. READY 이후 보낸 표식, 채널 ID, Message Content Intent를 확인하세요.")
+            if target is None:
+                raise ProbeError("Discord 연결 준비 중 시간 초과. 네트워크와 봇의 채널 접근 권한을 확인하세요.")
+            if reported:
+                raise ProbeError("지정 채널의 새 글을 받았으나 테스트 조건을 충족한 문의는 0건입니다. 위의 건너뜀 사유를 확인하세요.")
+            raise ProbeError("READY 이후 지정 채널에서 받은 새 메시지 이벤트가 0건입니다. "
+                             "다시 실행하고 READY의 채널 링크를 열어 새 글을 보내세요. 스레드는 별도 채널 ID를 씁니다.")
         except discord.LoginFailure as error:
             raise ProbeError("Bot Token 인증에 실패했습니다. 웹훅 URL과 Bot Token은 별도 값입니다.") from error
         except discord.PrivilegedIntentsRequired as error:

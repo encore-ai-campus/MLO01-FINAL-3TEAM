@@ -126,14 +126,24 @@ def gmail_fields(raw, run):
     }
 
 
-def is_discord_test(raw, run, channel_id):
+def discord_message_status(raw, run, channel_id):
+    """Return the capture decision for a new message in the requested channel."""
     if raw.get("t") != "MESSAGE_CREATE" or raw.get("op") != 0:
-        return False
+        return None
     message = raw.get("d") or {}
-    return (message.get("channel_id") == channel_id
-            and not message.get("webhook_id")
-            and not (message.get("author") or {}).get("bot")
-            and marked_text(message.get("content"), run) is not None)
+    if message.get("channel_id") != channel_id:
+        return None
+    if message.get("webhook_id") or (message.get("author") or {}).get("bot"):
+        return "automated"
+    if not (message.get("content") or "").strip():
+        return "empty"
+    if marked_text(message["content"], run) is None:
+        return "unmarked"
+    return "match"
+
+
+def is_discord_test(raw, run, channel_id):
+    return discord_message_status(raw, run, channel_id) == "match"
 
 
 def discord_fields(raw, run, channel_id, is_thread):
