@@ -75,3 +75,14 @@ def categories(cursor, filters):
         ORDER BY selected DESC, category.name NULLS LAST, scoped.category_uuid
     """, filters)
     return fetch_rows(cursor)
+
+
+def hourly_receipts(cursor, filters):
+    cursor.execute(SCOPED_TICKETS + """
+        SELECT extract(hour FROM created_at AT TIME ZONE 'Asia/Seoul')::int AS hour,
+               count(*) FILTER (WHERE created_at >= %(start)s) AS selected,
+               count(*) FILTER (WHERE created_at < %(start)s) AS previous
+        FROM scoped
+        WHERE created_at >= %(compare_start)s AND created_at < %(end)s GROUP BY 1
+    """, filters)
+    return {row["hour"]: row for row in fetch_rows(cursor)}

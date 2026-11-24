@@ -109,6 +109,15 @@ def category_context(cursor, filters, total):
                        for r in rows if r["selected"]],
     }
 
+
+def hourly_chart(cursor, filters):
+    rows = repository.hourly_receipts(cursor, filters)
+    return trend(
+        [f"{hour:02d}시" for hour in range(24)],
+        [(label, [rows.get(hour, {}).get(key, 0) for hour in range(24)], color)
+         for key, label, color in (("selected", "선택 기간", "#326caa"), ("previous", "비교 기간", "#287e70"))],
+    )
+
 def summary_context(cursor, filters):
     receipts = repository.receipts(cursor, filters)
     pending = backlog([
@@ -128,6 +137,7 @@ def summary_context(cursor, filters):
         "sentiments": sentiment_rows,
         "pending": pending, "chart": trend(label_dates(filters["dates"]), [("신규 접수", daily, "#326caa")]),
         "daily_received": daily,
+        "hourly": hourly_chart(cursor, filters),
     }
 
 
