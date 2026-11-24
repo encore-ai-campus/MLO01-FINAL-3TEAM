@@ -31,6 +31,7 @@ def db():
 def init():
     with db() as cn, cn.transaction():
         cn.execute(Path(__file__).with_name("schema.sql").read_text())
+        cn.execute(Path(__file__).with_name("ticket_schema.sql").read_text())
     admin = AdminClient({"bootstrap.servers": BROKERS})
     topics = (*RAW, REQUEST, STANDARD, REVIEW)
     jobs = admin.create_topics([NewTopic(topic, 1, 1, config={"max.message.bytes": str(MAX_BYTES)})

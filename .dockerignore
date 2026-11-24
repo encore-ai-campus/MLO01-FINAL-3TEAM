@@ -13,5 +13,6 @@
 !collector/spool.py
 !collector/test_collection.py
 !collector/schema.sql
+!collector/ticket_schema.sql
 !collector/requirements.txt
 !collector/Dockerfile

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>티켓 목록 | 섭명뭐</title>
+</head>
+<body>
+  <a id="open-tickets" href="http://127.0.0.1:18082/#03-01">티켓 목록 열기</a>
+  <script>
+    const origin = location.protocol === 'file:' ? 'http://127.0.0.1:18082' : location.origin;
+    const route = location.hash === '#03-02' ? '#03-02' : '#03-01';
+    const link = document.getElementById('open-tickets');
+    link.href = origin + '/' + route;
+    location.replace(link.href);
+  </script>
+</body>
+</html>

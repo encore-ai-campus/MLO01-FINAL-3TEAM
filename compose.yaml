@@ -133,6 +133,22 @@ services:
     command: ["db"]
     secrets: [postgres_password]
     depends_on: *initialized
+  ticket-desk:
+    build:
+      context: .
+      dockerfile: services/ticket-desk/Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      DATABASE_URL: postgresql://voc@postgres/voc
+    secrets: [postgres_password]
+    ports: ["127.0.0.1:18082:8000"]
+    depends_on: *initialized
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
   jobmanager:
     <<: *flink
     command: ["standalone-job","--job-classname","voc.StandardizeJob"]

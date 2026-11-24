@@ -37,6 +37,7 @@ init-db-topics의 종료 코드 0은 테이블 및 토픽 준비 완료를 뜻�
 | 표준화 요청 | db-worker | Bronze 원본, 최초 수신 시각, 확인된 역할과 본문 버전을 `voc.standardize.request.v4`에 발행한다. Kafka ACK 후 해당 이벤트·스키마 버전의 발행 시각을 기록한다. |
 | 정제 | Flink JobManager, TaskManager | 정상 메시지는 19개 키의 JSON으로 `voc.standardized.v4`에 발행한다. 빈 본문, 잘못된 시각, 해석할 수 없는 MIME 등은 `voc.standardize.review.v4`로 보낸다. |
 | Silver | db-worker, PostgreSQL | `voc.silver_messages`에 표준 필드를 컬럼별로 저장한다. `event_id`로 Bronze 원본을 찾고 `voc.review_events`에서 검토 사유를 확인한다. |
+| 업무 티켓 | PostgreSQL | 확인된 고객 문의와 업무 채널이 연결되면 Silver 트랜잭션에서 고객, 티켓, 최초 문의 메시지, 모델 입력과 감성·카테고리 분석 대기 요청을 함께 저장한다. 수신 후에 업무 채널을 등록해도 기존 문의를 찾아 적재한다. |
 
 **메시지 식별.** 회사·채널 유형·연결 계정 또는 서버·원천 메시지 ID로 같은 event_id를 계산한다. 다른 고객이 같은 글을 써도 서로 다른 원천 메시지 ID를 가지므로 별개로 저장한다. 전달은 재시도할 수 있으며, Bronze와 Silver의 유일 키로 같은 이벤트의 중복 행을 막는다.
 
@@ -58,13 +59,13 @@ init-db-topics의 종료 코드 0은 테이블 및 토픽 준비 완료를 뜻�
 
 Silver는 **메시지 한 건당 한 행**이다. 전체 표준 JSON은 Kafka에서 전달하고, PostgreSQL에는 19개 필드와 DB 적재 시각 `standardized_at`을 둔다. Silver에서 JSONB를 사용하는 필드는 `source_metadata`다. 원본은 Bronze의 `raw_payload`에서 조회한다. 부모 ID는 있지만 원글을 아직 확인하지 못한 Discord 답글은 `source_conversation_id = NULL`로 저장한다. 나중에 같은 회사·연결·채널에서 부모가 들어오면 후속 답글까지 연결한다.
 
-업무 적재 계약상 `customer_inquiry` 한 건이 한 티켓의 접수 단위다. Gmail에서 같은 스레드의 후속 문의도 새 메시지 ID를 갖는다. 향후 감성·카테고리의 첫 입력은 `model_text = body_text`이고 제목은 화면 표시용으로 별도 보관한다. 업무 테이블과 모델 호출은 후속 백엔드에서 연결한다.
+`customer_inquiry` 한 건이 업무 티켓 하나가 된다. 같은 Gmail 스레드에서 온 후속 문의에도 새 번호를 발급한다. `voc.model_text_history`에는 `body_text`를 그대로 `model_text`로 저장하고, `voc.ticket_analysis_outbox`에는 본문 버전별로 감성과 카테고리 요청을 한 건씩 남긴다. 화면은 분석 결과가 준비되기 전부터 원문을 제공한다.
 
-| 업무 테이블의 컬럼 | 티켓 생성 때 사용할 값 |
+| 업무 테이블의 컬럼 | 티켓 생성 때 저장하는 값 |
 | --- | --- |
 | `TICKET.source_event_id`, `ticket_uuid`, `ticket_number` | Silver의 `event_id`를 원본 연결 키로 한 번만 기록한다. 업무 DB가 티켓 UUID와 회사별 고유 8자리 표시 번호를 발급한다. |
 | `company_uuid`, `domain_uuid`, `channel_uuid`, `customer_uuid` | 등록된 수집 연결에서 회사·도메인·업무 채널을 확인하고, 같은 회사·채널의 `sender_ref`로 고객을 찾는다. |
-| `title`, `status`, `created_at`, `updated_at` | 표시 제목은 50자 이내다. 제목이 없는 경우 본문의 첫 비어 있지 않은 줄 앞 40자를 사용하는 안이다. 초기 상태는 미처리, 두 시각은 최초 `received_at`이다. |
+| `title`, `status`, `created_at`, `updated_at` | 표시 제목은 50자 이내다. 제목이 없으면 본문의 첫 비어 있지 않은 줄에서 최대 40자를 사용한다. 표시할 문자가 없으면 ‘문의’를 사용한다. 초기 상태는 미처리, 두 시각은 최초 `received_at`이다. |
 | `assigned_team_uuid`, `assignee_uuid`, `category_uuid`, `sentiment`, `embedding` | 초기값은 NULL이다. 감성·카테고리 분석 상태는 항목별 분류 대기로 시작한다. |
 | `TICKET_MESSAGE.body`, `created_at` | 최초 고객 문의의 `body_text`와 `occurred_at`을 사용한다. 원천 시각이 없으면 `received_at`을 사용한다. |
 
@@ -100,6 +101,62 @@ Silver는 **메시지 한 건당 한 행**이다. 전체 표준 JSON은 Kafka에
   "occurred_at": "1970-01-01T00:00:01.001000Z", "received_at": "2026-11-24T01:02:03.456789Z",
   "source_metadata": {"label_ids": ["VOC", "INBOX"], "to_addresses": ["help@example.test", "archive@example.test"]}
 }
+~~~
+
+## 기존 직원에게 티켓 조회 권한을 부여하고 수집 채널 연결하기
+
+DB 관리자가 저장소 루트에서 `docker compose exec postgres psql -X -U voc -d voc`로 접속한다. 새 환경의 첫 회사·직원 등록은 [저장소 실행 가이드](../README.md)를 따른다. 같은 psql 세션에서 조회 결과를 확인한 뒤 각 `\set`의 UUID를 실제 값으로 바꿔 실행한다.
+
+먼저 실제 직원과 소속 회사를 확인하고 이 직원에게 `ticket.read`를 부여한다.
+
+~~~sql
+\set ON_ERROR_STOP on
+SELECT s.staff_user_uuid,s.email,c.name AS company,c.domain_uuid
+FROM public.staff_user s JOIN public.company c USING(company_uuid) ORDER BY s.email;
+\set employee '직원_UUID'
+SELECT company_uuid FROM public.staff_user WHERE staff_user_uuid=:'employee' \gset
+INSERT INTO public.staff_permission(staff_user_uuid,permission_uuid)
+SELECT :'employee',permission_uuid FROM public.permission WHERE code='ticket.read'
+ON CONFLICT DO NOTHING;
+~~~
+
+회사의 도메인이 비어 있을 때만 다음 블록으로 도메인을 연결한다. 새 산업 도메인이 필요하면 `INSERT INTO public.domain(name) VALUES ('소매') RETURNING domain_uuid;`에서 이름을 실제 값으로 바꿔 등록한다.
+
+~~~sql
+SELECT domain_uuid,name FROM public.domain ORDER BY name;
+\set domain_id '산업_도메인_UUID'
+UPDATE public.company SET domain_uuid=:'domain_id'
+WHERE company_uuid=:'company_uuid' AND domain_uuid IS NULL;
+~~~
+
+다음으로 원천·발신자를 대조하여 해당 회사의 실제 고객 문의 한 건을 고른다. 이 문의의 수집 경로를 같은 회사의 업무 채널에 연결한다. Gmail은 사서함, Discord는 서버와 실제 방·스레드 ID로 연결된다. 업무 채널을 처음 만들 때는 아래에서 `channel_id`를 입력하기 전에 `INSERT INTO public.channel(company_uuid,name,type) VALUES (:'company_uuid','문의 접수',:'src_channel') RETURNING channel_uuid;`를 실행한다.
+
+~~~sql
+SELECT event_id,company_id,channel,connection_id,source_channel_id,sender_ref,title,message_kind,received_at
+FROM voc.silver_messages WHERE schema_version=4 ORDER BY received_at DESC LIMIT 20;
+\set inquiry '확인한_이벤트_UUID'
+SELECT company_id,channel,connection_id,coalesce(source_channel_id,'') AS room
+FROM voc.silver_messages WHERE event_id=:'inquiry' AND schema_version=4 \gset src_
+SELECT channel_uuid,name,type FROM public.channel WHERE company_uuid=:'company_uuid';
+\set channel_id '업무_채널_UUID'
+INSERT INTO voc.ticket_source_connection(company_id,channel,connection_id,source_channel_id,company_uuid,channel_uuid)
+VALUES (:'src_company_id',:'src_channel',:'src_connection_id',:'src_room',:'company_uuid',:'channel_id')
+ON CONFLICT DO NOTHING;
+UPDATE voc.standardize_outbox SET verified_message_kind='customer_inquiry'
+WHERE event_id=:'inquiry' AND target_schema_version=4 AND EXISTS (
+    SELECT FROM voc.ticket_source_connection WHERE company_id=:'src_company_id' AND channel=:'src_channel'
+      AND connection_id=:'src_connection_id' AND source_channel_id=:'src_room'
+      AND company_uuid=:'company_uuid' AND channel_uuid=:'channel_id'
+) RETURNING event_id;
+~~~
+
+워커가 재정제한 후 발급된 번호를 확인한다. 미등록 경로·누락된 발신자·미설정 회사 도메인은 `reason`에 표시된다. 설정을 보완한 뒤 같은 건만 재시도하려면 `SELECT voc.project_ticket(:'inquiry');`를 실행한다.
+
+~~~sql
+SELECT s.message_kind,t.ticket_number,t.status,i.reason
+FROM voc.silver_messages s LEFT JOIN public.visible_ticket t ON t.source_event_id=s.event_id
+LEFT JOIN voc.ticket_projection_issue i ON i.event_id=s.event_id
+WHERE s.schema_version=4 AND s.event_id=:'inquiry';
 ~~~
 
 ## 확인과 재처리

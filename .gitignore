@@ -37,3 +37,6 @@ exports/
 *.dump
 *.sql.gz
 *.log
+.venv/
+node_modules/
+dist/
