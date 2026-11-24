@@ -8,6 +8,7 @@ from uuid import uuid4
 import psycopg2
 from argon2 import PasswordHasher
 from django.test import Client
+from django.urls import reverse
 
 from tests.database import use_database
 from psycopg2 import sql
@@ -33,7 +34,7 @@ class TicketTests(unittest.TestCase):
         cls.cur = cls.cn.cursor()
         cls.addClassCleanup(cls.cur.close)
         for filename in ("schema.sql", "ticket_schema.sql"):
-            cls.cur.execute((SRC / "collector" / filename).read_text())
+            cls.cur.execute((SRC / "collector" / filename).read_text(encoding="utf-8"))
         password_hash = PasswordHasher().hash("SamplePass1!")
         cls.employees = []
         cls.tickets = []
@@ -91,6 +92,76 @@ class TicketTests(unittest.TestCase):
 
     def setUp(self):
         self.client = Client()
+
+    def test_inbox_links_received_transfers_and_reviews_to_their_own_ticket(self):
+        transfer_ticket, review_ticket = self.tickets[:2]
+        recipient, outsider = self.employees
+        self.cur.execute("""
+            INSERT INTO staff_user(company_uuid,email,name,password_hash)
+            SELECT company_uuid,'agent2@qa1.test','요청 상담사',password_hash FROM staff_user WHERE staff_user_uuid=%s
+            RETURNING staff_user_uuid
+        """, (recipient,))
+        sender = self.cur.fetchone()[0]
+        self.addCleanup(self.delete_inbox_fixture, sender)
+        self.cur.execute("INSERT INTO staff_permission SELECT %s,permission_uuid FROM permission WHERE code='ticket.read'", (sender,))
+        requests = {}
+        for kind, ticket, receiver, memo in (
+            ("transfer", transfer_ticket, recipient, "배송 담당 변경"),
+            ("review", review_ticket, recipient, "응대 문구 검토"),
+            ("outside", review_ticket, outsider, "다른 회사 요청"),
+            ("other", review_ticket, sender, "다른 상담사 요청"),
+        ):
+            self.cur.execute("""
+                INSERT INTO collab_request(ticket_uuid,requester_uuid,recipient_uuid,request_type,memo)
+                VALUES (%s,%s,%s,%s,%s) RETURNING collab_request_uuid
+            """, (ticket, sender, receiver, "transfer" if kind == "transfer" else "review", memo))
+            requests[kind] = self.cur.fetchone()[0]
+        self.cur.execute("""
+            INSERT INTO collab_request_attachment(collab_request_uuid,original_filename,content_type,storage_key,size_bytes)
+            VALUES (%s,'검토.txt','text/plain','private/fixture',12)
+        """, (requests["review"],))
+        self.login()
+        for kind, ticket, memo in (("transfer", transfer_ticket, "배송 담당 변경"), ("review", review_ticket, "응대 문구 검토")):
+            with self.subTest(kind=kind):
+                page = self.client.get("/inbox/", {"tab": kind, "request": requests[kind]})
+                self.assertContainsHTML(page, memo)
+                detail = reverse("tickets:detail", args=[ticket])
+                self.assertContainsHTML(page, f'href="{detail}">티켓 열기')
+                self.assertEqual(self.client.get(detail).status_code, 200)
+        self.assertContainsHTML(page, "검토.txt")
+        self.assertNotIn("private/fixture", page.text)
+        self.assertNotIn("다른 상담사 요청", page.text)
+        self.assertEqual(self.client.get("/inbox/", {"request": requests["other"]}).status_code, 404)
+        read = reverse("workspace:inbox-read", args=["request", requests["review"]])
+        csrf_client = Client(enforce_csrf_checks=True)
+        csrf_client.cookies.update(self.client.cookies)
+        self.assertEqual(csrf_client.post(read).status_code, 403)
+        first = csrf_client.post(read, HTTP_X_CSRFTOKEN=csrf_client.cookies["csrftoken"].value)
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(self.client.post(read).json()["read_at"], first.json()["read_at"])
+        self.assertNotIn("응대 문구 검토", self.client.get("/inbox/", {"tab": "review", "scope": "unread"}).text)
+        reply = reverse("workspace:inbox-reply", args=[requests["review"]])
+        self.assertEqual(self.client.post(reply, {"body": "확인했습니다."}).status_code, 200)
+        self.assertEqual(self.client.post(reply, {"body": "확인했습니다."}).status_code, 200)
+        self.assertEqual(self.client.post(reply, {"body": "다른 답변"}).status_code, 409)
+        self.login(2)
+        self.assertNotIn("다른 회사 요청", self.client.get("/inbox/", {"tab": "review"}).text)
+        self.assertEqual(self.client.post(read).status_code, 404)
+        self.client.post("/api/auth/login", {"email": "agent2@qa1.test", "password": "SamplePass1!"}, content_type="application/json")
+        self.cur.execute("SELECT collab_review_reply_uuid FROM collab_review_reply WHERE collab_request_uuid=%s", (requests["review"],))
+        reply_id = self.cur.fetchone()[0]
+        self.assertEqual(self.client.post(reverse("workspace:inbox-read", args=["reply", reply_id])).status_code, 200)
+        self.assertContainsHTML(self.client.get("/inbox/", {"tab": "reply", "scope": "unread"}), "확인했습니다.")
+
+    def delete_inbox_fixture(self, sender):
+        for table in ("collab_review_reply", "collab_request_attachment"):
+            self.cur.execute(sql.SQL("""
+                DELETE FROM {} WHERE collab_request_uuid IN (
+                    SELECT collab_request_uuid FROM collab_request WHERE requester_uuid=%s
+                )
+            """).format(sql.Identifier(table)), (sender,))
+        self.cur.execute("DELETE FROM collab_request WHERE requester_uuid=%s", (sender,))
+        self.cur.execute("DELETE FROM staff_user WHERE staff_user_uuid=%s", (sender,))
 
     def login(self, company=1):
         response = self.client.post("/api/auth/login", data={"email": f"agent1@qa{company}.test", "password": "SamplePass1!"}, content_type="application/json")
