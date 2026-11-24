@@ -1,0 +1,25 @@
+<section class="analytics-card analytics-trend">
+  <div class="analytics-card-title">
+    <h2>{{ chart_title }}</h2>
+    <ul class="analytics-legend">{% for series in chart.lines %}<li><span style="background:{{ series.color }}"></span>{{ series.name }}</li>{% endfor %}</ul>
+  </div>
+  <svg class="analytics-trend-svg" viewBox="0 0 600 253" role="img" aria-label="{{ chart_title }}">
+    {% for label,y in chart.ticks %}<line x1="47" x2="590" y1="{{ y }}" y2="{{ y }}" stroke="#e4e4e4"/><text x="38" y="{{ y }}" text-anchor="end">{{ label }}</text>{% endfor %}
+    {% for label,x in chart.labels %}<text x="{{ x }}" y="231" text-anchor="middle">{{ label }}</text>{% endfor %}
+    {% for series in chart.lines %}
+      <polyline points="{{ series.line }}" fill="none" stroke="{{ series.color }}" stroke-width="2.5" stroke-linejoin="round"/>
+      {% for x,y,description in series.points %}<circle cx="{{ x }}" cy="{{ y }}" r="3" fill="{{ series.color }}"><title>{{ description }}</title></circle>{% endfor %}
+    {% endfor %}
+  </svg>
+  <details class="analytics-chart-table">
+    <summary>{{ table_title }}</summary>
+    <div class="analytics-table-scroll">
+      <table class="analytics-table">
+        <thead><tr><th scope="col">기준</th>{% for series in chart.lines %}<th scope="col">{{ series.name }}</th>{% endfor %}</tr></thead>
+        <tbody>{% for row in chart.table %}<tr>
+          {% for value in row %}{% if forloop.first %}<th scope="row">{{ value }}</th>{% else %}<td>{{ value }}건</td>{% endif %}{% endfor %}
+        </tr>{% endfor %}</tbody>
+      </table>
+    </div>
+  </details>
+</section>

@@ -19,3 +19,32 @@ def teams(cursor, company):
         WHERE company_uuid = %s ORDER BY name, team_uuid
     """, (company,))
     return fetch_rows(cursor)
+
+
+SCOPED_TICKETS = """
+WITH scoped AS (
+    SELECT * FROM visible_ticket
+    WHERE company_uuid = %(company)s
+      AND (%(team)s::uuid IS NULL OR assigned_team_uuid = %(team)s::uuid)
+)
+"""
+
+
+def receipts(cursor, filters):
+    cursor.execute(SCOPED_TICKETS + """
+        SELECT count(*) FILTER (WHERE created_at >= %(start)s AND created_at < %(end)s) AS received,
+               count(*) FILTER (WHERE created_at >= %(compare_start)s AND created_at < %(start)s) AS previous,
+               count(*) FILTER (WHERE status <> '답변완료' AND created_at <= %(now)s - interval '24 hours') AS aged,
+               count(*) FILTER (WHERE status = '미처리' AND assignee_uuid IS NULL AND created_at < %(now)s) AS unassigned,
+               count(*) FILTER (WHERE status = '미처리' AND assignee_uuid IS NOT NULL AND created_at < %(now)s) AS assigned,
+               count(*) FILTER (WHERE status = '보류' AND created_at < %(now)s) AS held
+        FROM scoped
+    """, filters)
+    summary = fetch_rows(cursor)[0]
+    cursor.execute(SCOPED_TICKETS + """
+        SELECT (created_at AT TIME ZONE 'Asia/Seoul')::date AS day, count(*) AS total
+        FROM scoped
+        WHERE created_at >= %(start)s AND created_at < %(end)s GROUP BY 1
+    """, filters)
+    summary["daily"] = dict(cursor.fetchall())
+    return summary

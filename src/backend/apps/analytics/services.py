@@ -1,3 +1,4 @@
+from math import ceil
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -27,6 +28,72 @@ def period_bounds(period, now):
     }
 
 
+
+def pct(part, total):
+    return round(part * 100 / total, 1) if total else None
+
+
+def difference(value, unit="건"):
+    if value == 0:
+        return "변동 없음"
+    return f"{value:+g}{unit}"
+
+
+def backlog(items):
+    total = sum(value for _, value, _ in items)
+    bands, rows = [], []
+    previous = 0
+    for label, value, color in items:
+        end = previous + (360 * value / total if total else 0)
+        if end > previous:
+            bands.append(f"{color} {previous:.3f}deg {end:.3f}deg")
+        previous = end
+        rows.append((label, value, pct(value, total) or 0, color))
+    return {
+        "total": total, "rows": rows,
+        "background": f"conic-gradient({', '.join(bands)})" if bands else "#f3f3f3",
+    }
+
+
+def trend(labels, series):
+    peak = max(4, 4 * ceil(max(value for _, values, _ in series for value in values) / 4))
+    y = lambda value: round(208 - 168 * value / peak, 1)
+    points_x = [round(62 + index * 520 / max(1, len(labels) - 1), 1) for index in range(len(labels))]
+    lines = []
+    for name, values, color in series:
+        points = [(x, y(value), f"{label} {name} {value}건") for (label, x), value in zip(zip(labels, points_x), values)]
+        lines.append({"name": name, "color": color, "points": points,
+                      "line": " ".join(f"{x},{cy}" for x, cy, _ in points)})
+    step = ceil(len(labels) / 8)
+    return {
+        "lines": lines, "labels": list(zip(labels[::step], points_x[::step])),
+        "ticks": [(value, y(value)) for value in range(0, peak + 1, peak // 4)],
+        "table": list(zip(labels, *(values for _, values, _ in series))),
+    }
+
+
+def label_dates(dates):
+    return [day.strftime("%m/%d") for day in dates]
+
+
+def summary_context(cursor, filters):
+    receipts = repository.receipts(cursor, filters)
+    pending = backlog([
+        ("미할당", receipts["unassigned"], "#9baec1"),
+        ("담당자 배정", receipts["assigned"], "#326caa"),
+        ("보류", receipts["held"], "#c28935"),
+    ])
+    daily = [receipts["daily"].get(day, 0) for day in filters["dates"]]
+    return {
+        "metrics": [
+            ("신규 접수", receipts["received"], "건", "비교 기간 대비 " + difference(receipts["received"] - receipts["previous"])),
+            ("24시간 이상 미처리", receipts["aged"], "건", f'전체 미처리 {pending["total"]}건 중 {pct(receipts["aged"], pending["total"]) or 0}%'),
+        ],
+        "pending": pending, "chart": trend(label_dates(filters["dates"]), [("신규 접수", daily, "#326caa")]),
+        "daily_received": daily,
+    }
+
+
 def analytics_context(cursor, actor, params):
     scopes = {"org": "조직 전체"}
     company = actor["company_uuid"]
@@ -37,7 +104,11 @@ def analytics_context(cursor, actor, params):
     if scope not in scopes or period not in dict(PERIODS) or tab not in {"summary", "agents"}:
         raise DeskError(400, "INVALID_ANALYTICS_FILTER", "조회 조건을 확인해 주세요.")
     bounds = period_bounds(period, timezone.now())
-    return {
+    context = {
         "tab": tab, "period": period, "periods": PERIODS, "scope": scope, "scopes": scopes.items(),
         "scope_name": scopes[scope], "bounds": bounds,
     }
+    filters = {**bounds, "company": company, "team": None if scope == "org" else scope}
+    if tab == "summary":
+        context.update(summary_context(cursor, filters))
+    return context

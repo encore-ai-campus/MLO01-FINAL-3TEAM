@@ -1,1 +1,5 @@
-<section class="analytics-card"><h2>조직·팀 실적</h2></section>
+{% include "analytics/metrics.html" %}
+<div class="analytics-detail-grid">
+  {% include "analytics/chart.html" with chart_title="신규 접수 추이" table_title="일별 건수 보기" %}
+  {% include "analytics/pending.html" with pending_title="현재 미처리 상태별 구성" %}
+</div>

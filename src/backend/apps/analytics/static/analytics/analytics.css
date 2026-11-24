@@ -163,3 +163,6 @@
 .analytics-agent-basis { margin-top: 14px; }
 
 .analytics-toolbar a[aria-current="page"] { color: #fff; background: var(--heading); }
+
+.analytics-period { margin: -12px 0 14px; }
+.analytics-chart-table summary { cursor: pointer; color: var(--desk-muted); font-size: 13px; }

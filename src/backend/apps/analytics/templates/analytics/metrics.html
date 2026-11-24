@@ -1,0 +1,8 @@
+<div class="analytics-metrics">
+  {% for label, value, unit, basis in metrics %}
+    <section class="analytics-card analytics-metric">
+      <h2>{{ label }}</h2><p class="analytics-metric-value">{{ value }}<small>{{ unit }}</small></p>
+      {% if basis %}<p>{{ basis }}</p>{% endif %}
+    </section>
+  {% endfor %}
+</div>
