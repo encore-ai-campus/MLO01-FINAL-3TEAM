@@ -19,13 +19,20 @@
   line-height: 1.2;
 }
 
-.ticket-detail-placeholder {
-  position: absolute;
-  inset: max(135px, calc(50dvh - var(--bar) - 27px)) 0 auto;
-  transform: translateY(-50%);
-  color: #595959;
-  text-align: center;
-  font-size: 20px;
-  font-weight: 600;
-  line-height: 28px;
+
+.ticket-detail { max-width: 1000px; margin-inline: auto; }
+.ticket-detail-summary, .ticket-conversation {
+  padding: 20px; margin-top: 18px; border: 1px solid var(--desk-line);
+  border-radius: 12px; background: var(--paper); overflow-wrap: anywhere;
 }
+.ticket-detail-summary h2, .ticket-conversation h2 { font-size: 18px; }
+.ticket-detail-number { margin-bottom: 6px; color: var(--desk-muted); font-size: 13px; }
+.ticket-detail-summary dl { display: flex; flex-wrap: wrap; gap: 14px 28px; margin-bottom: 0; }
+.ticket-detail-summary dt, .ticket-conversation header { color: var(--desk-muted); font-size: 12px; }
+.ticket-detail-summary dd { margin: 4px 0 0; font-size: 14px; }
+.ticket-conversation ol { padding: 0; list-style: none; margin-bottom: 0; }
+.ticket-conversation li { max-width: 85%; margin: 12px 0; padding: 12px 16px; border-radius: 10px; background: var(--desk-soft); }
+.ticket-conversation li[data-sender="staff"] { margin-left: auto; background: #e7f3e8; }
+.ticket-conversation header { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+.ticket-conversation header a { text-decoration: underline; }
+.ticket-conversation p { margin-top: 6px; white-space: pre-wrap; }

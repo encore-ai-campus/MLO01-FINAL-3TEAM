@@ -29,7 +29,7 @@
 .ticket-table tbody td, .ticket-table tbody th { height: 44px; }
 .ticket-table tbody tr { position: relative; }
 .ticket-table tbody tr:hover, .ticket-table tbody tr:focus-within { background: var(--desk-soft); }
-.ticket-detail-link::after { content: ""; position: absolute; inset: 0; }
+.ticket-table .ticket-detail-link::after { content: ""; position: absolute; inset: 0; }
 .ticket-table tbody tr:last-child > * { border-bottom: 0; }
 .ticket-table time { white-space: nowrap; }
 .ticket-badge { display: inline-block; padding: 4px 7px; border-radius: 5px; font-size: 11px; font-weight: 600; white-space: nowrap; }
@@ -92,3 +92,8 @@
   .ticket-checks { grid-template-columns: repeat(2, minmax(84px, 1fr)); }
   .ticket-calendars { grid-template-columns: 1fr; }
 }
+.badge-blue { color: #245484; background: #e6f0fb; }
+.ticket-table td, .ticket-table th { overflow-wrap: anywhere; }
+.ticket-table thead th:first-child { white-space: nowrap; }
+.ticket-table { min-width: 1020px; }
+.ticket-list h1 { scroll-margin-top: var(--bar); }

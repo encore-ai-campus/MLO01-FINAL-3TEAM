@@ -7,10 +7,12 @@ from secrets import token_urlsafe
 import psycopg2
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, SecretStr
+
+from .tickets import SESSION_COOKIE, SESSION_SECONDS, issue_session, register_ticket_routes, secure_cookie
 
 
 DOMAIN_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
@@ -65,19 +67,35 @@ def create_app() -> FastAPI:
     dummy_hash = hasher.hash(token_urlsafe(32))
 
     @app.exception_handler(RequestValidationError)
-    async def invalid_request(_request: Request, _exc: RequestValidationError):
+    async def invalid_request(request: Request, _exc: RequestValidationError):
+        message = ("이메일과 비밀번호를 문자열로 입력해 주세요." if request.url.path == "/api/auth/login"
+                   else "조회 조건의 형식과 범위를 확인해 주세요.")
         return JSONResponse(
             status_code=422,
             content={
                 "detail": {
                     "code": "INVALID_REQUEST",
-                    "message": "이메일과 비밀번호를 문자열로 입력해 주세요.",
+                    "message": message,
                 },
             },
         )
 
+    @app.middleware("http")
+    async def prevent_shared_cache(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.exception_handler(psycopg2.Error)
+    async def database_unavailable(_request: Request, error: psycopg2.Error):
+        logger.error("Database request failed (%s).", type(error).__name__)
+        return JSONResponse(status_code=503, content={"detail": {
+            "code": "SERVICE_UNAVAILABLE", "message": "데이터를 조회할 수 없습니다. 잠시 후 다시 시도해 주세요.",
+        }})
+
     @app.post("/api/auth/login")
-    def login(credentials: LoginRequest) -> dict[str, str]:
+    def login(credentials: LoginRequest, request: Request, response: Response) -> dict[str, str]:
         email = credentials.email
         if not EMAIL_PATTERN.fullmatch(email):
             raise HTTPException(
@@ -127,6 +145,10 @@ def create_app() -> FastAPI:
                 },
             )
 
+        token = issue_session(dsn, email, password_hash)
+        response.set_cookie(SESSION_COOKIE, token, max_age=SESSION_SECONDS, path="/api",
+                            secure=secure_cookie(request), httponly=True, samesite="lax")
         return {"email": email}
 
+    register_ticket_routes(app, dsn)
     return app

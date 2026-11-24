@@ -29,6 +29,9 @@ class LoginTests(unittest.TestCase):
         )
         cls.lookup = lookup.start()
         cls.addClassCleanup(lookup.stop)
+        session = patch.object(login_backend, "issue_session", return_value="synthetic-session")
+        session.start()
+        cls.addClassCleanup(session.stop)
         with patch.dict("os.environ", {"DATABASE_URL": "dbname=unused"}):
             cls.app = create_app()
 
@@ -117,6 +120,11 @@ class PostgreSQLLoginTests(unittest.TestCase):
                     email text NOT NULL,
                     password_hash text NOT NULL
                 )
+            """)
+            cursor.execute("""
+                CREATE TABLE staff_session (
+                    token_hash text PRIMARY KEY, staff_user_uuid uuid REFERENCES staff_user,
+                    expires_at timestamptz NOT NULL)
             """)
             company_uuid = str(uuid4())
             cursor.execute("INSERT INTO company VALUES (%s, %s)", (company_uuid, "EXAMPLE.COM"))

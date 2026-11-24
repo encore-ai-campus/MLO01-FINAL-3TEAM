@@ -8,7 +8,7 @@ export const inboxUrl = '../05-InboxPage/05-InboxPage.html';
 
 export const defaultAccountName = '한서윤';
 
-export function DeskLayout({active, children, accountName = defaultAccountName}) {
+export function DeskLayout({active, children, accountName = defaultAccountName, onLogout}) {
   return (
     <>
   <svg aria-hidden="true" width="0" height="0" style={{ position: "absolute" }}>
@@ -26,17 +26,17 @@ export function DeskLayout({active, children, accountName = defaultAccountName})
   </svg>
 <div id="desk" className="desk">
     <header className="desk-bar">
-      <a className="brand" href={workHome}><span className="logo" aria-hidden="true">?</span><span>섭명뭐</span></a>
+      <a className="brand" href={onLogout ? "#03-01" : workHome}><span className="logo" aria-hidden="true">?</span><span>섭명뭐</span></a>
       <span title="알림"><svg aria-label="알림" role="img"><use href="#desk-bell"/></svg></span>
       <span className="desk-account" aria-label={'내 계정 ' + accountName}><span className="desk-avatar" aria-hidden="true">{accountName[0]}</span>{accountName}<svg aria-hidden="true"><use href="#desk-down"/></svg></span>
-      <a id="desk-logout" className="desk-button desk-logout" href="../01-LoginPage/01-LoginPage.html">로그아웃</a>
+      {onLogout ? <button id="desk-logout" className="desk-button desk-logout" type="button" onClick={onLogout}>로그아웃</button> : <a id="desk-logout" className="desk-button desk-logout" href="../01-LoginPage/01-LoginPage.html">로그아웃</a>}
     </header>
     <nav className="desk-nav" aria-label="업무 메뉴">
-      <a className="desk-nav-item" href={workHome} aria-current={active === "home" ? "page" : undefined}><svg aria-hidden="true"><use href="#desk-home"/></svg>업무 홈</a>
-      <a className="desk-nav-item" href={ticketList} aria-current={active === "tickets" ? "page" : undefined}><svg aria-hidden="true"><use href="#desk-ticket"/></svg>티켓 목록</a>
-      <a className="desk-nav-item" href={inboxUrl} aria-current={active === "inbox" ? "page" : undefined}><svg aria-hidden="true"><use href="#desk-inbox"/></svg>받은 요청</a>
+      <a className="desk-nav-item" href={onLogout ? undefined : workHome} aria-disabled={onLogout ? true : undefined} aria-current={active === "home" ? "page" : undefined}><svg aria-hidden="true"><use href="#desk-home"/></svg>업무 홈</a>
+      <a className="desk-nav-item" href={onLogout ? "#03-01" : ticketList} aria-current={active === "tickets" ? "page" : undefined}><svg aria-hidden="true"><use href="#desk-ticket"/></svg>티켓 목록</a>
+      <a className="desk-nav-item" href={onLogout ? undefined : inboxUrl} aria-disabled={onLogout ? true : undefined} aria-current={active === "inbox" ? "page" : undefined}><svg aria-hidden="true"><use href="#desk-inbox"/></svg>받은 요청</a>
       <span className="desk-nav-item" aria-disabled="true"><svg aria-hidden="true"><use href="#desk-clock"/></svg>팔로업</span>
-      <a className="desk-nav-item" href={active === "analytics" ? location.href : analytics} aria-current={active === "analytics" ? "page" : undefined}><svg aria-hidden="true"><use href="#desk-analytics"/></svg>분석 대시보드</a>
+      <a className="desk-nav-item" href={onLogout ? undefined : (active === "analytics" ? location.href : analytics)} aria-disabled={onLogout ? true : undefined} aria-current={active === "analytics" ? "page" : undefined}><svg aria-hidden="true"><use href="#desk-analytics"/></svg>분석 대시보드</a>
       <span className="desk-nav-item desk-nav-settings" aria-disabled="true"><svg aria-hidden="true"><use href="#desk-settings"/></svg>설정</span>
     </nav>
 <main className="desk-content">{children}</main>

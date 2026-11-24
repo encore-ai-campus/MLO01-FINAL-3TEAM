@@ -1,0 +1,7 @@
+**
+!Dockerfile
+!MailBody.java
+!NormalizeMessage.java
+!StandardizeJob.java
+!test/
+!test/NormalizeMessageTest.java
