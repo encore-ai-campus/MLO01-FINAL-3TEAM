@@ -3,3 +3,11 @@
   {% include "analytics/chart.html" with chart_title="신규 접수 추이" table_title="일별 건수 보기" %}
   {% include "analytics/pending.html" with pending_title="현재 미처리 상태별 구성" %}
 </div>
+<section class="analytics-card analytics-distribution">
+  <h2>감성별 접수 비율</h2><p class="analytics-muted">선택 기간에 접수된 티켓 중 감성값이 있는 건을 기준으로 집계합니다.</p>
+  <table class="analytics-table"><thead><tr><th scope="col">감성</th><th scope="col">접수 건수</th><th scope="col">비율</th></tr></thead>
+    <tbody>{% for label,total,percent in sentiments %}<tr>
+      <th scope="row">{{ label }}</th><td>{{ total }}건</td><td>{% if percent is None %}—{% else %}{{ percent }}%{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table>
+</section>

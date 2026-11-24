@@ -166,3 +166,4 @@
 
 .analytics-period { margin: -12px 0 14px; }
 .analytics-chart-table summary { cursor: pointer; color: var(--desk-muted); font-size: 13px; }
+.analytics-distribution { margin-top: 16px; }

@@ -48,3 +48,16 @@ def receipts(cursor, filters):
     """, filters)
     summary["daily"] = dict(cursor.fetchall())
     return summary
+
+
+def sentiments(cursor, filters):
+    cursor.execute(SCOPED_TICKETS + """
+        SELECT sentiment,
+               count(*) FILTER (WHERE created_at >= %(start)s) AS selected,
+               count(*) FILTER (WHERE created_at < %(start)s) AS previous
+        FROM scoped
+        WHERE sentiment IN ('긍정', '중립', '부정', '매우 부정')
+          AND created_at >= %(compare_start)s AND created_at < %(end)s
+        GROUP BY sentiment
+    """, filters)
+    return {row["sentiment"]: row for row in fetch_rows(cursor)}
