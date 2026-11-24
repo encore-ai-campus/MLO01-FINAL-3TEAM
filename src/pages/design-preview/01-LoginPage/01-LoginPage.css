@@ -1,0 +1,164 @@
+    :root {
+      --primary: #1e1e1e;
+      --heading: #282828;
+      --canvas: #fafafa;
+      --paper: #fff;
+      --ink: #233630;
+      --muted: #526761;
+      --border: #d1ded9;
+      --error: #9b3830;
+      --error-border: #ab453d;
+      font-family: Pretendard, "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+      color: var(--ink);
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--canvas); }
+    h1, h2, p { margin: 0; }
+    input, button { font: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: wait; }
+    :focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+
+    .screen {
+      min-height: 100vh;
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    .login-card {
+      width: min(100%, 472px);
+      min-height: 548px;
+      padding: 39px 55px 40px;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      background: var(--paper);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: var(--heading);
+      font-size: 19px;
+      font-weight: 700;
+    }
+
+    .logo {
+      display: grid;
+      place-items: center;
+      width: 40px;
+      height: 40px;
+      border-radius: 8px;
+      background: var(--primary);
+      color: var(--paper);
+      font-size: 24px;
+    }
+
+    h1 {
+      margin-top: 27px;
+      color: var(--heading);
+      font-size: 30px;
+      line-height: 38px;
+    }
+
+    .intro {
+      margin-top: 11px;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 22px;
+    }
+
+    form { margin-top: 25px; }
+    .field + .field { margin-top: 17px; }
+    label { display: block; margin-bottom: 4px; font-size: 14px; font-weight: 600; line-height: 20px; }
+
+    input {
+      display: block;
+      width: 100%;
+      height: 48px;
+      padding: 0 13px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--paper);
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    input::placeholder { color: var(--muted); opacity: 1; }
+    input[aria-invalid="true"] { border-color: var(--error-border); }
+    .password { position: relative; }
+    .password input { padding-right: 74px; }
+
+    .text-button {
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--heading);
+      font-weight: 600;
+    }
+
+    .visibility {
+      position: absolute;
+      inset: 2px 2px auto auto;
+      width: 58px;
+      height: 44px;
+      font-size: 13px;
+    }
+
+    .message {
+      color: var(--error);
+      font-size: 13px;
+      line-height: 18px;
+    }
+
+    .field-message { margin-top: 4px; }
+    .field-message:empty { display: none; }
+
+    .auth-message {
+      min-height: 38px;
+      padding-top: 7px;
+    }
+
+    .primary-button {
+      width: 100%;
+      min-height: 48px;
+      padding: 8px 16px;
+      border: 0;
+      border-radius: 9px;
+      background: var(--primary);
+      color: var(--paper);
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .primary-button:disabled { opacity: .65; }
+    .help-button { width: 100%; min-height: 38px; margin-top: 12px; font-size: 14px; }
+
+    .help-dialog {
+      width: min(calc(100% - 32px), 440px);
+      min-height: 314px;
+      max-height: calc(100% - 32px);
+      padding: 30px 31px 31px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--paper);
+    }
+
+    .help-dialog::backdrop { background: rgb(0 0 0 / 34%); }
+    .help-dialog h2 { color: var(--heading); font-size: 23px; line-height: 30px; }
+    .help-dialog p { color: var(--muted); font-size: 15px; line-height: 23px; }
+    .help-dialog p:first-of-type { margin-top: 21px; min-height: 46px; }
+    .help-dialog p + p { margin-top: 39px; }
+    .help-dialog .primary-button { margin-top: 22px; }
+
+    @media (max-width: 500px) {
+      .screen { padding: 16px; }
+      .login-card { padding-inline: 24px; }
+      .help-dialog { padding-inline: 24px; }
+    }
+
+    [hidden] { display: none !important; }
+    .demo-entry { position: fixed; right: 24px; bottom: 19px; color: var(--heading); font-size: 13px; }
