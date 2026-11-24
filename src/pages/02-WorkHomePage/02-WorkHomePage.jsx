@@ -1,7 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
-import { DeskLayout } from '../00-Shared/00-DeskLayout.jsx';
+import { DeskLayout, inboxUrl } from '../00-Shared/00-DeskLayout.jsx';
 
 function WorkHomePage() {
   return (
@@ -29,8 +29,9 @@ function WorkHomePage() {
           <section className="desk-card" data-card="requests">
             <h2>받은 요청 <span className="desk-count">2건</span></h2>
             <p>나에게 들어온 검토 요청</p>
-            <div className="desk-request"><strong>환불 안내 답변 검토</strong><span>박유진 · #1048</span><span className="desk-time">오늘 10:08 <svg aria-hidden="true"><use href="#desk-right"/></svg></span></div>
-            <div className="desk-request"><strong>배송 지연 안내 검토</strong><span>이도윤 · #1042</span><span className="desk-time">오늘 09:36 <svg aria-hidden="true"><use href="#desk-right"/></svg></span></div>
+            <a className="desk-ticket-list-link" href={inboxUrl + '?tab=review'}>전체 보기</a>
+            <a className="desk-request" href={inboxUrl + '?tab=review&request=review-1048'}><strong>환불 안내 답변 검토</strong><span>박유진 · #1048</span><span className="desk-time">오늘 10:08 <svg aria-hidden="true"><use href="#desk-right"/></svg></span></a>
+            <a className="desk-request" href={inboxUrl + '?tab=review&request=review-1042'}><strong>배송 지연 안내 검토</strong><span>이도윤 · #1042</span><span className="desk-time">오늘 09:36 <svg aria-hidden="true"><use href="#desk-right"/></svg></span></a>
           </section>
           <section className="desk-card" data-card="performance">
             <h2>내 실적</h2><p>처리 건수</p>

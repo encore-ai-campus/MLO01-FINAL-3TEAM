@@ -196,15 +196,16 @@ function Pagination({ page, total, onPage }) {
 }
 
 function TicketListPage() {
+  const savedList = history.state?.ticketList;
   const [mine, setMine] = useState(location.hash === '#03-02');
-  const [searchType, setSearchType] = useState('title');
-  const [input, setInput] = useState('');
-  const [search, setSearch] = useState({ key: 'title', query: '' });
-  const [filters, setFilters] = useState(initialFilters);
+  const [searchType, setSearchType] = useState(savedList?.searchType ?? 'title');
+  const [input, setInput] = useState(savedList?.input ?? '');
+  const [search, setSearch] = useState(() => savedList?.search ?? { key: 'title', query: '' });
+  const [filters, setFilters] = useState(() => savedList?.filters ?? initialFilters());
   const [modal, setModal] = useState(false);
-  const [order, setOrder] = useState('default');
-  const [pageSize, setPageSize] = useState(10);
-  const [page, setPage] = useState(1);
+  const [order, setOrder] = useState(savedList?.order ?? 'default');
+  const [pageSize, setPageSize] = useState(savedList?.pageSize ?? 10);
+  const [page, setPage] = useState(savedList?.page ?? 1);
 
   useEffect(() => {
     function syncTab() {
@@ -236,6 +237,14 @@ function TicketListPage() {
   const currentPage = Math.min(page, Math.max(totalPages, 1));
   const offset = (currentPage - 1) * pageSize;
   const visible = matches.slice(offset, offset + pageSize);
+  function saveListPosition(event) {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    history.replaceState({
+      ...history.state,
+      ticketList: { searchType, input, search, filters, order, pageSize, page: currentPage }
+    }, '');
+  }
+
   function cycleSort() {
     setOrder(current => sortOrder[(sortOrder.indexOf(current) + 1) % sortOrder.length]);
     setPage(1);
@@ -286,7 +295,12 @@ function TicketListPage() {
           </th>
         </tr></thead>
         <tbody>{visible.map((ticket, index) => <tr key={ticket.id} data-ticket={ticket.id}>
-          <td className="ticket-row-number">{matches.length - offset - index}</td><td>#{ticket.id}</td><th scope="row">{ticket.title}</th>
+          <td className="ticket-row-number">{matches.length - offset - index}</td><td>#{ticket.id}</td><th scope="row">
+            <a className="ticket-detail-link" onClick={saveListPosition}
+              href={`../04-TicketDetailPage/04-TicketDetailPage.html?ticket=${encodeURIComponent(ticket.id)}${mine ? '&tab=assigned' : ''}`}>
+              {ticket.title}
+            </a>
+          </th>
           <td>{badgeClass[ticket.category] ? <Badge value={ticket.category}/> : ticket.category}</td>
           <td>{ticket.assignee || '-'}</td><td><Badge value={ticket.status}/></td><td><Badge value={ticket.emotion}/></td>
           <td className="ticket-updated-cell">

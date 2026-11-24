@@ -1,2 +1,3 @@
-.desk-card[data-card="tickets"] { position: relative; }
+.desk-card[data-card="tickets"],
+.desk-card[data-card="requests"] { position: relative; }
 .desk-ticket-list-link { position: absolute; right: 21px; top: 19px; font-size: 13px; font-weight: 600; }
