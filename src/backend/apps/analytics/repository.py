@@ -61,3 +61,17 @@ def sentiments(cursor, filters):
         GROUP BY sentiment
     """, filters)
     return {row["sentiment"]: row for row in fetch_rows(cursor)}
+
+
+def categories(cursor, filters):
+    cursor.execute(SCOPED_TICKETS + """
+        SELECT category.name,
+               count(*) FILTER (WHERE scoped.created_at >= %(start)s) AS selected,
+               count(*) FILTER (WHERE scoped.created_at < %(start)s) AS previous
+        FROM scoped LEFT JOIN category
+          ON category.category_uuid = scoped.category_uuid AND category.domain_uuid = scoped.domain_uuid
+        WHERE scoped.created_at >= %(compare_start)s AND scoped.created_at < %(end)s
+        GROUP BY scoped.category_uuid, category.name
+        ORDER BY selected DESC, category.name NULLS LAST, scoped.category_uuid
+    """, filters)
+    return fetch_rows(cursor)

@@ -11,3 +11,22 @@
     </tr>{% endfor %}</tbody>
   </table>
 </section>
+<div class="analytics-detail-grid analytics-distribution">
+  <section class="analytics-card">
+    <h2>세부 카테고리별 접수</h2>
+    <table class="analytics-table">
+      <thead><tr><th scope="col">카테고리</th><th scope="col">접수 건수</th><th scope="col">비율</th></tr></thead>
+      <tbody>{% for name,total,percent in categories %}<tr><th scope="row">{{ name }}</th><td>{{ total }}건</td><td>{{ percent }}%</td></tr>
+      {% empty %}<tr><td colspan="3">접수 문의가 없습니다.</td></tr>{% endfor %}</tbody>
+    </table>
+  </section>
+  <section class="analytics-card">
+    <h2>증가 카테고리 상위 3개</h2>
+    <table class="analytics-table">
+      <thead><tr><th scope="col">카테고리</th><th scope="col">비교 기간</th><th scope="col">선택 기간</th><th scope="col">증감</th></tr></thead>
+      <tbody>{% for name,previous,current,increase in category_increases %}<tr>
+        <th scope="row">{{ name }}</th><td>{{ previous }}건</td><td>{{ current }}건</td><td class="analytics-increase">+{{ increase }}건</td>
+      </tr>{% empty %}<tr><td colspan="4">증가한 카테고리가 없습니다.</td></tr>{% endfor %}</tbody>
+    </table>
+  </section>
+</div>

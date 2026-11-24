@@ -95,6 +95,20 @@ def sentiment_context(cursor, filters):
         [(label, value, pct(value, total)) for label, value in rows],
     )
 
+
+def category_context(cursor, filters, total):
+    rows = repository.categories(cursor, filters)
+    increases = sorted(
+        ((r["name"], r["previous"], r["selected"], r["selected"] - r["previous"])
+         for r in rows if r["name"] is not None and r["selected"] > r["previous"]),
+        key=lambda row: (-row[3], row[0]),
+    )[:3]
+    return {
+        "category_increases": increases,
+        "categories": [(r["name"] or "미분류", r["selected"], pct(r["selected"], total))
+                       for r in rows if r["selected"]],
+    }
+
 def summary_context(cursor, filters):
     receipts = repository.receipts(cursor, filters)
     pending = backlog([
@@ -110,6 +124,7 @@ def summary_context(cursor, filters):
             ("24시간 이상 미처리", receipts["aged"], "건", f'전체 미처리 {pending["total"]}건 중 {pct(receipts["aged"], pending["total"]) or 0}%'),
             sentiment_metric,
         ],
+        **category_context(cursor, filters, receipts["received"]),
         "sentiments": sentiment_rows,
         "pending": pending, "chart": trend(label_dates(filters["dates"]), [("신규 접수", daily, "#326caa")]),
         "daily_received": daily,
