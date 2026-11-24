@@ -1,0 +1,41 @@
+{% include "analytics/metrics.html" %}
+<div class="analytics-detail-grid">
+  {% include "analytics/chart.html" with chart_title=chart_title table_title="일별 건수 보기" %}
+  {% include "analytics/pending.html" with pending_title="현재 미처리 상태별 구성" %}
+</div>
+<section class="analytics-card analytics-distribution">
+  <h2>감성별 접수 비율</h2><p class="analytics-muted">선택 기간에 접수된 티켓 중 감성값이 있는 건을 기준으로 집계합니다.</p>
+  <table class="analytics-table"><thead><tr><th scope="col">감성</th><th scope="col">접수 건수</th><th scope="col">비율</th></tr></thead>
+    <tbody>{% for label,total,percent in sentiments %}<tr>
+      <th scope="row">{{ label }}</th><td>{{ total }}건</td><td>{% if percent is None %}—{% else %}{{ percent }}%{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table>
+</section>
+<div class="analytics-detail-grid analytics-distribution">
+  <section class="analytics-card">
+    <h2>세부 카테고리별 접수</h2>
+    <table class="analytics-table">
+      <thead><tr><th scope="col">카테고리</th><th scope="col">접수 건수</th><th scope="col">비율</th></tr></thead>
+      <tbody>{% for name,total,percent in categories %}<tr><th scope="row">{{ name }}</th><td>{{ total }}건</td><td>{{ percent }}%</td></tr>
+      {% empty %}<tr><td colspan="3">접수 문의가 없습니다.</td></tr>{% endfor %}</tbody>
+    </table>
+  </section>
+  <section class="analytics-card">
+    <h2>증가 카테고리 상위 3개</h2>
+    <table class="analytics-table">
+      <thead><tr><th scope="col">카테고리</th><th scope="col">비교 기간</th><th scope="col">선택 기간</th><th scope="col">증감</th></tr></thead>
+      <tbody>{% for name,previous,current,increase in category_increases %}<tr>
+        <th scope="row">{{ name }}</th><td>{{ previous }}건</td><td>{{ current }}건</td><td class="analytics-increase">+{{ increase }}건</td>
+      </tr>{% empty %}<tr><td colspan="4">증가한 카테고리가 없습니다.</td></tr>{% endfor %}</tbody>
+    </table>
+  </section>
+</div>
+<div class="analytics-distribution">
+  {% include "analytics/chart.html" with chart=hourly chart_title="시간별 접수량 비교 (한국시간)" table_title="시간별 건수 보기" %}
+</div>
+<section class="analytics-card analytics-latency analytics-distribution">
+  <h2>고객 대기 시간</h2><p class="analytics-muted">선택 기간 중앙값</p>
+  <dl>{% for label,caption,value in latency %}
+    <div><dt>{{ label }}<span>{{ caption }}</span></dt><dd>{{ value }}</dd></div>
+  {% endfor %}</dl>
+</section>

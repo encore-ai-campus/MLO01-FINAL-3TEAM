@@ -1,87 +1,33 @@
 {% extends "base.html" %}{% load static %}
-{% block title %}분석 대시보드{% endblock %}
+{% block title %}VoC 분석 대시보드{% endblock %}
 {% block styles %}<link rel="stylesheet" href="{% static 'analytics/analytics.css' %}">{% endblock %}
 {% block content %}
 <section class="analytics" aria-labelledby="analytics-title">
   {% if agent %}
     <a class="desk-button analytics-detail-back" href="{% querystring agent=None %}">‹ 상담사별 실적</a>
     <div class="analytics-agent-heading">
-      <div><h1 id="analytics-title">{{ agent.name }} <span>상담사 상세</span></h1><p class="analytics-muted">{{ agent.team }}</p></div>
-      <div class="analytics-agent-period"><p>목록에서 선택한 기간</p><strong>{{ date_range.label }} · {{ date_range.dates|first }}–{{ date_range.dates|last }}</strong></div>
+      <div><h1 id="analytics-title">{{ agent.name }} 상담사 상세</h1><p class="analytics-muted">{{ agent.team|default:"소속 팀 없음" }}</p></div>
     </div>
+  {% else %}<h1 id="analytics-title">VoC 분석 대시보드</h1>{% endif %}
+  {% if not agent %}<div class="analytics-toolbar">
+    <nav aria-label="분석 보기">
+      <a class="desk-button" {% if tab == "summary" %}aria-current="page"{% endif %} href="{% url 'workspace:analytics' %}?tab=summary&amp;period={{ period }}&amp;scope={{ scope }}">조직·팀 실적</a>
+      <a class="desk-button" {% if tab == "agents" %}aria-current="page"{% endif %} href="{% url 'workspace:analytics' %}?tab=agents&amp;period={{ period }}&amp;scope={{ scope }}">상담사별 실적</a>
+    </nav>
+    <form class="analytics-filters" method="get" id="analytics-filters">
+      <input type="hidden" name="tab" value="{{ tab }}">
+      <label>기간<select name="period">{% for key, label in periods %}<option value="{{ key }}" {% if key == period %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <label>조직 범위<select name="scope">{% for key, label in scopes %}<option value="{{ key }}" {% if key == scope %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <button class="desk-button" type="submit">조회</button>
+    </form>
+  </div>{% endif %}
+  <p class="analytics-muted analytics-period">{{ scope_name }} · {{ bounds.dates|first|date:"Y-m-d" }} ~ {{ bounds.dates|last|date:"Y-m-d" }} · 한국시간 · 비교 {{ bounds.compare_dates|first|date:"Y-m-d" }} ~ {{ bounds.compare_dates|last|date:"Y-m-d" }}</p>
+  {% if unavailable %}<p class="analytics-muted analytics-source-note">이력 연결 대기 · {{ unavailable|join:", " }}</p>{% endif %}
+  {% if missing_completions %}<p class="analytics-muted analytics-source-note">선택 범위에서 완료 이력이 확인되지 않은 티켓 {{ missing_completions }}건은 완료 수에 포함되지 않습니다.</p>{% endif %}
+  {% if tab == "agents" %}
+    {% include "analytics/agents.html" %}
   {% else %}
-    <h1 id="analytics-title">분석 대시보드</h1>
-  {% endif %}
-  <p class="analytics-muted">예시 데이터</p>
-  {% if not preview %}
-    <div class="analytics-denied"><p>대시보드 미리보기</p><a class="desk-button" href="?preview=administrator">임시 접근</a></div>
-  {% else %}
-    {% if not agent %}
-      <div class="analytics-toolbar">
-        <nav aria-label="분석 보기">
-          <a class="desk-button" {% if tab == "summary" %}aria-current="page"{% endif %} href="{% querystring tab='summary' agent=None %}">조직·팀 실적</a>
-          {% if individual %}<a class="desk-button" {% if tab == "agents" %}aria-current="page"{% endif %} href="{% querystring tab='agents' agent=None %}">상담사별 실적</a>{% endif %}
-        </nav>
-        <form class="analytics-filters" method="get" id="analytics-filters">
-          <input type="hidden" name="preview" value="{{ preview }}"><input type="hidden" name="tab" value="{{ tab }}">
-          <label>기간<select name="period">{% for key, p in periods %}<option value="{{ key }}" {% if key == period %}selected{% endif %}>{{ p.label }}</option>{% endfor %}</select></label>
-          <label>조직 범위<select name="scope">{% for key, name in scopes %}<option value="{{ key }}" {% if key == scope %}selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
-          <button class="desk-button">조회</button>
-        </form>
-      </div>
-    {% endif %}
-    {% if metrics %}
-      <div class="analytics-metrics">
-        {% for label, value, unit, basis, comparison, detail in metrics %}
-          <section class="analytics-card analytics-metric"><h2>{{ label }}</h2>
-            <p class="analytics-metric-value">{{ value }}<small>{{ unit }}</small></p><p>{{ basis }}</p>
-            {% if comparison %}<strong>{{ comparison }}</strong>{% endif %}{% if detail %}<p>{{ detail }}</p>{% endif %}
-          </section>
-        {% endfor %}
-      </div>
-      <div class="analytics-detail-grid">
-        <section class="analytics-card analytics-trend">
-          <div class="analytics-card-title"><h2>{{ chart.label }}·처리 완료 추이</h2><ul class="analytics-legend">{% for series in chart.lines %}<li><span style="background:{{ series.color }}"></span>{{ series.name }}</li>{% endfor %}</ul></div>
-          <svg class="analytics-trend-svg" viewBox="0 0 600 253" role="img" aria-labelledby="trend-caption trend-data">
-            <title id="trend-caption">날짜별 {{ chart.label }} 및 처리 완료 건수</title>
-            <desc id="trend-data">{% for series in chart.lines %}{% for x,y,description in series.points %}{{ description }}. {% endfor %}{% endfor %}</desc>
-            <text x="17" y="20">건수</text>
-            {% for label,y in chart.ticks %}<line x1="47" x2="590" y1="{{ y }}" y2="{{ y }}" stroke="#e4e4e4"/><text x="38" y="{{ y }}" text-anchor="end">{{ label }}</text>{% endfor %}
-            {% for date,x in chart.dates %}<text x="{{ x }}" y="231" text-anchor="middle">{{ date }}</text>{% endfor %}
-            {% for series in chart.lines %}
-              <polyline points="{{ series.line }}" fill="none" stroke="{{ series.color }}" stroke-width="2.5" stroke-linejoin="round"/>
-              {% for x,y,description in series.points %}<circle cx="{{ x }}" cy="{{ y }}" r="3.5" fill="{{ series.color }}"><title>{{ description }}</title></circle>{% endfor %}
-            {% endfor %}
-          </svg>
-        </section>
-        <section class="analytics-card analytics-backlog">
-          <h2>{% if agent %}현재 미처리 티켓 구성{% else %}현재 미처리 상태별 구성{% endif %}</h2><p class="analytics-muted">조회 시점 기준</p>
-          <div class="analytics-donut" style="background:{{ backlog.background }}"><div><strong>{{ backlog.total }}건</strong><span>현재 미처리</span></div></div>
-          <ul class="analytics-backlog-items">{% for label,count,percent,color in backlog.items %}<li><span class="analytics-dot" style="background:{{ color }}"></span><span>{{ label }}</span><strong>{{ count }}건 ({{ percent }}%)</strong></li>{% endfor %}</ul>
-        </section>
-        {% if not agent %}
-          <section class="analytics-card analytics-categories"><h2>증가 카테고리 상위 3개</h2><p class="analytics-muted">{{ date_range.compare }}</p>
-            <table class="analytics-table"><thead><tr><th>카테고리</th><th>비교 기간</th><th>선택 기간</th><th>증감</th></tr></thead><tbody>
-              {% for name,before,after,increase in categories %}<tr><th scope="row">{{ name }}</th><td>{{ before }}건</td><td>{{ after }}건</td><td class="analytics-increase">+{{ increase }}건</td></tr>{% empty %}<tr><td colspan="4">증가한 카테고리가 없습니다.</td></tr>{% endfor %}
-            </tbody></table>
-          </section>
-          <section class="analytics-card analytics-latency"><h2>고객 대기 시간</h2><p class="analytics-muted">선택 기간 중앙값</p>
-            <dl>{% for name,caption,value in latency %}<div><dt>{{ name }}<span>{{ caption }}</span></dt><dd>{{ value }}</dd></div>{% endfor %}</dl>
-          </section>
-        {% endif %}
-      </div>
-      {% if agent %}<p class="analytics-muted analytics-agent-basis">첫 답변 중앙값은 티켓 접수부터 해당 상담사가 보낸 첫 고객 답변까지 걸린 시간의 중앙값입니다.</p>{% endif %}
-    {% else %}
-      <section class="analytics-card analytics-individual"><h2>상담사별 실적</h2>
-        <div class="analytics-table-scroll"><table class="analytics-table"><thead>
-          <tr><th rowspan="2">상담사</th><th rowspan="2">소속 팀</th><th rowspan="2">기간 내 배정</th><th rowspan="2">기간 내 처리 완료</th><th colspan="3" class="analytics-pending-heading">현재 미처리</th><th rowspan="2">첫 답변 중앙값</th></tr>
-          <tr><th>할당 티켓</th><th>이관</th><th>검토 요청</th></tr></thead><tbody>
-          {% for row in agents %}<tr><th scope="row"><a class="analytics-agent-link" href="{% querystring agent=row.name %}" aria-label="{{ row.name }} 상담사 상세">{{ row.name }}</a></th>
-            <td>{{ row.team }}</td><td>{{ row.assigned }}건</td><td>{{ row.closed }}건</td><td>{{ row.work.assigned }}건</td><td>{{ row.work.transfer }}건</td><td>{{ row.work.review }}건</td><td>{{ row.response }}분</td></tr>{% endfor %}
-        </tbody></table></div>
-        <div class="analytics-individual-notes analytics-muted"><p>처리 완료는 완료를 기록한 상담사 기준입니다.</p><p>할당 티켓·이관은 현재 담당 티켓, 검토 요청은 받은 요청 중 미회신 건입니다.</p><p>선택 기간에 해당 상담사가 보낸 첫 고객 답변을 기준으로, 티켓 접수부터 걸린 시간의 중앙값을 표시합니다.</p></div>
-      </section>
-    {% endif %}
+    {% include "analytics/summary.html" %}
   {% endif %}
 </section>
 {% endblock %}

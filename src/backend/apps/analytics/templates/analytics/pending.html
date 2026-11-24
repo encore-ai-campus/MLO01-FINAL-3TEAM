@@ -1,0 +1,7 @@
+<section class="analytics-card analytics-backlog">
+  <h2>{{ pending_title }}</h2><p class="analytics-muted">조회 시점 기준</p>
+  <div class="analytics-donut" style="background:{{ pending.background }}"><div><strong>{{ pending.total }}건</strong><span>현재 미처리</span></div></div>
+  <ul class="analytics-backlog-items">{% for label,count,percent,color in pending.rows %}
+    <li><span class="analytics-dot" style="background:{{ color }}"></span><span>{{ label }}</span><strong>{{ count }}건 ({{ percent }}%)</strong></li>
+  {% endfor %}</ul>
+</section>
