@@ -45,6 +45,12 @@ def message_label(message):
     return labels.get(message["message_type"], "고객" if message["sender_type"] == "customer" else "상담사")
 
 
+@register.filter
+def delivery_label(value):
+    return {"sending": "전송 중", "sent": "전송 완료", "failed": "전송 실패",
+            "unknown": "전송 결과 확인 필요", "internal_only": "내부 기록"}.get(value, value)
+
+
 def local_time(value):
     if isinstance(value, str):
         value = datetime.fromisoformat(value.replace("Z", "+00:00"))

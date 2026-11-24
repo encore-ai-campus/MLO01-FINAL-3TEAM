@@ -1,12 +1,15 @@
-from uuid import UUID
+import base64
+from uuid import UUID, uuid4
 
-from django.http import JsonResponse
-from django.shortcuts import render
-from django.views.decorators.http import require_GET
+from django.http import HttpResponse, JsonResponse
+from django.shortcuts import redirect, render
+from django.urls import reverse
+from django.views.decorators.http import require_GET, require_POST
 
 from apps.accounts.presentation.views import session_token
 from config.http import DeskError, DeskJSONEncoder
-from .. import services
+from .. import actions, services
+from . import action_forms
 from .forms import parse_query
 
 
@@ -42,9 +45,62 @@ def detail(request, ticket_uuid, as_json=False):
             ticket_uuid = UUID(str(ticket_uuid))
         except ValueError:
             raise DeskError(422, "INVALID_REQUEST", "조회 조건의 형식과 범위를 확인해 주세요.") from None
-        result = desk.detail(ticket_uuid)
+        result = desk.detail(ticket_uuid, with_controls=not as_json)
     if as_json:
         return JsonResponse(result, encoder=DeskJSONEncoder)
     return render(request, "tickets/detail.html", {
         **result, "actor": desk.actor, "scope": request.GET.get("scope", "all"), "active": "detail",
+        "request_key": uuid4(),
     })
+
+
+@require_GET
+def detail_controls(request, ticket_uuid, control):
+    with services.open_desk(session_token(request)) as desk:
+        result = desk.detail(ticket_uuid, with_controls=True)
+    if not result["can_conduct"]:
+        raise DeskError(403, "TICKET_CONDUCT_FORBIDDEN", "티켓 상담 권한이 없습니다.")
+    if control == "quick-replies":
+        return JsonResponse({"items": result["quick_replies"]}, encoder=DeskJSONEncoder)
+    return JsonResponse({key: result[key] for key in ("transfer_recipients", "review_channels")},
+                        encoder=DeskJSONEncoder)
+
+
+@require_POST
+def ticket_action(request, ticket_uuid, action, as_json=False):
+    data = action_forms.fields(request)
+    token = session_token(request)
+    if action == "messages":
+        result = actions.store_message(token, ticket_uuid, *action_forms.message_payload(data))
+    elif action == "transfer":
+        result = actions.transfer(token, ticket_uuid, action_forms.identifier(data.get("recipient_uuid")),
+                                  action_forms.text(data.get("reason"), "이관 사유"),
+                                  action_forms.text(data["attached_reply"], "첨부 답변") if data.get("attached_reply") else None)
+    else:
+        result = actions.request_review(token, ticket_uuid, action_forms.identifier(data.get("review_channel_uuid")),
+                                        action_forms.text(data.get("memo"), "상세 메모"),
+                                        action_forms.review_attachment(request, data))
+    if as_json:
+        return JsonResponse(result, encoder=DeskJSONEncoder, status=200 if action == "messages" else 201)
+    url = reverse("tickets:detail", args=(ticket_uuid,))
+    return redirect(f"{url}?{request.GET.urlencode()}" if request.GET else url)
+
+
+@require_GET
+def ticket_requests(request):
+    kind = request.GET.get("kind")
+    if kind not in (None, "transfer", "review"):
+        raise action_forms.invalid("받은 요청 유형을 확인해 주세요.")
+    return JsonResponse({"items": actions.received_requests(session_token(request), kind)}, encoder=DeskJSONEncoder)
+
+
+@require_GET
+def request_attachment(request, action_uuid):
+    attachment = actions.request_attachment(session_token(request), action_uuid)
+    content_type = attachment["content_type"]
+    extension = {"text/plain": "txt", **{key: key.split("/")[1] for key in action_forms.IMAGE_SIGNATURES}}
+    content = attachment["content"]
+    response = HttpResponse(content if content_type == "text/plain" else base64.b64decode(content),
+                            content_type=content_type)
+    response.headers["Content-Disposition"] = f'attachment; filename="reference.{extension[content_type]}"'
+    return response

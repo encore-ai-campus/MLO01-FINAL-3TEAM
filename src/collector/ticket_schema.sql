@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS public.permission (
     permission_uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(), code text NOT NULL UNIQUE, name text
 );
 INSERT INTO public.permission(code, name) VALUES ('ticket.read', '티켓 조회') ON CONFLICT (code) DO NOTHING;
+INSERT INTO public.permission(code, name) VALUES ('ticket.conduct', '티켓 상담') ON CONFLICT (code) DO NOTHING;
 CREATE TABLE IF NOT EXISTS public.staff_permission (
     staff_user_uuid uuid NOT NULL REFERENCES public.staff_user ON DELETE CASCADE,
     permission_uuid uuid NOT NULL REFERENCES public.permission ON DELETE CASCADE,
@@ -81,6 +82,18 @@ CREATE TABLE IF NOT EXISTS public.ticket (
 CREATE INDEX IF NOT EXISTS ticket_company_order ON public.ticket(company_uuid,created_at,ticket_number);
 CREATE INDEX IF NOT EXISTS ticket_assignee_order ON public.ticket(company_uuid,assignee_uuid,created_at,ticket_number);
 CREATE INDEX IF NOT EXISTS ticket_customer_history ON public.ticket(company_uuid,customer_uuid,created_at);
+ALTER TABLE public.ticket ADD COLUMN IF NOT EXISTS csv_import_kind text;
+ALTER TABLE public.ticket ALTER COLUMN source_event_id DROP NOT NULL;
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT FROM pg_constraint WHERE conrelid='public.ticket'::regclass
+                   AND conname='ticket_origin_check') THEN
+        ALTER TABLE public.ticket ADD CONSTRAINT ticket_origin_check CHECK (
+            (source_event_id IS NOT NULL AND csv_import_kind IS NULL)
+            OR (source_event_id IS NULL AND csv_import_kind IS NOT NULL
+                AND csv_import_kind IN ('migration','homepage_sample'))
+        );
+    END IF;
+END $$;
 -- Only explicit cross-channel candidates appear. The pair is symmetric and never merges tickets.
 CREATE TABLE IF NOT EXISTS public.ticket_duplicate_candidate (
     ticket_uuid uuid NOT NULL REFERENCES public.ticket ON DELETE CASCADE,
@@ -113,15 +126,90 @@ CREATE TABLE IF NOT EXISTS public.ticket_message (
     created_at timestamptz NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ticket_message_history ON public.ticket_message(ticket_uuid,created_at);
+ALTER TABLE public.ticket_message ADD COLUMN IF NOT EXISTS request_key uuid;
+ALTER TABLE public.ticket_message ADD COLUMN IF NOT EXISTS provider_message_id text;
+CREATE UNIQUE INDEX IF NOT EXISTS ticket_message_request ON public.ticket_message(ticket_uuid,request_key)
+    WHERE request_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ticket_one_active_delivery ON public.ticket_message(ticket_uuid)
+    WHERE delivery_status IN ('sending','unknown');
+
+CREATE TABLE IF NOT EXISTS public.ticket_review_channel (
+    review_channel_uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_uuid uuid NOT NULL REFERENCES public.company,
+    name text NOT NULL,
+    UNIQUE (company_uuid, review_channel_uuid)
+);
+CREATE TABLE IF NOT EXISTS public.ticket_review_channel_member (
+    company_uuid uuid NOT NULL,
+    review_channel_uuid uuid NOT NULL,
+    staff_user_uuid uuid NOT NULL,
+    PRIMARY KEY (review_channel_uuid, staff_user_uuid),
+    FOREIGN KEY (company_uuid, review_channel_uuid)
+        REFERENCES public.ticket_review_channel(company_uuid, review_channel_uuid) ON DELETE CASCADE,
+    FOREIGN KEY (company_uuid, staff_user_uuid) REFERENCES public.staff_user(company_uuid, staff_user_uuid)
+);
+CREATE TABLE IF NOT EXISTS public.ticket_action (
+    action_uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    ticket_uuid uuid NOT NULL REFERENCES public.ticket,
+    actor_uuid uuid NOT NULL REFERENCES public.staff_user,
+    kind text NOT NULL CHECK (kind IN ('transfer','review','reply_completed')),
+    review_channel_uuid uuid REFERENCES public.ticket_review_channel,
+    memo text,
+    attached_reply text,
+    attachment jsonb,
+    from_status text,
+    to_status text,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS public.ticket_action_recipient (
+    action_uuid uuid REFERENCES public.ticket_action ON DELETE CASCADE,
+    staff_user_uuid uuid REFERENCES public.staff_user,
+    PRIMARY KEY (action_uuid, staff_user_uuid)
+);
+CREATE INDEX IF NOT EXISTS ticket_action_inbox ON public.ticket_action_recipient(staff_user_uuid, action_uuid);
+
+CREATE TABLE IF NOT EXISTS public.quick_reply (
+    quick_reply_uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_uuid uuid NOT NULL REFERENCES public.company,
+    category_uuid uuid NOT NULL REFERENCES public.category,
+    author_uuid uuid NOT NULL,
+    name text NOT NULL,
+    body text NOT NULL,
+    scope text NOT NULL CHECK (scope IN ('personal','team')),
+    UNIQUE (company_uuid, quick_reply_uuid),
+    FOREIGN KEY (company_uuid, author_uuid) REFERENCES public.staff_user(company_uuid, staff_user_uuid)
+);
+CREATE TABLE IF NOT EXISTS public.quick_reply_team (
+    company_uuid uuid NOT NULL,
+    quick_reply_uuid uuid NOT NULL,
+    team_uuid uuid NOT NULL,
+    PRIMARY KEY (quick_reply_uuid, team_uuid),
+    FOREIGN KEY (company_uuid, quick_reply_uuid)
+        REFERENCES public.quick_reply(company_uuid, quick_reply_uuid) ON DELETE CASCADE,
+    FOREIGN KEY (company_uuid, team_uuid) REFERENCES public.team(company_uuid, team_uuid)
+);
 -- A role correction never deletes staff work. Reconfirmation reveals the original ticket.
 CREATE OR REPLACE VIEW public.visible_ticket AS
-SELECT t.* FROM public.ticket t JOIN voc.silver_messages s
-    ON s.event_id=t.source_event_id AND s.schema_version=4 WHERE s.message_kind='customer_inquiry';
+SELECT t.* FROM public.ticket t LEFT JOIN voc.silver_messages s
+    ON s.event_id=t.source_event_id AND s.schema_version=4
+WHERE s.message_kind='customer_inquiry' OR t.csv_import_kind IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS voc.ticket_number_counter (
     company_uuid uuid PRIMARY KEY REFERENCES public.company,
     last_number integer NOT NULL CHECK(last_number BETWEEN 1 AND 99999999)
 );
+CREATE OR REPLACE FUNCTION voc.next_ticket_number(owner_id uuid) RETURNS text LANGUAGE sql AS $$
+    INSERT INTO voc.ticket_number_counter(company_uuid,last_number) VALUES (owner_id,1)
+    ON CONFLICT (company_uuid) DO UPDATE SET last_number=voc.ticket_number_counter.last_number+1
+    RETURNING lpad(last_number::text,8,'0')
+$$;
+CREATE OR REPLACE FUNCTION voc.assign_csv_ticket_number() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.ticket_number := voc.next_ticket_number(NEW.company_uuid);
+    RETURN NEW;
+END $$;
+CREATE OR REPLACE TRIGGER assign_csv_ticket_number BEFORE INSERT ON public.ticket
+    FOR EACH ROW WHEN (NEW.csv_import_kind IS NOT NULL) EXECUTE FUNCTION voc.assign_csv_ticket_number();
 CREATE TABLE IF NOT EXISTS voc.ticket_projection_issue (
     event_id uuid PRIMARY KEY REFERENCES voc.bronze_messages, reason text NOT NULL,
     recorded_at timestamptz NOT NULL DEFAULT now()
@@ -157,7 +245,6 @@ DECLARE
     ticket_id uuid;
     owner_id uuid;
     customer_id uuid;
-    sequence_number integer;
     external_id text;
     issue text;
 BEGIN
@@ -188,9 +275,6 @@ BEGIN
             RETURN;
         END IF;
         owner_id := destination.company_uuid;
-        INSERT INTO voc.ticket_number_counter(company_uuid,last_number) VALUES (owner_id,1)
-        ON CONFLICT (company_uuid) DO UPDATE SET last_number=voc.ticket_number_counter.last_number+1
-        RETURNING last_number INTO sequence_number;
         external_id := CASE WHEN s.channel='gmail' THEN lower(s.sender_ref) ELSE s.sender_ref END;
         INSERT INTO public.customer(company_uuid,source_type,external_customer_id,name,email)
         VALUES (owner_id,s.channel,external_id,s.sender_display_name,CASE WHEN s.channel='gmail' THEN s.sender_ref END)
@@ -199,7 +283,7 @@ BEGIN
         INSERT INTO public.ticket(source_event_id,company_uuid,domain_uuid,channel_uuid,customer_uuid,
                                   ticket_number,title,created_at,updated_at)
         VALUES (source_id,owner_id,destination.domain_uuid,destination.channel_uuid,customer_id,
-                lpad(sequence_number::text,8,'0'),voc.ticket_display_title(s.title,s.body_text),s.received_at,s.received_at)
+                voc.next_ticket_number(owner_id),voc.ticket_display_title(s.title,s.body_text),s.received_at,s.received_at)
         RETURNING ticket_uuid INTO ticket_id;
     END IF;
     DELETE FROM voc.ticket_projection_issue WHERE event_id=source_id;

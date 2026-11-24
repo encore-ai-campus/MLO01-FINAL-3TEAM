@@ -88,6 +88,18 @@ python -m uvicorn config.asgi:application --app-dir src/backend --host 127.0.0.1
 | `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/logout` | 로그인·본인 확인·로그아웃 |
 | `GET /api/tickets`, `GET /api/tickets/options` | 티켓 검색·복수 필터·접수 기간·정렬·페이지, 회사별 필터 선택지 |
 | `GET /api/tickets/{ticket_uuid}` | 티켓과 고객 대화 이력 조회 |
+| `GET /api/tickets/{ticket_uuid}/quick-replies`, `GET /api/tickets/{ticket_uuid}/collaboration-options` | 현재 카테고리 신속답변과 이관·검토 선택지 |
+| `POST /api/tickets/{ticket_uuid}/messages`, `POST /api/tickets/{ticket_uuid}/transfer`, `POST /api/tickets/{ticket_uuid}/review-requests` | 고객 답변·내부 메모와 상담 협업 |
+| `GET /api/ticket-requests?kind=transfer` 또는 `?kind=review` | 로그인한 직원이 받은 티켓 요청 |
+| `GET /api/ticket-requests/{action_uuid}/attachment` | 수신 직원의 개별 참고 자료 다운로드 |
+
+### 티켓 상세·답변 설정
+
+티켓 목록에서 상세로 이동할 때 기존 티켓 UUID를 사용한다. 상담 기능에는 기존 `ticket.read`와 `ticket.conduct` 권한이 모두 필요하다. 기존 Compose 설치에서는 `docker compose build init-db-topics ticket-desk` 후 초기화 서비스로 `src/collector/ticket_schema.sql`을 적용하고, 새 이미지로 `ticket-desk`를 띄운다. 검토 요청을 받는 사내 채널과 직원은 `ticket_review_channel`, `ticket_review_channel_member`에 등록한다. 등록된 개인·팀 신속답변은 `quick_reply`, `quick_reply_team`에 저장한다.
+
+발송 자격 증명은 배포 환경에서 `TASK3_REPLY_CONNECTIONS` JSON으로 주입한다. 키는 회사 UUID → `gmail` 또는 `discord` → 기존 Silver `connection_id`다. Gmail 사서함에는 `client_id`, `client_secret`, 발송 범위가 있는 `refresh_token`을 설정한다. Discord 연결에는 답글 권한이 있는 `bot_token`을 설정한다. 수집용 Gmail 읽기 토큰은 계속 수집에 사용한다. 회신 경로는 티켓에 연결된 Bronze·Silver에서 가져온다.
+
+JSON 메시지 요청에는 `message_type` (`reply` 또는 `memo`), `body`, 동작마다 생성한 UUID인 `request_key`를 보낸다. 재호출에는 같은 키를 쓴다. 응답의 `message.delivery_status`가 `sent`면 답변완료, `failed`면 기존 상태 유지, `unknown` 또는 `sending`이면 중복 발송 방지를 위해 채널에서 전송 여부를 확인할 때까지 추가 발송을 막는다. CSV 이관을 적재할 때는 `ticket.csv_import_kind='migration'`과 원문 메시지를 연결하면 답변 처리 결과가 `internal_only`로 저장된다. 홈페이지 CSV 샘플은 별도 값인 `homepage_sample`로 구분한다. 두 CSV 유형의 티켓 번호는 기존 수집 티켓과 같은 회사별 카운터에서 할당된다.
 
 ### 테스트
 

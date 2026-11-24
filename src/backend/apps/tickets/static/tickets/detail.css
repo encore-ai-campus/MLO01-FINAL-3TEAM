@@ -36,3 +36,16 @@
 .ticket-conversation header { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
 .ticket-conversation header a { text-decoration: underline; }
 .ticket-conversation p { margin-top: 6px; white-space: pre-wrap; }
+.ticket-conversation li[data-message-type="memo"] { background: #fff1be; }
+.ticket-actions form, .ticket-actions label { display: grid; gap: 8px; }
+.ticket-actions form { margin-block: 12px; }
+.ticket-actions details { margin-top: 12px; }
+.ticket-actions textarea { width: 100%; }
+.ticket-actions button { justify-self: start; }
+.ticket-detail-body { display: grid; grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr); gap: 16px; }
+.ticket-detail-body aside li { max-width: none; }
+.ticket-side-panel { margin-top: 18px; }
+.ticket-side-panel > summary { cursor: pointer; font-weight: 600; }
+@media (max-width: 780px) {
+  .ticket-detail-body { grid-template-columns: minmax(0, 1fr); }
+}

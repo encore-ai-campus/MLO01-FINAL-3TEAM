@@ -19,27 +19,47 @@
       <div><dt>카테고리</dt><dd>{{ ticket|analysis_label:'category' }}</dd></div>
     </dl>
   </section>
-  <section class="ticket-conversation" aria-labelledby="conversation-title">
-    <h2 id="conversation-title">고객 대화</h2>
-    {% if messages %}
-      <ol>{% for message in messages %}
-        <li data-sender="{{ message.sender_type }}">
-          <header><strong>{{ message|message_label }}</strong>
-            {% if message.ticket_uuid == ticket.ticket_uuid %}<span>#{{ message.ticket_number }} · 선택한 티켓</span>
-            {% else %}<a href="{% url 'tickets:detail' message.ticket_uuid %}{% querystring %}">#{{ message.ticket_number }}</a>{% endif %}
-            <time datetime="{{ message.created_at|timestamp }}">{{ message.created_at|detail_time }}</time>
-          </header>
-          <p>{{ message.body }}</p>
-        </li>
-      {% endfor %}</ol>
-    {% else %}<p>등록된 메시지가 없습니다.</p>{% endif %}
-  </section>
-  {% if duplicate_candidates %}
-    <section class="ticket-conversation" aria-labelledby="candidates-title"><h2 id="candidates-title">다른 채널의 중복 문의 후보</h2>
-      <ul>{% for candidate in duplicate_candidates %}
-        <li><a class="ticket-detail-link" href="{% url 'tickets:detail' candidate.ticket_uuid %}{% querystring %}">#{{ candidate.ticket_number }} · {{ candidate.channel|channel_label }} · {{ candidate.title }}</a></li>
-      {% endfor %}</ul>
-    </section>
-  {% endif %}
+  <div class="ticket-detail-body">
+    <div>
+      <section class="ticket-conversation" aria-labelledby="conversation-title">
+        <h2 id="conversation-title">고객 대화</h2>
+        {% if messages %}
+          <ol>{% for message in messages %}
+            <li data-sender="{{ message.sender_type }}" data-message-type="{{ message.message_type }}">
+              <header><strong>{{ message|message_label }}</strong>
+                {% if message.ticket_uuid == ticket.ticket_uuid %}<span>#{{ message.ticket_number }} · 선택한 티켓</span>
+                {% else %}<a href="{% url 'tickets:detail' message.ticket_uuid %}{% querystring %}">#{{ message.ticket_number }}</a>{% endif %}
+                <time datetime="{{ message.created_at|timestamp }}">{{ message.created_at|detail_time }}</time>
+                {% if message.delivery_status %}<span>{{ message.delivery_status|delivery_label }}</span>{% endif %}
+              </header>
+              <p>{{ message.body }}</p>
+            </li>
+          {% endfor %}</ol>
+        {% else %}<p>등록된 메시지가 없습니다.</p>{% endif %}
+      </section>
+      {% if can_conduct %}{% include "tickets/includes/actions.html" %}{% endif %}
+    </div>
+    <aside aria-label="티켓 보조 패널">
+      <details class="ticket-side-panel" open>
+        <summary>티켓 보조 패널</summary>
+        {% if can_conduct %}{% include "tickets/includes/collaboration.html" %}{% endif %}
+        <details class="ticket-conversation">
+          <summary>동일 고객 티켓</summary>
+          <ul>{% for item in customer_tickets %}
+            <li><a href="{% url 'tickets:detail' item.ticket_uuid %}{% querystring %}">#{{ item.ticket_number }} · {{ item.title }}</a>
+              <span>{{ item|analysis_label:'category' }} · {{ item.updated_at|detail_time }}</span></li>
+          {% endfor %}</ul>
+        </details>
+        {% if duplicate_candidates %}
+          <section class="ticket-conversation" aria-labelledby="candidates-title"><h2 id="candidates-title">다른 채널의 중복 문의 후보</h2>
+            <ul>{% for candidate in duplicate_candidates %}
+              <li><a class="ticket-detail-link" href="{% url 'tickets:detail' candidate.ticket_uuid %}{% querystring %}">#{{ candidate.ticket_number }} · {{ candidate.channel|channel_label }} · {{ candidate.title }}</a></li>
+            {% endfor %}</ul>
+          </section>
+        {% endif %}
+      </details>
+    </aside>
+  </div>
 </section>
+{% if can_conduct %}<script src="{% static 'tickets/detail-actions.js' %}" defer></script>{% endif %}
 {% endblock %}

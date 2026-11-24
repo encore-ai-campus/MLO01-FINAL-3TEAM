@@ -1,4 +1,4 @@
-{% extends "base.html" %}{% load static %}
+{% extends "base.html" %}{% load static ticket_ui %}
 {% block title %}받은 요청{% endblock %}
 {% block styles %}<link rel="stylesheet" href="{% static 'collaboration/inbox.css' %}">{% endblock %}
 {% block content %}
@@ -7,6 +7,22 @@
   <nav class="inbox-tabs" aria-label="받은 요청 유형">
     {% for id,label in tabs %}<a class="desk-button" href="{% url 'workspace:inbox' %}{% querystring tab=id request=None q=None %}" {% if id == tab %}aria-current="page"{% endif %}>{{ label }}{% if id != "reply" %} <span class="inbox-count" data-count="{{ id }}"></span>{% else %} <span class="inbox-count" id="reply-count"></span>{% endif %}</a>{% endfor %}
   </nav>
+  {% if received_ticket_requests %}
+  <section aria-labelledby="ticket-requests-title">
+    <h2 id="ticket-requests-title">실제 티켓 요청</h2>
+    {% for item in received_ticket_requests %}
+    <details>
+      <summary>#{{ item.ticket_number }} · {{ item.title }} · {{ item.sender }} · {{ item.created_at|detail_time }}</summary>
+      {% if item.review_channel %}<p>{{ item.review_channel }}</p>{% endif %}
+      <p>{{ item.memo }}</p>
+      {% if item.attached_reply %}<p>{{ item.attached_reply }}</p>{% endif %}
+      {% if item.attachment.content_type == "text/plain" %}<p>{{ item.attachment.content }}</p>
+      {% elif item.attachment %}<p><a href="{% url 'tickets:request-attachment' item.action_uuid %}">참고 이미지 내려받기</a></p>{% endif %}
+      <p><a href="{% url 'tickets:detail' item.ticket_uuid %}">티켓 열기</a></p>
+    </details>
+    {% endfor %}
+  </section>
+  {% endif %}
   {% if tab != 'reply' %}
     <div class="inbox-toolbar">
       <form class="inbox-search" method="get" action="{% url 'workspace:inbox' %}">
