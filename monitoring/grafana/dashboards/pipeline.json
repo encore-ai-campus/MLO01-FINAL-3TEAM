@@ -1,0 +1,1427 @@
+{
+  "uid": "voc-pipeline",
+  "title": "파이프라인",
+  "tags": [
+    "VoC"
+  ],
+  "schemaVersion": 41,
+  "version": 1,
+  "editable": false,
+  "refresh": "15s",
+  "timezone": "Asia/Seoul",
+  "time": {
+    "from": "now-10m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "canvas",
+      "title": "문의 처리 흐름",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집"
+        },
+        "overrides": []
+      },
+      "description": "단계를 누르면 해당 문의의 Kafka 전달 내역과 재시도로 이동합니다.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "voc-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawQuery": true,
+          "rawSql": "\nWITH events AS (\n    SELECT stage,count(*) FILTER(WHERE started_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz) AS entered,\n           count(*) FILTER(WHERE succeeded_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz) AS completed\n    FROM monitor.stage WHERE started_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz OR succeeded_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n    GROUP BY stage\n), counts AS (\n    SELECT s.stage,e.entered,e.completed,\n        e.entered IS NOT NULL OR CASE\n            WHEN s.stage IN ('compute','ready') THEN EXISTS(SELECT FROM monitor.availability WHERE step='classification' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz) AND EXISTS(SELECT FROM monitor.availability WHERE step='embedding' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz)\n            ELSE EXISTS (SELECT FROM monitor.availability a WHERE a.step=s.stage\n                         AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz)\n        END AS observed\n    FROM unnest(ARRAY['capture','bronze','flink','ticket','compute','ready']) s(stage) LEFT JOIN events e USING(stage)\n)\nSELECT max(CASE WHEN stage='capture' THEN CASE WHEN observed THEN '유입 ' || coalesce(entered,0)::text || '건  ·  완료 ' || coalesce(completed,0)::text || '건' ELSE '미수집' END END) AS \"capture\", max(CASE WHEN stage='bronze' THEN CASE WHEN observed THEN '유입 ' || coalesce(entered,0)::text || '건  ·  완료 ' || coalesce(completed,0)::text || '건' ELSE '미수집' END END) AS \"bronze\", max(CASE WHEN stage='flink' THEN CASE WHEN observed THEN '유입 ' || coalesce(entered,0)::text || '건  ·  완료 ' || coalesce(completed,0)::text || '건' ELSE '미수집' END END) AS \"flink\", max(CASE WHEN stage='ticket' THEN CASE WHEN observed THEN '유입 ' || coalesce(entered,0)::text || '건  ·  완료 ' || coalesce(completed,0)::text || '건' ELSE '미수집' END END) AS \"ticket\", max(CASE WHEN stage='compute' THEN CASE WHEN observed THEN '유입 ' || coalesce(entered,0)::text || '건  ·  완료 ' || coalesce(completed,0)::text || '건' ELSE '미수집' END END) AS \"compute\", max(CASE WHEN stage='ready' THEN CASE WHEN observed THEN '유입 ' || coalesce(entered,0)::text || '건  ·  완료 ' || coalesce(completed,0)::text || '건' ELSE '미수집' END END) AS \"ready\"\nFROM counts\n",
+          "format": "table",
+          "editorMode": "code"
+        }
+      ],
+      "options": {
+        "inlineEditing": false,
+        "panZoom": false,
+        "zoomToContent": false,
+        "root": {
+          "name": "문의 처리",
+          "type": "frame",
+          "elements": [
+            {
+              "name": "수집",
+              "type": "text",
+              "constraint": {
+                "horizontal": "scale",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 1.1,
+                "right": 84.1,
+                "top": 28,
+                "height": 57
+              },
+              "config": {
+                "text": {
+                  "fixed": "수집",
+                  "mode": "fixed"
+                },
+                "color": {
+                  "fixed": "#24364D"
+                },
+                "align": "center",
+                "valign": "middle",
+                "size": 19
+              },
+              "background": {
+                "color": {
+                  "fixed": "#E4F2FD"
+                }
+              },
+              "border": {
+                "color": {
+                  "fixed": "#E4F2FD"
+                },
+                "width": 1,
+                "radius": 10
+              },
+              "links": [
+                {
+                  "title": "수집 상세",
+                  "url": "/d/voc-pipeline/pipeline?var-step=capture&viewPanel=21&${__url_time_range}",
+                  "targetBlank": false,
+                  "oneClick": true
+                }
+              ],
+              "connections": [
+                {
+                  "source": {
+                    "x": 1,
+                    "y": 0
+                  },
+                  "target": {
+                    "x": -1,
+                    "y": 0
+                  },
+                  "targetName": "원문 저장",
+                  "path": "straight",
+                  "color": {
+                    "fixed": "#687D98"
+                  },
+                  "size": {
+                    "fixed": 2
+                  },
+                  "direction": {
+                    "fixed": "forward"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "capture-count",
+              "type": "metric-value",
+              "constraint": {
+                "horizontal": "scale",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 1.1,
+                "right": 84.1,
+                "top": 94,
+                "height": 30
+              },
+              "config": {
+                "text": {
+                  "field": "capture",
+                  "mode": "field"
+                },
+                "color": {
+                  "fixed": "#4B607A"
+                },
+                "align": "center",
+                "valign": "middle",
+                "size": 14
+              },
+              "links": [
+                {
+                  "title": "수집 상세",
+                  "url": "/d/voc-pipeline/pipeline?var-step=capture&viewPanel=21&${__url_time_range}",
+                  "targetBlank": false,
+                  "oneClick": true
+                }
+              ]
+            },
+            {
+              "name": "원문 저장",
+              "type": "text",
+              "constraint": {
+                "horizontal": "scale",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 17.7,
+                "right": 67.5,
+                "top": 28,
+                "height": 57
+              },
+              "config": {
+                "text": {
+                  "fixed": "원문 저장",
+                  "mode": "fixed"
+                },
+                "color": {
+                  "fixed": "#24364D"
+                },
+                "align": "center",
+                "valign": "middle",
+                "size": 19
+              },
+              "background": {
+                "color": {
+                  "fixed": "#E0F5F6"
+                }
+              },
+              "border": {
+                "color": {
+                  "fixed": "#E0F5F6"
+                },
+                "width": 1,
+                "radius": 10
+              },
+              "links": [
+                {
+                  "title": "원문 저장 상세",
+                  "url": "/d/voc-pipeline/pipeline?var-step=bronze&viewPanel=21&${__url_time_range}",
+                  "targetBlank": false,
+                  "oneClick": true
+                }
+              ],
+              "connections": [
+                {
+                  "source": {
+                    "x": 1,
+                    "y": 0
+                  },
+                  "target": {
+                    "x": -1,
+                    "y": 0
+                  },
+                  "targetName": "Flink 정제",
+                  "path": "straight",
+                  "color": {
+                    "fixed": "#687D98"
+                  },
+                  "size": {
+                    "fixed": 2
+                  },
+                  "direction": {
+                    "fixed": "forward"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "bronze-count",
+              "type": "metric-value",
+              "constraint": {
+                "horizontal": "scale",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 17.7,
+                "right": 67.5,
+                "top": 94,
+                "height": 30
+              },
+              "config": {
+                "text": {
+                  "field": "bronze",
+                  "mode": "field"
+                },
+                "color": {
+                  "fixed": "#4B607A"
+                },
+                "align": "center",
+                "valign": "middle",
+                "size": 14
+              },
+              "links": [
+                {
+                  "title": "원문 저장 상세",
+                  "url": "/d/voc-pipeline/pipeline?var-step=bronze&viewPanel=21&${__url_time_range}",
+                  "targetBlank": false,
+                  "oneClick": true
+                }
+              ]
+            },
+            {
+              "name": "Flink 정제",
+              "type": "text",
+              "constraint": {
+                "horizontal": "scale",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 34.3,
+                "right": 50.9,
+                "top": 28,
+                "height": 57
+              },
+              "config": {
+                "text": {
+                  "fixed": "Flink 정제",
+                  "mode": "fixed"
+                },
+                "color": {
+                  "fixed": "#24364D"
+                },
+                "align": "center",
+                "valign": "middle",
+                "size": 19
+              },
+              "background": {
+                "color": {
+                  "fixed": "#EDEBFD"
+                }
+              },
+              "border": {
+                "color": {
+                  "fixed": "#EDEBFD"
+                },
+                "width": 1,
+                "radius": 10
+              },
+              "links": [
+                {
+                  "title": "Flink 정제 상세",
+                  "url": "/d/voc-pipeline/pipeline?var-step=flink&viewPanel=21&${__url_time_range}",
+                  "targetBlank": false,
+                  "oneClick": true
+                }
+              ],
+              "connections": [
+                {
+                  "source": {
+                    "x": 1,
+                    "y": 0
+                  },
+                  "target": {
+                    "x": -1,
+                    "y": 0
+                  },
+                  "targetName": "티켓 저장",
+                  "path": "straight",
+                  "color": {
+                    "fixed": "#687D98"
+                  },
+                  "size": {
+                    "fixed": 2
+                  },
+                  "direction": {
+                    "fixed": "forward"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "flink-count",
+              "type": "metric-value",
+              "constraint": {
+                "horizontal": "scale",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 34.3,
+                "right": 50.9,
+                "top": 94,
+                "height": 30
+              },
+              "config": {
+                "text": {
+                  "field": "flink",
+                  "mode": "field"
+                },
+                "color": {
+                  "fixed": "#4B607A"
+                },
+                "align": "center",
+                "valign": "middle",
+                "size": 14
+              },
+              "links": [
+                {
+                  "title": "Flink 정제 상세",
+                  "url": "/d/voc-pipeline/pipeline?var-step=flink&viewPanel=21&${__url_time_range}",
+                  "targetBlank": false,
+                  "oneClick": true
+                }
+              ]
+            },
+            {
+              "name": "티켓 저장",
+              "type": "text",
+              "constraint": {
+                "horizontal": "scale",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 50.9,
+                "right": 34.3,
+                "top": 28,
+                "height": 57
+              },
+              "config": {
+                "text": {
+                  "fixed": "티켓 저장",
+                  "mode": "fixed"
+                },
+                "color": {
+                  "fixed": "#24364D"
+                },
+                "align": "center",
+                "valign": "middle",
+                "size": 19
+              },
+              "background": {
+                "color": {
+                  "fixed": "#F9EFDE"
+                }
+              },
+              "border": {
+                "color": {
+                  "fixed": "#F9EFDE"
+                },
+                "width": 1,
+                "radius": 10
+              },
+              "links": [
+                {
+                  "title": "티켓 저장 상세",
+                  "url": "/d/voc-pipeline/pipeline?var-step=ticket&viewPanel=21&${__url_time_range}",
+                  "targetBlank": false,
+                  "oneClick": true
+                }
+              ],
+              "connections": [
+                {
+                  "source": {
+                    "x": 1,
+                    "y": 0
+                  },
+                  "target": {
+                    "x": -1,
+                    "y": 0
+                  },
+                  "targetName": "분류·임베딩",
+                  "path": "straight",
+                  "color": {
+                    "fixed": "#687D98"
+                  },
+                  "size": {
+                    "fixed": 2
+                  },
+                  "direction": {
+                    "fixed": "forward"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "ticket-count",
+              "type": "metric-value",
+              "constraint": {
+                "horizontal": "scale",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 50.9,
+                "right": 34.3,
+                "top": 94,
+                "height": 30
+              },
+              "config": {
+                "text": {
+                  "field": "ticket",
+                  "mode": "field"
+                },
+                "color": {
+                  "fixed": "#4B607A"
+                },
+                "align": "center",
+                "valign": "middle",
+                "size": 14
+              },
+              "links": [
+                {
+                  "title": "티켓 저장 상세",
+                  "url": "/d/voc-pipeline/pipeline?var-step=ticket&viewPanel=21&${__url_time_range}",
+                  "targetBlank": false,
+                  "oneClick": true
+                }
+              ]
+            },
+            {
+              "name": "분류·임베딩",
+              "type": "text",
+              "constraint": {
+                "horizontal": "scale",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 67.5,
+                "right": 17.7,
+                "top": 28,
+                "height": 57
+              },
+              "config": {
+                "text": {
+                  "fixed": "분류·임베딩",
+                  "mode": "fixed"
+                },
+                "color": {
+                  "fixed": "#24364D"
+                },
+                "align": "center",
+                "valign": "middle",
+                "size": 19
+              },
+              "background": {
+                "color": {
+                  "fixed": "#F7E9F3"
+                }
+              },
+              "border": {
+                "color": {
+                  "fixed": "#F7E9F3"
+                },
+                "width": 1,
+                "radius": 10
+              },
+              "links": [
+                {
+                  "title": "분류·임베딩 상세",
+                  "url": "/d/voc-pipeline/pipeline?var-step=compute&viewPanel=21&${__url_time_range}",
+                  "targetBlank": false,
+                  "oneClick": true
+                }
+              ],
+              "connections": [
+                {
+                  "source": {
+                    "x": 1,
+                    "y": 0
+                  },
+                  "target": {
+                    "x": -1,
+                    "y": 0
+                  },
+                  "targetName": "결과 저장",
+                  "path": "straight",
+                  "color": {
+                    "fixed": "#687D98"
+                  },
+                  "size": {
+                    "fixed": 2
+                  },
+                  "direction": {
+                    "fixed": "forward"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "compute-count",
+              "type": "metric-value",
+              "constraint": {
+                "horizontal": "scale",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 67.5,
+                "right": 17.7,
+                "top": 94,
+                "height": 30
+              },
+              "config": {
+                "text": {
+                  "field": "compute",
+                  "mode": "field"
+                },
+                "color": {
+                  "fixed": "#4B607A"
+                },
+                "align": "center",
+                "valign": "middle",
+                "size": 14
+              },
+              "links": [
+                {
+                  "title": "분류·임베딩 상세",
+                  "url": "/d/voc-pipeline/pipeline?var-step=compute&viewPanel=21&${__url_time_range}",
+                  "targetBlank": false,
+                  "oneClick": true
+                }
+              ]
+            },
+            {
+              "name": "결과 저장",
+              "type": "text",
+              "constraint": {
+                "horizontal": "scale",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 84.1,
+                "right": 1.1,
+                "top": 28,
+                "height": 57
+              },
+              "config": {
+                "text": {
+                  "fixed": "결과 저장",
+                  "mode": "fixed"
+                },
+                "color": {
+                  "fixed": "#24364D"
+                },
+                "align": "center",
+                "valign": "middle",
+                "size": 19
+              },
+              "background": {
+                "color": {
+                  "fixed": "#E4F3E9"
+                }
+              },
+              "border": {
+                "color": {
+                  "fixed": "#E4F3E9"
+                },
+                "width": 1,
+                "radius": 10
+              },
+              "links": [
+                {
+                  "title": "결과 저장 상세",
+                  "url": "/d/voc-pipeline/pipeline?var-step=ready&viewPanel=21&${__url_time_range}",
+                  "targetBlank": false,
+                  "oneClick": true
+                }
+              ]
+            },
+            {
+              "name": "ready-count",
+              "type": "metric-value",
+              "constraint": {
+                "horizontal": "scale",
+                "vertical": "top"
+              },
+              "placement": {
+                "left": 84.1,
+                "right": 1.1,
+                "top": 94,
+                "height": 30
+              },
+              "config": {
+                "text": {
+                  "field": "ready",
+                  "mode": "field"
+                },
+                "color": {
+                  "fixed": "#4B607A"
+                },
+                "align": "center",
+                "valign": "middle",
+                "size": 14
+              },
+              "links": [
+                {
+                  "title": "결과 저장 상세",
+                  "url": "/d/voc-pipeline/pipeline?var-step=ready&viewPanel=21&${__url_time_range}",
+                  "targetBlank": false,
+                  "oneClick": true
+                }
+              ]
+            }
+          ]
+        },
+        "showAdvancedTypes": false,
+        "tooltip": {
+          "mode": "none",
+          "disableForOneClick": true
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "단계별 처리 시간",
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 12,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집"
+        },
+        "overrides": []
+      },
+      "description": "같은 문의에서 최초 유입과 최초 완료의 차이를 측정합니다.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "voc-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawQuery": true,
+          "rawSql": "\nSELECT CASE stage WHEN 'capture' THEN '수집' WHEN 'bronze' THEN '원문 저장' WHEN 'flink' THEN 'Flink 정제' WHEN 'ticket' THEN '티켓 저장' WHEN 'compute' THEN '분류·임베딩' WHEN 'ready' THEN '결과 저장' END AS \"단계\",\n       count(*) AS \"완료 표본\",\n       round(percentile_cont(0.95) WITHIN GROUP (\n           ORDER BY extract(epoch FROM (succeeded_at-started_at)))::numeric, 2) AS \"95백분위 (초)\"\nFROM monitor.stage\nWHERE succeeded_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz AND started_at<=succeeded_at\nGROUP BY stage ORDER BY array_position(ARRAY['capture','bronze','flink','ticket','compute','ready'],stage)\n",
+          "format": "table",
+          "editorMode": "code"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "전체 처리 시간과 30초 목표",
+      "gridPos": {
+        "x": 12,
+        "y": 5,
+        "w": 12,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집"
+        },
+        "overrides": []
+      },
+      "description": "원본 공급자 등록부터 결과 저장까지 잽니다. 등록 시각을 모르는 문의는 제외합니다.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "voc-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawQuery": true,
+          "rawSql": "\nWITH completed AS (\n  SELECT extract(epoch FROM ready_at-registered_at) AS seconds FROM monitor.normal_inquiry\n  WHERE ready_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz AND ready_at>=registered_at\n), cohort AS (\n  SELECT *, ready_at >= registered_at AND ready_at<=least(registered_at+interval '30 seconds',$__timeTo()::timestamptz) AS hit\n  FROM monitor.normal_inquiry WHERE registered_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n   AND (registered_at<=$__timeTo()::timestamptz-interval '30 seconds' OR ready_at BETWEEN registered_at AND $__timeTo()::timestamptz)\n)\nSELECT label AS \"지표\",value AS \"측정값\"\nFROM (\n  SELECT (SELECT round(percentile_cont(0.95) WITHIN GROUP(ORDER BY seconds)::numeric,2) FROM completed) AS p95,\n         CASE WHEN count(*)>0 OR EXISTS(SELECT FROM monitor.availability WHERE step='bronze' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz) THEN count(*) FILTER(WHERE hit) END AS hits,\n         CASE WHEN count(*)>0 OR EXISTS(SELECT FROM monitor.availability WHERE step='bronze' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz) THEN count(*) FILTER(WHERE NOT coalesce(hit,false)) END AS misses,\n         CASE WHEN count(*)>0 OR EXISTS(SELECT FROM monitor.availability WHERE step='bronze' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz) THEN count(*) END AS total,\n         round(count(*) FILTER(WHERE hit)*100.0/nullif(count(*),0),1) AS completion\n  FROM cohort\n) metrics CROSS JOIN LATERAL (VALUES ('전체 시간 95백분위 (초)',p95),('30초 이내 완료 (건)',hits),\n  ('목표 미달 (건)',misses),('대상 (건)',total),('30초 내 완료율 (%)',completion)) AS v(label,value)\n",
+          "format": "table",
+          "editorMode": "code"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "원문과 티켓 대조",
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집"
+        },
+        "overrides": []
+      },
+      "description": "현재 전체 원문과 티켓을 비교합니다. 대기·실패 기록은 누락 의심에서 제외합니다.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "voc-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawQuery": true,
+          "rawSql": "\nSELECT label AS \"대조 상태\",CASE WHEN observed THEN value END AS \"건수\"\nFROM (\n    SELECT count(*)>0 OR EXISTS(SELECT FROM monitor.availability WHERE step='bronze' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz) AS observed,\n       count(*) FILTER(WHERE reconciliation='source_without_ticket') AS missing_ticket,\n       count(*) FILTER(WHERE reconciliation='ticket_without_source') AS missing_source,\n       coalesce(sum(extra_tickets),0) AS duplicates,\n       count(*) FILTER(WHERE reconciliation='pending') AS pending,\n       count(*) FILTER(WHERE reconciliation='unconfirmed_delivery') AS unconfirmed,\n       count(*) FILTER(WHERE reconciliation='failed') AS failed\n    FROM monitor.source_reconciliation\n) metrics CROSS JOIN LATERAL (VALUES ('티켓 없는 원문',missing_ticket),('원문 없는 티켓',missing_source),\n    ('초과 티켓',duplicates),('처리 대기',pending),('전달 확인 중',unconfirmed),('실패 기록 있음',failed)) AS v(label,value)\n",
+          "format": "table",
+          "editorMode": "code"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "발행·분석 대기",
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집"
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "voc-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawQuery": true,
+          "rawSql": "\nSELECT label AS \"단계\", CASE WHEN q.pending>0 OR (stage='flink' AND EXISTS(SELECT FROM monitor.availability WHERE step='bronze' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz))\n    OR (stage='classification' AND EXISTS(SELECT FROM monitor.availability WHERE step='classification' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz)) OR (stage='embedding' AND EXISTS(SELECT FROM monitor.availability WHERE step='embedding' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz))\n    THEN coalesce(q.pending,0) END AS \"대기 건수\", q.oldest_seconds::integer AS \"가장 오래된 대기 (초)\"\nFROM (VALUES ('flink','원문 저장 후 Kafka 발행'),('classification','분류'),('embedding','임베딩')) AS s(stage,label)\nLEFT JOIN monitor.queue_backlog q USING(stage)\n",
+          "format": "table",
+          "editorMode": "code"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "Gmail 수집",
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "-1": {
+                  "text": "미수집"
+                },
+                "0": {
+                  "text": "중단"
+                },
+                "1": {
+                  "text": "수집 중"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voc-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "voc_collector_ready{channel=\"gmail\"} or on() vector(-1)",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Discord 수집",
+      "gridPos": {
+        "x": 4,
+        "y": 18,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "-1": {
+                  "text": "미수집"
+                },
+                "0": {
+                  "text": "중단"
+                },
+                "1": {
+                  "text": "수집 중"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voc-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "voc_collector_ready{channel=\"discord\"} or on() vector(-1)",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "마지막 성공 체크포인트",
+      "gridPos": {
+        "x": 8,
+        "y": 18,
+        "w": 8,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집",
+          "unit": "dateTimeAsLocal"
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voc-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "voc_flink_last_checkpoint_seconds * 1000",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 15,
+      "type": "stat",
+      "title": "마지막 체크포인트 복원",
+      "gridPos": {
+        "x": 16,
+        "y": 18,
+        "w": 8,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집",
+          "unit": "dateTimeAsLocal"
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voc-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "voc_flink_last_restore_seconds * 1000",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "wideLayout": true
+      }
+    },
+    {
+      "id": 16,
+      "type": "table",
+      "title": "채널별 수집 위치",
+      "gridPos": {
+        "x": 0,
+        "y": 22,
+        "w": 12,
+        "h": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집"
+        },
+        "overrides": []
+      },
+      "description": "채널별 수집 위치와 마지막 갱신을 확인합니다. 연결은 식별용 해시로 표시합니다.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "voc-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawQuery": true,
+          "rawSql": "\nSELECT label AS \"채널\",connection_hash AS \"연결\",coalesce(position,'미수집') AS \"수집 위치\",\n       CASE phase WHEN 'active' THEN '수집 중' WHEN 'bootstrap' THEN '초기 수집' END AS \"상태\",\n       updated_at AS \"마지막 갱신\"\nFROM (VALUES ('gmail','Gmail'),('discord','Discord')) AS channels(channel,label)\nLEFT JOIN monitor.collector_position USING(channel)\n",
+          "format": "table",
+          "editorMode": "code"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 17,
+      "type": "table",
+      "title": "수집 발행 대기",
+      "gridPos": {
+        "x": 12,
+        "y": 22,
+        "w": 12,
+        "h": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집"
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voc-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "voc_capture_pending",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true
+            },
+            "renameByName": {
+              "channel": "채널",
+              "source": "연결",
+              "position": "수집 위치",
+              "phase": "상태",
+              "group": "소비 그룹",
+              "topic": "토픽",
+              "partition": "파티션",
+              "Value": "측정값"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "table",
+      "title": "Kafka 소비 지연",
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집"
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voc-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "voc_kafka_consumer_lag",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true
+            },
+            "renameByName": {
+              "channel": "채널",
+              "source": "연결",
+              "position": "수집 위치",
+              "phase": "상태",
+              "group": "소비 그룹",
+              "topic": "토픽",
+              "partition": "파티션",
+              "Value": "측정값"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "type": "table",
+      "title": "Flink 작업·체크포인트 상태",
+      "gridPos": {
+        "x": 12,
+        "y": 28,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집"
+        },
+        "overrides": []
+      },
+      "description": "작업 상태와 성공·실패·복원 체크포인트 수를 표시합니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voc-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "voc_flink_job_state or voc_flink_checkpoints",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true
+            },
+            "renameByName": {
+              "channel": "채널",
+              "source": "연결",
+              "position": "수집 위치",
+              "phase": "상태",
+              "group": "소비 그룹",
+              "topic": "토픽",
+              "partition": "파티션",
+              "Value": "측정값"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "type": "table",
+      "title": "미해결·복구 실패 기록",
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집"
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "voc-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawQuery": true,
+          "rawSql": "\nSELECT stage AS \"단계\",event_id AS \"원본 키\",reason AS \"사유\",failed_at AS \"실패\",\n       recovered_at AS \"복구\",CASE WHEN recovered_at IS NULL THEN '미해결' ELSE '복구' END AS \"상태\"\nFROM monitor.failure\nWHERE failed_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz OR recovered_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz OR recovered_at IS NULL\nORDER BY failed_at DESC LIMIT 100\n",
+          "format": "table",
+          "editorMode": "code"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 21,
+      "type": "table",
+      "title": "단계 상세 · Kafka 전달 및 재시도",
+      "gridPos": {
+        "x": 0,
+        "y": 44,
+        "w": 24,
+        "h": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "—"
+        },
+        "overrides": []
+      },
+      "description": "Flink와 모델 워커는 최초 시도를 뺍니다. 분류·임베딩의 앞선 Kafka 전달 기록도 같은 원본 키로 확인할 수 있습니다.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "voc-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawQuery": true,
+          "rawSql": "\nWITH attempts AS (\n  SELECT *,lag(error) OVER ordered AS previous_error,\n         lag(request_partition) OVER ordered AS previous_partition,lag(request_offset) OVER ordered AS previous_offset\n  FROM monitor.flink_attempt WHERE started_at<=$__timeTo()::timestamptz\n  WINDOW ordered AS (PARTITION BY event_id ORDER BY started_at,attempt_id)\n), flink AS (\n  SELECT event_id,'flink' AS stage,count(*) AS retries,max(started_at) AS last_at\n  FROM attempts WHERE previous_error IS NOT NULL\n                  OR (request_partition,request_offset)=(previous_partition,previous_offset)\n  GROUP BY event_id\n), retries AS (\n  SELECT * FROM flink UNION ALL\n  SELECT event_id,stage,count(*),max(failed_at) FROM monitor.failure\n  WHERE failed_at<=$__timeTo()::timestamptz AND event_id IS NOT NULL AND stage NOT IN ('flink','classification','embedding')\n  GROUP BY event_id,stage\n  UNION ALL SELECT event_id,stage,retries,last_at FROM monitor.analysis_retries WHERE last_at<=$__timeTo()::timestamptz\n), detail AS (\n  SELECT recorded_at,'Kafka 전달' AS activity,k.stage,k.event_id,topic,partition_id,kafka_offset,NULL::bigint AS retries\n  FROM monitor.kafka_delivery k WHERE recorded_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n    AND (${step:sqlstring}='all'\n      OR (${step:sqlstring}='capture' AND k.stage='capture')\n      OR (${step:sqlstring}='bronze' AND k.stage IN ('capture','bronze'))\n      OR (${step:sqlstring}='flink' AND k.stage IN ('bronze','flink'))\n      OR (${step:sqlstring} IN ('ticket','compute','ready') AND k.stage='flink'\n          AND EXISTS(SELECT FROM monitor.stage s WHERE s.event_id=k.event_id AND s.stage=${step:sqlstring})))\n  UNION ALL\n  SELECT last_at,'재시도',stage,event_id,NULL,NULL,NULL,retries FROM retries\n  WHERE last_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz AND (${step:sqlstring}='all' OR stage=${step:sqlstring}\n      OR (${step:sqlstring} IN ('compute','ready') AND stage IN ('classification','embedding')))\n)\nSELECT recorded_at AS \"확인 시각\",activity AS \"기록\",stage AS \"단계\",event_id AS \"원본 키\",\n       topic AS \"Kafka 토픽\",partition_id AS \"파티션\",kafka_offset AS \"오프셋\",retries AS \"재시도\"\nFROM detail ORDER BY recorded_at DESC LIMIT 150\n",
+          "format": "table",
+          "editorMode": "code"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 23,
+      "type": "table",
+      "title": "대조가 필요한 원본 키",
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집"
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "voc-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawQuery": true,
+          "rawSql": "\nSELECT event_id AS \"원본 키\",channel AS \"채널\",ticket_count AS \"티켓\",extra_tickets AS \"초과\",\n       CASE reconciliation WHEN 'source_without_ticket' THEN '티켓 없는 원문'\n        WHEN 'ticket_without_source' THEN '원문 없는 티켓'\n        WHEN 'failed' THEN '실패 기록 있음' WHEN 'unconfirmed_delivery' THEN '전달 확인 중' ELSE '대조 완료' END AS \"대조 상태\"\nFROM monitor.source_reconciliation\nWHERE reconciliation IN ('source_without_ticket','ticket_without_source','failed','unconfirmed_delivery') OR extra_tickets>0\nORDER BY received_at DESC NULLS FIRST LIMIT 100\n",
+          "format": "table",
+          "editorMode": "code"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    }
+  ],
+  "links": [
+    {
+      "type": "link",
+      "title": "파이프라인",
+      "url": "/d/voc-pipeline/pipeline",
+      "includeVars": false,
+      "keepTime": true,
+      "tooltip": "파이프라인"
+    },
+    {
+      "type": "link",
+      "title": "AI 추론",
+      "url": "/d/voc-inference/inference",
+      "includeVars": false,
+      "keepTime": true,
+      "tooltip": "AI 추론"
+    },
+    {
+      "type": "link",
+      "title": "카나리 배포",
+      "url": "/d/voc-deployment/deployment",
+      "includeVars": false,
+      "keepTime": true,
+      "tooltip": "카나리 배포"
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "step",
+        "type": "custom",
+        "label": "단계 상세",
+        "query": "전체 : all,수집 : capture,원문 저장 : bronze,Flink 정제 : flink,티켓 저장 : ticket,분류·임베딩 : compute,결과 저장 : ready",
+        "current": {
+          "text": "전체",
+          "value": "all"
+        }
+      }
+    ]
+  }
+}

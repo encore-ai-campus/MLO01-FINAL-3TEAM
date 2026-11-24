@@ -1,0 +1,72 @@
+x-model-env: &model-env
+  VOC_CLASSIFIER_STABLE_URL: ${VOC_CLASSIFIER_STABLE_URL:-}
+  VOC_CLASSIFIER_CANARY_URL: ${VOC_CLASSIFIER_CANARY_URL:-}
+  VOC_CLASSIFIER_ROUTER_URL: ${VOC_CLASSIFIER_ROUTER_URL:-}
+  VOC_CANARY_PERCENT: ${VOC_CANARY_PERCENT:-0}
+  VOC_EMBEDDING_URL: ${VOC_EMBEDDING_URL:-}
+  VOC_MODEL_API_TOKEN: ${VOC_MODEL_API_TOKEN:-}
+x-monitor-worker: &monitor-worker
+  image: encore-voc-collector:local
+  build: {context: ./src, dockerfile: collector/Dockerfile}
+  restart: unless-stopped
+  init: true
+services:
+  monitor-db:
+    <<: *monitor-worker
+    command: ["schema"]
+    restart: "no"
+    secrets: [postgres_password, monitor_reader_password]
+    depends_on:
+      postgres: {condition: service_healthy}
+  metrics:
+    <<: *monitor-worker
+    command: ["metrics"]
+    secrets: [postgres_password]
+    depends_on:
+      monitor-db: {condition: service_completed_successfully}
+    environment:
+      <<: *model-env
+      VOC_MONITOR_RUNTIME: ${VOC_MONITOR_RUNTIME:-true}
+    volumes: ["${VOC_CAPTURE_DIR:-./.local/collector/data}:/data:ro"]
+  prometheus:
+    image: prom/prometheus:v3.5.1
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml","--storage.tsdb.retention.time=6h"]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - monitor_prometheus:/prometheus
+    depends_on: [metrics]
+    ports: ["127.0.0.1:${VOC_PROMETHEUS_PORT:-19090}:9090"]
+  grafana:
+    image: grafana/grafana:12.3.2
+    restart: unless-stopped
+    entrypoint: ["/bin/sh","-ec"]
+    command:
+      - 'export MONITOR_READER_PASSWORD="$$(cat /run/secrets/monitor_reader_password)"; exec /run.sh'
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_DEFAULT_THEME: light
+      GF_USERS_DEFAULT_LANGUAGE: ko-KR
+      GF_AUTH_ANONYMOUS_ENABLED: ${VOC_GRAFANA_ANONYMOUS:-true}
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/pipeline.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    secrets: [monitor_reader_password, grafana_admin_password]
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - monitor_grafana:/var/lib/grafana
+    depends_on:
+      monitor-db: {condition: service_completed_successfully}
+      prometheus: {condition: service_started}
+    ports: ["127.0.0.1:${VOC_GRAFANA_PORT:-13000}:3000"]
+secrets:
+  monitor_reader_password: {file: "${VOC_MONITOR_SECRETS_DIR:-./.local/monitoring}/reader-password"}
+  grafana_admin_password: {file: "${VOC_MONITOR_SECRETS_DIR:-./.local/monitoring}/grafana-password"}
+volumes:
+  monitor_grafana:
+  monitor_prometheus:

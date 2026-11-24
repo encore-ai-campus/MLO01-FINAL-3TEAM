@@ -1,0 +1,6 @@
+{% if prediction_display %}
+  <form id="prediction-display" action="{% url 'tickets:prediction-display' %}" method="post" hidden>
+    {% csrf_token %}
+    <input type="hidden" name="token" value="{{ prediction_display }}">
+  </form>
+{% endif %}

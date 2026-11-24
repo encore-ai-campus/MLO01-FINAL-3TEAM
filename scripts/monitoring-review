@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+umask 077
+export VOC_MONITOR_SECRETS_DIR=./.local/monitoring-review/secrets
+export VOC_CAPTURE_DIR=./.local/monitoring-review/capture
+export VOC_EVAL_DIR=./.local/monitoring-review/eval
+export VOC_COLLECTOR_SECRETS_DIR="$VOC_MONITOR_SECRETS_DIR"
+export VOC_FLINK_PORT=18181
+export VOC_DESK_PORT=18182
+mkdir -p "$VOC_MONITOR_SECRETS_DIR" "$VOC_CAPTURE_DIR" "$VOC_EVAL_DIR"
+for secret in postgres-password django-secret-key reader-password grafana-password; do
+  if [[ ! -s "$VOC_MONITOR_SECRETS_DIR/$secret" ]]; then
+    openssl rand -hex 32 > "$VOC_MONITOR_SECRETS_DIR/$secret"
+  fi
+done
+mode=${1:-lite}
+if (( $# > 0 )); then shift; fi
+compose=(docker compose -p voc-monitoring-review -f compose.yaml -f compose.monitoring.yaml)
+case "$mode" in
+  lite)
+    export VOC_MONITOR_RUNTIME=false
+    exec "${compose[@]}" up -d grafana "$@"
+    ;;
+  full)
+    export VOC_MONITOR_RUNTIME=true
+    exec "${compose[@]}" up -d grafana classify embed publish db-worker taskmanager ticket-desk "$@"
+    ;;
+  compose)
+    exec "${compose[@]}" "$@"
+    ;;
+  *)
+    echo "사용법: scripts/monitoring-review {lite|full|compose}" >&2
+    exit 2
+    ;;
+esac

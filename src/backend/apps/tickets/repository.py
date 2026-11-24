@@ -10,7 +10,9 @@ SORTS = {
 TICKET_COLUMNS = """
     t.ticket_uuid, t.ticket_number, c.external_customer_id AS customer_id, t.title,
     tm.name AS team_name, COALESCE(st.name, st.email) AS assignee_name, t.status,
-    cat.name AS category, t.category_status, t.sentiment, t.sentiment_status,
+    t.category_uuid, cat.name AS category, t.category_status, t.sentiment, t.sentiment_status,
+    (t.classification_final_at IS NOT NULL AND
+      (t.sentiment_status='failed' OR t.category_status='failed')) AS classification_failed,
     t.created_at, t.updated_at, ch.type AS channel
 """
 TICKET_FROM = """
@@ -118,3 +120,74 @@ def add_memo(cursor, company, staff, ticket, body):
         RETURNING ticket_message_uuid, ticket_uuid, staff_user_uuid, body, created_at
     """, (staff, body, company, ticket))
     return next(iter(fetch_rows(cursor)), None)
+
+
+def displayed_predictions(cursor, ticket_ids):
+    cursor.execute("""
+        SELECT p.ticket_uuid::text,p.kind,p.value,p.attempt_id::text
+        FROM voc.ticket_prediction p JOIN visible_ticket t USING(ticket_uuid)
+        WHERE p.ticket_uuid=ANY(%s::uuid[]) AND (
+            (p.kind='sentiment' AND p.value=t.sentiment) OR
+            (p.kind='category' AND p.value=t.category_uuid::text))
+    """, ([str(ticket) for ticket in ticket_ids],))
+    return fetch_rows(cursor)
+
+
+def record_display(cursor, actor, prediction):
+    cursor.execute("""
+        INSERT INTO voc.prediction_display(ticket_uuid,kind,staff_user_uuid,displayed_value,attempt_id)
+        SELECT p.ticket_uuid,p.kind,%s,p.value,p.attempt_id
+        FROM voc.ticket_prediction p JOIN public.ticket t USING(ticket_uuid)
+        WHERE p.ticket_uuid=%s AND p.kind=%s AND p.value=%s AND p.attempt_id=%s
+          AND t.company_uuid=%s
+        ON CONFLICT DO NOTHING
+    """, (actor["staff_user_uuid"], prediction["ticket_uuid"], prediction["kind"], prediction["value"],
+          prediction["attempt_id"], actor["company_uuid"]))
+
+
+def can_reply(cursor, actor):
+    cursor.execute("""
+        SELECT EXISTS (SELECT FROM staff_permission JOIN permission USING(permission_uuid)
+                       WHERE staff_user_uuid=%s AND code='ticket.reply')
+    """, (actor["staff_user_uuid"],))
+    return cursor.fetchone()[0]
+
+
+def confirmed_replies(cursor, actor, ticket):
+    cursor.execute("""
+        SELECT ticket_message_uuid,created_at FROM ticket_message
+        WHERE ticket_uuid=%s AND staff_user_uuid=%s AND sender_type='staff'
+          AND message_type='reply' AND delivery_status='delivered'
+        ORDER BY created_at DESC LIMIT 1
+    """, (ticket, actor["staff_user_uuid"]))
+    return fetch_rows(cursor)
+
+
+def lock_visible(cursor, actor, ticket):
+    cursor.execute("""
+        SELECT t.domain_uuid,t.status,t.reply_delivery_uuid FROM public.ticket t
+        JOIN visible_ticket v USING(ticket_uuid)
+        WHERE t.ticket_uuid=%s AND t.company_uuid=%s FOR UPDATE OF t
+    """, (ticket, actor["company_uuid"]))
+    return next(iter(fetch_rows(cursor)), None)
+
+
+def set_classification(cursor, ticket, domain, sentiment, category):
+    if category:
+        cursor.execute("SELECT 1 FROM category WHERE domain_uuid=%s AND category_uuid=%s", (domain, category))
+        if cursor.fetchone() is None:
+            return False
+    cursor.execute("""
+        UPDATE ticket SET sentiment=%s,category_uuid=%s,updated_at=clock_timestamp() WHERE ticket_uuid=%s
+    """, (sentiment, category, ticket))
+    return True
+
+
+def complete_delivered(cursor, actor, ticket, delivery):
+    cursor.execute("""
+        UPDATE ticket t SET status='답변완료',reply_delivery_uuid=m.ticket_message_uuid,updated_at=clock_timestamp()
+        FROM ticket_message m
+        WHERE t.ticket_uuid=%s AND t.status<>'답변완료' AND m.ticket_uuid=t.ticket_uuid AND m.ticket_message_uuid=%s
+          AND m.staff_user_uuid=%s AND m.sender_type='staff' AND m.message_type='reply' AND m.delivery_status='delivered'
+    """, (ticket, delivery, actor["staff_user_uuid"]))
+    return cursor.rowcount == 1

@@ -1,5 +1,7 @@
 # MLO01-FINAL-3TEAM
 
+[VoC 모니터링 실행·모델 연결 가이드](monitoring/README.md)
+
 - 팀명 : MLO01-FINAL-3TEAM
 - 프로젝트 기간 : 26.11.13 \~ 27.01.07
 - 프로젝트 주제 : VoC 분석 모델의 무중단 배포 및 실시간 모니터링 시스템
@@ -11,13 +13,15 @@
 
 ```bash
 python3 src/collector/prepare.py
-docker compose build db-worker ticket-desk
-docker compose up -d --no-build ticket-desk db-worker
+docker compose up -d --build ticket-desk db-worker classify embed
 ```
 
 브라우저에서 [전체 티켓](http://127.0.0.1:18082/tickets/) 또는 [내게 할당된 티켓](http://127.0.0.1:18082/tickets/?scope=mine)을 연다. Django가 로그인한 직원의 회사와 `ticket.read` 권한을 확인한 뒤 PostgreSQL 조회 결과를 HTML로 렌더링한다. 예전 화면 번호 북마크와 로컬 HTML 진입 링크도 지원한다.
 
 사업자·직원·고객의 실제 매핑은 관리자가 등록한다. 등록한 수집 연결에서 `customer_inquiry`로 확인된 Silver 메시지가 들어오면 티켓번호와 첫 문의 메시지를 한 트랜잭션으로 생성한다. 수집 기록의 `message_kind`가 `unknown`이면 확인 전까지 업무 목록에서 대기한다. [회사·권한·채널 연결과 Silver 적재 가이드](src/collector/README.md)
+
+분류 워커는 Stable API 주소를 설정하면 대기한 문의를 처리한다. 감성과 카테고리를 모두 저장하면 상담사에게 티켓을 공개한다.
+세 번째 호출까지 실패한 티켓은 `분류 실패`로 공개한다. 임베딩 워커는 별도로 벡터를 저장한다. [팀 모델 연결](monitoring/README.md#팀-모델-연결)
 
 새 로컬 DB에서 첫 직원을 등록하려면 회사와 도메인을 먼저 구성한다. 관리자가 아래 명령에 새 직원의 비밀번호를 입력하면 Argon2id 해시가 출력된다.
 

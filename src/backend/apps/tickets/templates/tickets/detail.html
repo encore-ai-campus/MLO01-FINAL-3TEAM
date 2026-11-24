@@ -7,7 +7,7 @@
   <a class="desk-button ticket-detail-back" href="{% url 'tickets:list' %}{% querystring %}"><span aria-hidden="true">‹</span> 티켓 목록</a>
   <h1 id="ticket-detail-title">티켓 상세</h1>
   <section class="ticket-detail-summary" aria-labelledby="selected-title">
-    <p class="ticket-detail-number">#{{ ticket.ticket_number }} · {{ ticket.channel|channel_label }}</p>
+    <p class="ticket-detail-number">#{{ ticket.ticket_number }} · {{ ticket.channel|channel_label }}{% if ticket.classification_failed %} · 분류 실패{% endif %}</p>
     <h2 id="selected-title">{{ ticket.title }}</h2>
     <dl>
       <div><dt>고객 ID</dt><dd>{{ ticket.customer_id }}</dd></div>
@@ -15,10 +15,52 @@
       <div><dt>처리 상태</dt><dd>{{ ticket.status }}</dd></div>
       <div><dt>담당 부서</dt><dd>{{ ticket.team_name|default:'미배정' }}</dd></div>
       <div><dt>담당자</dt><dd>{{ ticket.assignee_name|default:'미지정' }}</dd></div>
-      <div><dt>감성</dt><dd>{{ ticket|analysis_label:'sentiment' }}</dd></div>
-      <div><dt>카테고리</dt><dd>{{ ticket|analysis_label:'category' }}</dd></div>
+      <div><dt>감성</dt><dd data-ticket-prediction="{{ ticket.ticket_uuid }}:sentiment">{{ ticket|analysis_label:'sentiment' }}</dd></div>
+      <div><dt>카테고리</dt><dd data-ticket-prediction="{{ ticket.ticket_uuid }}:category">{{ ticket|analysis_label:'category' }}</dd></div>
     </dl>
   </section>
+  {% if reply %}
+    <section class="ticket-conversation" aria-labelledby="classification-title">
+      <h2 id="classification-title">분류 수정</h2>
+      <form method="post" action="{% url 'tickets:classification' ticket.ticket_uuid %}">
+        {% csrf_token %}
+        <label>감성
+          <select name="sentiment">
+            <option value="">비워 두기</option>
+            {% for value in reply.sentiments %}<option{% if ticket.sentiment == value %} selected{% endif %}>{{ value }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>카테고리
+          <select name="category">
+            <option value="">비워 두기</option>
+            {% for category in reply.categories %}<option value="{{ category.id }}"{% if ticket.category_uuid == category.id %} selected{% endif %}>{{ category.name }}</option>{% endfor %}
+          </select>
+        </label>
+        <button type="submit" class="desk-button">분류 저장</button>
+      </form>
+    </section>
+    <section class="ticket-conversation" aria-labelledby="reply-title">
+      <h2 id="reply-title">고객에게 답변</h2>
+      {% if not reply.connected %}<p>회신 API 미연결</p>
+      {% elif reply.blocked %}<p>다른 상담사가 발송을 확인 중입니다.</p>
+      {% else %}
+        <form method="post" action="{% url 'tickets:reply' ticket.ticket_uuid %}">
+          {% csrf_token %}
+          <input type="hidden" name="reply_id" value="{{ reply.reply_id }}">
+          <label for="reply-body">답변 내용</label>
+          <textarea name="body" id="reply-body" rows="4" maxlength="4000" required{% if reply.pending %} readonly{% endif %}>{{ reply.body }}</textarea>
+          <button type="submit" class="desk-button">{% if reply.pending %}발송 다시 확인{% else %}답변 보내기{% endif %}</button>
+        </form>
+      {% endif %}
+      {% for delivery in reply.deliveries %}
+        <form method="post" action="{% url 'tickets:complete' ticket.ticket_uuid %}">
+          {% csrf_token %}
+          <input type="hidden" name="delivery" value="{{ delivery.ticket_message_uuid }}">
+          <button type="submit" class="desk-button">발송한 답변 완료 기록</button>
+        </form>
+      {% endfor %}
+    </section>
+  {% endif %}
   <section class="ticket-conversation" aria-labelledby="conversation-title">
     <h2 id="conversation-title">고객 대화</h2>
     {% if messages %}
@@ -42,4 +84,6 @@
     </section>
   {% endif %}
 </section>
+{% include 'tickets/includes/prediction_display.html' %}
 {% endblock %}
+{% block scripts %}<script src="{% static 'tickets/prediction_display.js' %}" defer></script>{% endblock %}

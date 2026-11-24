@@ -183,9 +183,10 @@ CREATE TABLE IF NOT EXISTS voc.ticket_projection_issue (
 CREATE TABLE IF NOT EXISTS voc.model_text_history (
     company_uuid uuid NOT NULL REFERENCES public.company, event_id uuid NOT NULL REFERENCES voc.bronze_messages,
     preprocess_version integer NOT NULL, body_version integer NOT NULL, silver_schema_version integer NOT NULL,
-    model_text text NOT NULL, available_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    model_text text NOT NULL, model_title text, available_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY(company_uuid,event_id,preprocess_version,body_version)
 );
+ALTER TABLE voc.model_text_history ADD COLUMN IF NOT EXISTS model_title text;
 CREATE TABLE IF NOT EXISTS voc.ticket_analysis_outbox (
     company_uuid uuid NOT NULL, event_id uuid NOT NULL, preprocess_version integer NOT NULL, body_version integer NOT NULL,
     analysis_kind text NOT NULL CHECK(analysis_kind IN ('sentiment','category')),
@@ -260,8 +261,8 @@ BEGIN
     VALUES (ticket_id,source_id,s.body_text,s.body_version,'customer','inquiry',coalesce(s.occurred_at,s.received_at))
     ON CONFLICT(source_event_id) DO UPDATE SET body=excluded.body,body_version=excluded.body_version
     WHERE ticket_message.body_version < excluded.body_version;
-    INSERT INTO voc.model_text_history(company_uuid,event_id,preprocess_version,body_version,silver_schema_version,model_text)
-    VALUES(owner_id,source_id,1,s.body_version,s.schema_version,s.body_text) ON CONFLICT DO NOTHING;
+    INSERT INTO voc.model_text_history(company_uuid,event_id,preprocess_version,body_version,silver_schema_version,model_text,model_title)
+    VALUES(owner_id,source_id,1,s.body_version,s.schema_version,s.body_text,s.title) ON CONFLICT DO NOTHING;
     INSERT INTO voc.ticket_analysis_outbox(company_uuid,event_id,preprocess_version,body_version,analysis_kind)
     VALUES(owner_id,source_id,1,s.body_version,'sentiment'),(owner_id,source_id,1,s.body_version,'category')
     ON CONFLICT DO NOTHING;

@@ -17,16 +17,18 @@ SORT_LABELS = {
 BADGES = {
     "미처리": "amber", "보류": "blue", "답변완료": "green",
     "긍정": "green", "중립": "amber", "부정": "red", "매우 부정": "strong-red",
-    "미배정": "neutral", "분류 대기": "neutral", "분석 중": "neutral", "분석 실패": "red",
+    "미배정": "neutral", "분류 대기": "neutral", "분석 중": "neutral", "분류 실패": "red",
 }
 
 
 @register.filter
 def analysis_label(ticket, field):
     state = ticket.get(field + "_status")
+    if ticket.get(field):
+        return ticket[field]
     if state == "succeeded":
-        return ticket.get(field) or ("미분류" if field == "category" else "결과 없음")
-    return {"running": "분석 중", "failed": "분석 실패"}.get(state, "분류 대기")
+        return "결과 없음"
+    return {"running": "분석 중", "failed": "분류 실패"}.get(state, "분류 대기")
 
 
 @register.filter

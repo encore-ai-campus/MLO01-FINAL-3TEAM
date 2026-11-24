@@ -33,7 +33,7 @@ class TicketTests(unittest.TestCase):
         cls.addClassCleanup(cls.cn.close)
         cls.cur = cls.cn.cursor()
         cls.addClassCleanup(cls.cur.close)
-        for filename in ("schema.sql", "ticket_schema.sql", "settings_schema.sql", "followup_schema.sql"):
+        for filename in ("schema.sql", "ticket_schema.sql", "settings_schema.sql", "followup_schema.sql", "monitoring.sql"):
             cls.cur.execute((SRC / "collector" / filename).read_text(encoding="utf-8"))
         password_hash = PasswordHasher().hash("SamplePass1!")
         cls.employees = []
@@ -76,6 +76,7 @@ class TicketTests(unittest.TestCase):
                     cls.tickets.append(str(cls.cur.fetchone()[0]))
 
         a, b, discord, *_ = cls.tickets
+        cls.cur.execute("UPDATE ticket SET classification_final_at=clock_timestamp(),sentiment_status='failed',category_status='failed'")
         cls.cur.execute("UPDATE ticket SET assigned_team_uuid=%s WHERE ticket_uuid IN (%s,%s)", (cls.team,a,b))
         cls.cur.execute("""
             UPDATE ticket SET assignee_uuid=%s,status='보류',sentiment='부정',sentiment_status='succeeded'
@@ -305,6 +306,67 @@ class TicketTests(unittest.TestCase):
         self.client.cookies["voc_session"] = issued_cookie
         self.assertEqual(self.client.get("/api/tickets").status_code, 401)
 
+    def test_reply_adapter_confirms_once_with_the_same_idempotency_key(self):
+        import json
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from threading import Thread
+        from unittest.mock import patch
+
+        attempts = []
+        confirmed = set()
+
+        class Adapter(BaseHTTPRequestHandler):
+            def do_POST(self):
+                key = self.headers["Idempotency-Key"]
+                payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                attempts.append((key, payload))
+                if key not in confirmed:
+                    # The provider has accepted the first request, but the caller receives no proof.
+                    confirmed.add(key)
+                    self.send_error(503)
+                    return
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"delivery_confirmed":true,"provider_delivery_id":"local-confirmation"}')
+
+            def log_message(self, *_):
+                pass
+
+        self.login(company=2)
+        ticket, agent = self.tickets[-1], self.employees[-1]
+        reply_id = str(uuid4())
+        url = f"/tickets/{ticket}/reply/"
+        payload = {"reply_id": reply_id, "body": "확인했습니다."}
+        self.cur.execute("INSERT INTO staff_permission SELECT %s,permission_uuid FROM permission WHERE code='ticket.reply'", (agent,))
+        with patch.dict(os.environ, {"VOC_REPLY_URL": ""}):
+            self.assertContainsHTML(self.client.get(f"/tickets/{ticket}/"), "회신 API 미연결")
+            self.assertEqual(self.client.post(url, payload).status_code, 503)
+        with ThreadingHTTPServer(("127.0.0.1", 0), Adapter) as server:
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                with patch.dict(os.environ, {"VOC_REPLY_URL": f"http://127.0.0.1:{server.server_port}/reply"}):
+                    self.assertContainsHTML(self.client.get(f"/tickets/{ticket}/"), "답변 보내기")
+                    self.assertEqual(self.client.post(url, payload).status_code, 502)
+                    self.cur.execute("SELECT count(*) FROM voc.ticket_answer_completion WHERE ticket_uuid=%s", (ticket,))
+                    self.assertEqual(self.cur.fetchone()[0], 0)
+                    self.assertContainsHTML(self.client.get(f"/tickets/{ticket}/"), "발송 다시 확인")
+                    self.assertEqual(self.client.post(url, payload).status_code, 302)
+                    self.assertEqual(self.client.post(url, payload).status_code, 302)
+            finally:
+                server.shutdown()
+                thread.join()
+        self.assertEqual([key for key, _ in attempts], [reply_id, reply_id])
+        self.assertEqual(attempts[0][1], attempts[1][1])
+        self.assertEqual(attempts[0][1]["staff_id"], agent)
+        self.cur.execute("""
+            SELECT count(*),bool_and(sent_at IS NOT NULL) FROM ticket_message
+            WHERE ticket_uuid=%s AND sender_type='staff' AND delivery_status='delivered'
+        """, (ticket,))
+        self.assertEqual(self.cur.fetchone(), (1, True))
+        self.cur.execute("SELECT completed_by::text,delivery_uuid::text FROM voc.ticket_answer_completion WHERE ticket_uuid=%s", (ticket,))
+        self.assertEqual(self.cur.fetchone(), (agent, reply_id))
+
     def test_stable_pages_and_total_after_last_page(self):
         self.login(company=2)
         first = self.client.get("/api/tickets", data={"page_size": 10}).json()
@@ -354,7 +416,7 @@ class TicketTests(unittest.TestCase):
         with self.assertRaises(psycopg2.Error):
             self.cur.execute("INSERT INTO ticket_duplicate_candidate VALUES (%s,%s)", sorted((a,self.tickets[-1])))
         self.assertEqual([row["ticket_uuid"] for row in detail(a)["duplicate_candidates"]], [discord])
-        self.assertEqual(data["ticket"]["sentiment_status"], "pending")
+        self.assertEqual(data["ticket"]["sentiment_status"], "failed")
         self.assertIsNone(data["ticket"]["sentiment"])
         self.assertEqual(self.client.get(f"/api/tickets/{self.tickets[-1]}").status_code, 404)
         self.cur.execute("UPDATE voc.silver_messages SET message_kind='unknown' WHERE event_id="
@@ -401,6 +463,61 @@ class TicketTests(unittest.TestCase):
         self.assertEqual(resumed.url, "/tickets/?scope=mine")
         self.assertEqual(resumed.cookies["voc_desk_session"].value, token)
         self.assertEqual(self.client.get(resumed.url).status_code, 200)
+
+    def test_visible_predictions_and_confirmed_completion(self):
+        import re
+        from django.core import signing
+        from apps.tickets.services import DISPLAY_SALT
+
+        self.login()
+        ticket = self.tickets[0]
+        agent = self.employees[0]
+        first_category, final_category, attempt = (str(uuid4()) for _ in range(3))
+        self.cur.execute("UPDATE ticket SET classification_final_at=NULL WHERE ticket_uuid=%s", (ticket,))
+        self.assertEqual(self.client.get(f"/api/tickets/{ticket}").status_code, 404)
+        self.cur.execute("""
+            INSERT INTO category(category_uuid,domain_uuid,name)
+            SELECT %s::uuid,domain_uuid,'미분류' FROM ticket WHERE ticket_uuid=%s
+            UNION ALL SELECT %s::uuid,domain_uuid,'환불' FROM ticket WHERE ticket_uuid=%s
+        """, (first_category, ticket, final_category, ticket))
+        self.cur.execute("""
+            INSERT INTO voc.inference_attempt(attempt_id,ticket_uuid,api,traffic,preferred_route,model_name,model_version,rollout,ended_at)
+            VALUES (%s,%s,'classification','operational','stable','bert','1','stable',clock_timestamp())
+        """, (attempt, ticket))
+        self.cur.execute("INSERT INTO voc.ticket_prediction VALUES (%s,'category',%s,%s)", (ticket, first_category, attempt))
+        self.cur.execute("""
+            UPDATE ticket SET category_uuid=%s,category_status='succeeded',classification_final_at=clock_timestamp()
+            WHERE ticket_uuid=%s
+        """, (first_category, ticket))
+        self.cur.execute("INSERT INTO staff_permission SELECT %s,permission_uuid FROM permission WHERE code='ticket.reply'", (agent,))
+        response = self.client.get(f"/tickets/{ticket}/")
+        self.assertContainsHTML(response, "미분류")
+        self.assertContainsHTML(response, "분류 실패")
+        signed = re.search(r'name="token" value="([^"]+)"', response.text)[1]
+        snapshot = signing.loads(signed, salt=DISPLAY_SALT)
+        self.assertEqual(len(snapshot["predictions"]), 1)
+        self.cur.execute("SELECT count(*) FROM voc.prediction_display WHERE ticket_uuid=%s", (ticket,))
+        self.assertEqual(self.cur.fetchone()[0], 0)
+        for _ in range(2):
+            self.assertEqual(self.client.post("/api/tickets/predictions/displayed", {
+                "token": signed, "displayed": [ticket + ":category", ticket + ":sentiment"],
+            }).status_code, 204)
+        self.assertEqual(self.client.post(f"/tickets/{ticket}/classification/", {
+            "category": final_category, "sentiment": "",
+        }).status_code, 302)
+        self.cur.execute("""
+            INSERT INTO ticket_message(ticket_uuid,staff_user_uuid,body,sender_type,message_type,delivery_status,created_at)
+            VALUES (%s,%s,'확인했습니다.','staff','reply','failed',clock_timestamp()) RETURNING ticket_message_uuid
+        """, (ticket, agent))
+        delivery = self.cur.fetchone()[0]
+        self.assertEqual(self.client.post(f"/tickets/{ticket}/complete/", {"delivery": delivery}).status_code, 409)
+        self.cur.execute("SELECT count(*) FROM voc.ticket_answer_completion WHERE ticket_uuid=%s", (ticket,))
+        self.assertEqual(self.cur.fetchone()[0], 0)
+        self.cur.execute("UPDATE ticket_message SET delivery_status='delivered' WHERE ticket_message_uuid=%s", (delivery,))
+        for _ in range(2):
+            self.assertEqual(self.client.post(f"/tickets/{ticket}/complete/", {"delivery": delivery}).status_code, 302)
+        self.cur.execute("SELECT kind,displayed_value,final_value,model_version FROM monitor.modification")
+        self.assertEqual(self.cur.fetchall(), [("category", first_category, final_category, "1")])
 
     def assertContainsHTML(self, response, content):
         self.assertEqual(response.status_code, 200, response.text)

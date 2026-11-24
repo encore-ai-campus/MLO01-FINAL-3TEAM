@@ -16,3 +16,9 @@
 !collector/ticket_schema.sql
 !collector/requirements.txt
 !collector/Dockerfile
+!collector/monitoring.sql
+!collector/observations.py
+!collector/inference.py
+!collector/evaluation.py
+!collector/exporter.py
+!collector/test_evaluation.py

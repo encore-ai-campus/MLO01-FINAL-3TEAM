@@ -40,7 +40,7 @@ class CaptureStore:
                     WHERE published_at IS NULL;
                 CREATE TABLE IF NOT EXISTS collector_checkpoint (
                     company_id TEXT, channel TEXT, connection_id TEXT, scope_id TEXT,
-                    position TEXT NOT NULL, phase TEXT NOT NULL,
+                    position TEXT NOT NULL, phase TEXT NOT NULL, updated_at TEXT,
                     PRIMARY KEY(company_id,channel,connection_id,scope_id)
                 ) WITHOUT ROWID;
                 CREATE TABLE IF NOT EXISTS capture_issue (
@@ -49,6 +49,9 @@ class CaptureStore:
                     PRIMARY KEY(company_id,channel,connection_id,scope_id,reason,reference)
                 ) WITHOUT ROWID;
             """)
+            db.execute("BEGIN IMMEDIATE")
+            if "updated_at" not in {row[1] for row in db.execute("PRAGMA table_info(collector_checkpoint)")}:
+                db.execute("ALTER TABLE collector_checkpoint ADD COLUMN updated_at TEXT")
         # A legacy pending file holds the original envelope even if a raw archive
         # already exists. Import before contacting providers; replay is idempotent.
         for path in sorted((root / "pending").glob("*.json")):
@@ -136,8 +139,9 @@ class CaptureStore:
 
     def initialize(self, scope, initial):
         with self.connect() as db:
-            db.execute("INSERT INTO collector_checkpoint VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING",
-                       (*scope, *initial))
+            db.execute("""INSERT INTO collector_checkpoint
+                          (company_id,channel,connection_id,scope_id,position,phase,updated_at)
+                          VALUES (?,?,?,?,?,?,?) ON CONFLICT DO NOTHING""", (*scope, *initial, now()))
             return self._read(db, scope)
 
     def save_page(self, scope, expected, events=(), *, advance=None, issues=()):
@@ -151,6 +155,6 @@ class CaptureStore:
             db.executemany("INSERT INTO capture_issue VALUES (?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
                            ((*scope, reason, ref, now()) for reason, ref in issues))
             if advance is not None:
-                db.execute("UPDATE collector_checkpoint SET position=?, phase=? WHERE " + _SCOPE,
-                           (*advance, *scope))
+                db.execute("UPDATE collector_checkpoint SET position=?, phase=?, updated_at=? WHERE " + _SCOPE,
+                           (*advance, now(), *scope))
         return True

@@ -1,0 +1,22 @@
+apiVersion: 1
+datasources:
+  - name: 문의 처리 기록
+    uid: voc-postgres
+    type: grafana-postgresql-datasource
+    url: postgres:5432
+    user: monitor_reader
+    secureJsonData:
+      password: $MONITOR_READER_PASSWORD
+    jsonData:
+      database: voc
+      postgresVersion: 1600
+      sslmode: disable
+      maxOpenConns: 4
+      maxIdleConns: 2
+    isDefault: true
+    editable: false
+  - name: 서비스 지표
+    uid: voc-prometheus
+    type: prometheus
+    url: http://prometheus:9090
+    editable: false
