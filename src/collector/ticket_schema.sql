@@ -113,6 +113,59 @@ CREATE TABLE IF NOT EXISTS public.ticket_message (
     created_at timestamptz NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ticket_message_history ON public.ticket_message(ticket_uuid,created_at);
+
+CREATE TABLE IF NOT EXISTS public.collab_request (
+    collab_request_uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    ticket_uuid uuid NOT NULL REFERENCES public.ticket,
+    requester_uuid uuid NOT NULL REFERENCES public.staff_user,
+    recipient_uuid uuid NOT NULL REFERENCES public.staff_user,
+    request_type varchar(32) NOT NULL CHECK (request_type IN ('transfer','review')),
+    status varchar(32) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','rejected','replied')),
+    memo text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
+    decided_at timestamptz, read_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS collab_request_recipient_order
+    ON public.collab_request(recipient_uuid, created_at DESC, collab_request_uuid);
+CREATE INDEX IF NOT EXISTS collab_request_requester
+    ON public.collab_request(requester_uuid, collab_request_uuid);
+
+CREATE TABLE IF NOT EXISTS public.collab_review_reply (
+    collab_review_reply_uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    collab_request_uuid uuid NOT NULL UNIQUE REFERENCES public.collab_request,
+    author_uuid uuid NOT NULL REFERENCES public.staff_user,
+    body text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), read_at timestamptz
+);
+
+CREATE TABLE IF NOT EXISTS public.collab_request_attachment (
+    collab_request_attachment_uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    collab_request_uuid uuid NOT NULL REFERENCES public.collab_request,
+    original_filename text NOT NULL, content_type text NOT NULL,
+    storage_key text NOT NULL, size_bytes bigint NOT NULL CHECK (size_bytes >= 0),
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS collab_attachment_request
+    ON public.collab_request_attachment(collab_request_uuid);
+
+CREATE TABLE IF NOT EXISTS public.event_type (
+    event_type_uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(), code varchar(255) NOT NULL UNIQUE
+);
+INSERT INTO public.event_type(event_type_uuid, code)
+VALUES (gen_random_uuid(), 'ticket_transfer'), (gen_random_uuid(), 'ticket_review_requested')
+ON CONFLICT (code) DO NOTHING;
+CREATE TABLE IF NOT EXISTS public.ticket_event (
+    ticket_event_uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    ticket_uuid uuid NOT NULL REFERENCES public.ticket,
+    event_type_uuid uuid NOT NULL REFERENCES public.event_type,
+    actor_uuid uuid REFERENCES public.staff_user, recipient_uuid uuid REFERENCES public.staff_user,
+    from_status varchar(32), to_status varchar(32),
+    created_at timestamptz NOT NULL DEFAULT now(), transfer_reason text
+);
+ALTER TABLE public.ticket_event ADD COLUMN IF NOT EXISTS collab_request_uuid uuid REFERENCES public.collab_request;
+CREATE INDEX IF NOT EXISTS ticket_transfer_recipient_order
+    ON public.ticket_event(recipient_uuid, created_at DESC, ticket_event_uuid);
+CREATE INDEX IF NOT EXISTS ticket_event_ticket_order
+    ON public.ticket_event(ticket_uuid, created_at DESC, ticket_event_uuid);
+
 -- A role correction never deletes staff work. Reconfirmation reveals the original ticket.
 CREATE OR REPLACE VIEW public.visible_ticket AS
 SELECT t.* FROM public.ticket t JOIN voc.silver_messages s

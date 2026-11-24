@@ -1,21 +1,36 @@
-from django.http import Http404
-from django.views.decorators.http import require_GET
+from django import forms
+from django.http import JsonResponse
+from django.shortcuts import render
+from django.views.decorators.http import require_GET, require_POST
 
-from apps.workspace.presentation.views import render_page
-from ..repository import preview_data
-from ..services import inbox_context
+from apps.accounts.presentation.views import session_token
+from config.http import DeskError, DeskJSONEncoder
+from .. import services
+
+
+class ReviewReplyForm(forms.Form):
+    body = forms.CharField(max_length=10_000)
 
 
 @require_GET
 def inbox(request, request_id=None):
-    return render_page(request, "collaboration/inbox.html", "inbox", inbox_context(request.GET, request_id))
+    with services.open_inbox(session_token(request)) as (cursor, actor):
+        context = services.inbox_context(cursor, actor, request.GET, request_id)
+    return render(request, "collaboration/inbox.html", {"actor": actor, "active": "inbox", **context})
 
 
-@require_GET
-def sample_ticket(request, number):
-    data = preview_data()
-    rows = [row for group in data["requestGroups"].values() for row in group if row["id"] == str(number)]
-    if not rows:
-        raise Http404
-    return render_page(request, "collaboration/sample_ticket.html", "inbox", {"row": rows[0], "requests": rows,
-                "profile": data["ticketProfiles"][str(number)]})
+@require_POST
+def read(request, kind, item_id):
+    with services.open_inbox(session_token(request), write=True) as (cursor, actor):
+        read_at = services.mark_read(cursor, actor, kind, item_id)
+    return JsonResponse({"read_at": read_at}, encoder=DeskJSONEncoder)
+
+
+@require_POST
+def reply(request, request_id):
+    with services.open_inbox(session_token(request), write=True) as (cursor, actor):
+        form = ReviewReplyForm(request.POST)
+        if not form.is_valid():
+            raise DeskError(422, "INVALID_REPLY", "답변 내용을 확인해 주세요.")
+        services.reply(cursor, actor, request_id, form.cleaned_data["body"])
+    return JsonResponse({"ok": True})
