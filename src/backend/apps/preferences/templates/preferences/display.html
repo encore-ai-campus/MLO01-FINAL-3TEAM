@@ -1,0 +1,59 @@
+{% extends "preferences/base.html" %}
+{% load static %}
+{% block title %}화면 설정{% endblock %}
+{% block settings_content %}
+<header class="settings-header">
+  <div class="settings-path"><a class="desk-button" href="{{ settings_url }}">‹ 개인 설정</a></div>
+  <h1 id="settings-title">화면 설정</h1>
+  <p class="desk-sub">업무 홈에 표시할 카드와 좌측 패널 항목을 선택합니다.</p>
+</header>
+<form class="settings-display" method="post" data-display-settings
+      {% if use_local_cards %}data-local-cards="voc.work-home.{{ actor.company_uuid }}:{{ actor.staff_user_uuid }}.v1"{% endif %}>
+  {% csrf_token %}
+  <input type="hidden" name="cards" value="{{ cards_json }}">
+  {{ card_order|json_script:"display-default-order" }}
+  <section class="desk-card">
+    <h2>카드 표시 및 순서</h2>
+    <p class="desk-sub">위아래 버튼이나 드래그로 카드 순서를 변경할 수 있습니다.</p>
+    {{ form.cards.errors }}
+    <div class="desk-setting-head" aria-hidden="true"><span>카드</span><span>표시</span><span>순서</span></div>
+    <div data-card-rows>
+      {% for card, label, description in card_rows %}
+        <div class="desk-setting-row" data-card="{{ card.id }}">
+          <div class="desk-setting-title">
+            <span class="desk-grip" draggable="true"><svg aria-hidden="true"><use href="#desk-grip"/></svg></span>
+            <span><strong>{{ label }}</strong><small>{{ description }}</small></span>
+          </div>
+          <button class="desk-switch" type="button" role="switch" aria-label="{{ label }} 표시" aria-checked="{{ card.visible|yesno:'true,false' }}"></button>
+          <div class="desk-arrows">
+            <button class="desk-arrow" type="button" data-move="up" aria-label="{{ label }} 위로 이동" {% if forloop.first %}disabled{% endif %}><svg aria-hidden="true"><use href="#desk-up"/></svg></button>
+            <button class="desk-arrow" type="button" data-move="down" aria-label="{{ label }} 아래로 이동" {% if forloop.last %}disabled{% endif %}><svg aria-hidden="true"><use href="#desk-down"/></svg></button>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+    <button class="desk-button settings-reset" type="button" data-reset-cards>기본 배치로 되돌리기</button>
+  </section>
+  <section class="desk-card">
+    <h2>좌측 패널 표시 설정</h2>
+    <p class="desk-sub">사용할 수 있는 메뉴 중 화면에 표시할 항목을 고릅니다.</p>
+    {{ form.sidebar.errors }}
+    <div class="settings-sidebar-options">
+      {% for key, label in sidebar_items %}
+        {% if key != "analytics" or show_analytics %}
+          <label class="settings-sidebar-option">
+            <strong>{{ label }}</strong>
+            <input class="desk-switch" type="checkbox" role="switch" name="sidebar" value="{{ key }}"
+                   aria-label="{{ label }} 메뉴 표시" {% if key in sidebar %}checked{% endif %}>
+          </label>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </section>
+  <div class="settings-actions">
+    <a class="desk-button" href="{{ return_url }}">취소</a>
+    <button class="desk-button desk-button-solid" type="submit">저장</button>
+  </div>
+</form>
+{% endblock %}
+{% block scripts %}<script defer src="{% static 'preferences/display.js' %}"></script>{% endblock %}

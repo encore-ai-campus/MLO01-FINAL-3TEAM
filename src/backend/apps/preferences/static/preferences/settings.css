@@ -41,7 +41,27 @@
 .settings-nav a { padding: 5px 3px; font-size: 13px; }
 .settings-nav a:hover { text-decoration: underline; }
 .settings-link-group { scroll-margin-top: calc(var(--bar) + 16px); }
+.settings-header { margin-bottom: 26px; }
+.settings-header .desk-sub { margin-top: 5px; }
+.settings-path { margin-bottom: 19px; }
+.settings-display { display: grid; gap: 16px; }
+.settings-display > .desk-card { padding: 18px; }
+.settings-display > .desk-card > .desk-sub { margin-top: 16px; }
+.settings-display .errorlist { color: var(--error); }
+.settings-reset { margin-top: 15px; }
+.settings-sidebar-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; margin-top: 10px; }
+.settings-sidebar-option {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 11px 9px; min-height: 44px; border-bottom: 1px solid var(--desk-line); font-size: 14px;
+}
+.settings-sidebar-option .desk-switch { appearance: none; margin: 0; flex: none; cursor: pointer; }
+.settings-sidebar-option .desk-switch:checked { background: var(--primary); }
+.settings-sidebar-option .desk-switch:checked::after { left: 21px; }
 @media (max-width: 650px) {
-  .settings-link-grid, .settings-search { grid-template-columns: minmax(0, 1fr); }
+  .settings-link-grid, .settings-search, .settings-sidebar-options { grid-template-columns: minmax(0, 1fr); }
   .settings-page .desk-heading { flex-wrap: wrap; }
+  .settings-display :is(.desk-setting-row, .desk-setting-head) { grid-template-columns: minmax(0, 1fr) 46px 64px; padding-left: 4px; }
+  .settings-display .desk-arrows { gap: 3px; }
+  .settings-display .desk-arrow { width: 29px; }
+  .settings-display .desk-setting-title { gap: 4px; }
 }

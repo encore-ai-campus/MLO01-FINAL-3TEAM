@@ -3,11 +3,11 @@ import json
 from config.database import fetch_rows
 
 
-def save_display(cursor, actor, key, value):
+def save_display(cursor, actor, preferences):
     cursor.execute("""
-        UPDATE staff_user SET display_preferences=jsonb_set(display_preferences,ARRAY[%s],%s::jsonb)
+        UPDATE staff_user SET display_preferences=display_preferences || %s::jsonb
         WHERE company_uuid=%s AND staff_user_uuid=%s
-    """, (key, json.dumps(value), actor["company_uuid"], actor["staff_user_uuid"]))
+    """, (json.dumps(preferences), actor["company_uuid"], actor["staff_user_uuid"]))
 
 
 def categories(cursor, company_uuid):
