@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% load static %}
+{% block styles %}
+  {{ block.super }}
+  <link rel="stylesheet" href="{% static 'preferences/settings.css' %}">
+{% endblock %}
+{% block content %}
+  <section class="settings-page">
+    {% block settings_content %}{% endblock %}
+  </section>
+{% endblock %}

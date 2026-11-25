@@ -96,6 +96,20 @@ class SettingsTests(TestCase):
             "name": "배송 안내", "category_uuid": category or self.category, "scope": scope, "body": "확인해 드리겠습니다.",
         })
 
+    def test_settings_load_styles_and_show_only_allowed_navigation(self):
+        pages = ("/settings/", "/settings/display/", "/settings/replies/", "/settings/messenger/",
+                 "/settings/permissions/", "/settings/assignment/")
+        for path in pages:
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertContains(response, "/static/preferences/settings.css")
+                self.assertContains(response, 'href="/settings/#hr"')
+        employee = self.session(self.agent).get("/settings/")
+        self.assertContains(employee, 'href="/settings/#personal"')
+        self.assertNotContains(employee, 'href="/settings/#hr"')
+        self.assertNotContains(employee, 'href="/settings/assignment/"')
+        self.assertNotContains(self.client.get("/home/"), "/static/preferences/settings.css")
+
     def test_only_company_admin_can_manage_staff_permissions(self):
         listing = self.client.get("/settings/permissions/")
         self.assertEqual(listing.status_code, 200)
