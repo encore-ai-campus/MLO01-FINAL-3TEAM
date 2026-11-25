@@ -23,7 +23,9 @@ class WorkspacePageTests(SimpleTestCase):
     def test_home_is_rendered_server_side(self, actor):
         self.assertContains(self.client.get("/home/"), "상담사님의 오늘 업무")
 
-    @patch("apps.workspace.presentation.views.current_actor", return_value={"name": "상담사", "email": "staff@example.org"})
+    @patch("apps.workspace.presentation.views.current_actor", return_value={
+        "name": "관리자", "email": "admin@example.org", "role": "admin", "visible_sidebar": ["followup", "analytics"],
+    })
     def test_settings_navigation_follows_analytics_and_links_to_django(self, actor):
         response = self.client.get("/home/")
         self.assertContains(response, '<details class="desk-settings-menu">')

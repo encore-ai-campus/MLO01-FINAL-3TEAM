@@ -228,6 +228,20 @@ class TicketTests(unittest.TestCase):
         self.login(company=2)
         self.assertEqual(self.client.get(f"{contacts}/{ident}").status_code, 404)
 
+    def test_followup_sidebar_uses_the_signed_in_role(self):
+        self.login()
+        url = reverse("followup:page")
+        staff = self.employees[0]
+        self.cur.execute("SELECT role FROM staff_user WHERE staff_user_uuid=%s", (staff,))
+        original_role = self.cur.fetchone()[0]
+        self.addCleanup(self.cur.execute, "UPDATE staff_user SET role=%s WHERE staff_user_uuid=%s", (original_role, staff))
+        for role in ("agent", "admin"):
+            with self.subTest(role=role):
+                self.cur.execute("UPDATE staff_user SET role=%s WHERE staff_user_uuid=%s", (role, staff))
+                page = self.client.get(url)
+                self.assertEqual(page.status_code, 200)
+                self.assertEqual('href="/analytics/"' in page.content.decode(), role == "admin")
+
     def test_followup_page_and_api_mutations_use_django(self):
         page_url = reverse("followup:page")
         self.assertEqual(self.client.get(page_url).status_code, 302)
