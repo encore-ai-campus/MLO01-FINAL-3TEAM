@@ -48,6 +48,9 @@ CREATE TABLE IF NOT EXISTS public.followup_contact (
 CREATE INDEX IF NOT EXISTS followup_contact_owner ON public.followup_contact(company_uuid, created_by_uuid);
 CREATE INDEX IF NOT EXISTS followup_contact_assignee ON public.followup_contact(company_uuid, assignee_uuid);
 
+ALTER TABLE public.followup_contact ADD COLUMN IF NOT EXISTS reminders_started_at timestamptz;
+ALTER TABLE public.followup_contact ADD COLUMN IF NOT EXISTS reminders_stopped_at timestamptz;
+
 CREATE INDEX IF NOT EXISTS followup_silver_conversation ON voc.silver_messages
     (company_id, channel, connection_id, source_conversation_id, standardized_at)
     WHERE schema_version=4 AND message_kind='customer_inquiry';

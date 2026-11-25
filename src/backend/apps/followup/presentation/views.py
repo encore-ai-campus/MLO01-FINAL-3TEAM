@@ -1,15 +1,13 @@
-from urllib.parse import urlencode
-
 from django.http import HttpResponse, JsonResponse
-from django.shortcuts import redirect, render
+from django.middleware.csrf import get_token
+from django.shortcuts import render
 from django.urls import reverse
-from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
 from apps.accounts.presentation.views import session_token
-from config.http import DeskError, DeskJSONEncoder, validate_form
+from config.http import DeskJSONEncoder, validate_form
 from ..services import open_desk
-from .forms import CompleteForm, ContactForm, ContactQueryForm, RegistrationQueryForm
+from .forms import CompleteForm, ContactForm, ContactQueryForm, TrackScheduleForm
 
 
 def response(data, status=200):
@@ -26,80 +24,46 @@ def with_source(row):
 @require_GET
 def page(request):
     with open_desk(session_token(request)) as desk:
-        filters = validate_form(ContactQueryForm, request)
-        tab = request.GET.get("tab") or ("tracks" if desk.can_read else "scheduled")
-        if tab not in ("tracks", "scheduled", "completed"):
-            raise DeskError(422, "INVALID_REQUEST", "팔로업 탭을 확인해 주세요.")
-        now = timezone.now()
-        if tab == "tracks":
-            rows = desk.tracks()
-            term = filters["q"].casefold()
-            rows = [row for row in rows if term in f'#{row["ticket_number"]} {row["title"]}'.casefold()]
-            id_key = "ticket_uuid"
-        else:
-            rows = desk.contacts({**filters, "state": tab})
-            if tab == "scheduled":
-                rows.sort(key=lambda row: (row["scheduled_at"], row["contact_uuid"]))
-            id_key = "contact_uuid"
-        items = [{**with_source(row), "selected_id": str(row[id_key])} for row in rows]
-        selected = next((row for row in items if row["selected_id"] == request.GET.get("item")), None)
-        events = []
-        if tab == "tracks" and selected:
-            events = [row for row in desk.notifications() if row["ticket_uuid"] == selected["ticket_uuid"]]
-        context = {
-            "actor": desk.actor, "active": "followup", "can_chat": desk.can_chat, "tab": tab,
-            "items": items, "selected": selected, "events": events, "filters": filters, "now": now,
-            "local_now": timezone.localtime(now).strftime("%Y-%m-%dT%H:%M"),
+        bootstrap = {
+            "person": {"name": desk.actor["name"], "canTrack": desk.can_read},
+            "sidebar": desk.actor["display_preferences"].get("sidebar"),
+            "settingsPreview": None if desk.actor["role"] == "admin" else "employee",
+            "csrfToken": get_token(request),
+            "dataUrl": reverse("followup:page-data"),
+            "registerUrl": reverse("followup:track-schedule"),
+            "links": {
+                "home": reverse("workspace:home"), "tickets": reverse("tickets:list"),
+                "inbox": reverse("workspace:inbox"), "followup": reverse("followup:page"),
+                "analytics": reverse("workspace:analytics"), "settings": reverse("preferences:index"),
+                "logout": reverse("accounts:logout"),
+            },
         }
-    return render(request, "followup/page.html", context)
+    return render(request, "followup/page.html", {"bootstrap": bootstrap})
 
 
-@require_http_methods(["GET", "POST"])
-def register(request):
+@require_GET
+def page_data(request):
     with open_desk(session_token(request)) as desk:
-        query = validate_form(RegistrationQueryForm, request)
-        tracking = query["mode"] == "track"
-        kind = query["source"] or ("ticket" if desk.can_read else "chat")
-        if tracking and kind != "ticket":
-            raise DeskError(422, "INVALID_REQUEST", "추적할 티켓을 선택해 주세요.")
-        if kind == "ticket":
-            desk.require_ticket_read()
-        else:
-            desk.require_chat()
-        if request.method == "POST":
-            fields = request.POST.copy()
-            fields.pop("ticket_uuid", None)
-            fields.pop("chat_uuid", None)
-            fields[f"{kind}_uuid"] = fields.get("source_uuid", "")
-            form = ContactForm(fields)
-            if form.is_valid():
-                contact = desk.track_and_schedule(form.cleaned_data) if tracking else desk.schedule(form.cleaned_data)
-                item = contact["ticket_uuid"] if tracking else contact["contact_uuid"]
-                return redirect(reverse("followup:page") + "?" + urlencode({
-                    "tab": "tracks" if tracking else "scheduled", "item": item,
-                }))
-        else:
-            form = ContactForm()
-        sources = desk.registration_sources(kind, query["q"], tracking=tracking)
-        return render(request, "followup/register.html", {
-            "actor": desk.actor, "active": "followup", "can_chat": desk.can_chat, "kind": kind,
-            "tracking": tracking, "mode": query["mode"] or "schedule", "q": query["q"],
-            "sources": sources, "staff": desk.assignees(), "form": form,
-        }, status=422 if form.errors else 200)
+        return response({
+            "tickets": desk.track_options() if desk.can_read else [],
+            "tracks": [{
+                **with_source(row), "remove_url": reverse("followup:track", args=[row["ticket_uuid"]]),
+            } for row in desk.tracks()] if desk.can_read else [],
+            "contacts": [{
+                **with_source(row), "complete_url": reverse("followup:complete", args=[row["contact_uuid"]]),
+            } for row in desk.contacts()],
+            "notifications": desk.notifications() if desk.can_read else [],
+        })
 
 
 @require_POST
-def remove(request, ticket_uuid):
+def track_schedule(request):
     with open_desk(session_token(request)) as desk:
-        desk.untrack(ticket_uuid)
-    return redirect("followup:page")
-
-
-@require_POST
-def finish(request, contact_uuid):
-    with open_desk(session_token(request)) as desk:
-        desk.complete(contact_uuid, validate_form(CompleteForm, request))
-    return redirect(reverse("followup:page") + "?" + urlencode({"tab": "completed", "item": contact_uuid}))
+        data = validate_form(TrackScheduleForm, request)
+        contact = desk.track_and_schedule({
+            **data, "chat_uuid": None, "reason": "추적 후속 연락", "assignee_uuid": desk.staff,
+        })
+        return response(with_source(contact), 201)
 
 
 @require_GET

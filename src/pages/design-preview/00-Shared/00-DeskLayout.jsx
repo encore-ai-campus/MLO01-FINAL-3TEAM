@@ -16,16 +16,22 @@ export const inboxUrl = '../05-InboxPage/05-InboxPage.html';
 
 export const defaultAccountName = '한서윤';
 
-export function DeskLayout({active, children, accountName, settingsPreview, settingsCategory}) {
+export function DeskLayout({active, children, accountName, settingsPreview, settingsCategory, runtime, followUpData}) {
   const previewId = new URLSearchParams(location.search).get('as');
-  const person = currentStaff();
-  const name = accountName ?? (previewId ? person?.name : null) ?? defaultAccountName;
+  const person = runtime ? runtime.person : currentStaff();
+  const name = runtime?.person.name ?? accountName ?? (previewId ? person?.name : null) ?? defaultAccountName;
   const accountId = person?.account === 'active' ? person.id : undefined;
-  const [followUp, setFollowUp] = useState(() => loadFollowUp(accountId));
+  const [followUp, setFollowUp] = useState(() => runtime ? null : loadFollowUp(accountId));
   const [bellOpen, setBellOpen] = useState(false);
-  const unread = followUpNotificationCount(followUp);
-  const history = bellOpen ? followUpHistory(followUp) : [];
+  const [now, setNow] = useState(Date.now);
+  const liveAlerts = runtime && runtime.alerts(followUpData, now);
+  const unread = runtime ? liveAlerts.count : followUpNotificationCount(followUp);
+  const history = bellOpen ? (runtime ? liveAlerts.history : followUpHistory(followUp)) : [];
   useEffect(() => {
+    if (runtime) {
+      const timer = setInterval(() => setNow(Date.now()), 1000);
+      return () => clearInterval(timer);
+    }
     if (!accountId) return;
     const refresh = () => setFollowUp(loadFollowUp(accountId));
     const tick = () => updateFollowUpReminders(accountId);
@@ -44,10 +50,12 @@ export function DeskLayout({active, children, accountName, settingsPreview, sett
       window.removeEventListener('pageshow', restore);
       document.removeEventListener('visibilitychange', tick);
     };
-  }, [accountId]);
-  const sidebar = loadSidebar();
+  }, [accountId, runtime]);
+  const sidebar = runtime ? runtime.sidebar : loadSidebar();
+  const link = (key, preview) => runtime ? runtime.links[key] : withStaffPreview(preview);
   const [settingsOpen, setSettingsOpen] = useState(active === "settings");
   useEffect(() => {
+    if (runtime) return;
     const keys = [rolePolicyKey, staffKey];
     let saved;
     try { saved = keys.map(key => localStorage.getItem(key)); }
@@ -57,8 +65,9 @@ export function DeskLayout({active, children, accountName, settingsPreview, sett
     }
     window.addEventListener('pageshow', refreshRestoredPage);
     return () => window.removeEventListener('pageshow', refreshRestoredPage);
-  }, []);
-  const settingGroups = availableSettingsGroups(previewId ? (currentStaff()?.role === '관리자' && currentStaff()?.account === 'active' ? 'administrator' : 'employee') : settingsPreview);
+  }, [runtime]);
+  const settingGroups = availableSettingsGroups(runtime ? runtime.settingsPreview :
+    previewId ? (person?.role === '관리자' && person?.account === 'active' ? 'administrator' : 'employee') : settingsPreview);
   return (
     <>
   <svg aria-hidden="true" width="0" height="0" style={{ position: "absolute" }}>
@@ -77,7 +86,7 @@ export function DeskLayout({active, children, accountName, settingsPreview, sett
   </svg>
 <div id="desk" className="desk">
     <header className="desk-bar">
-      <a className="brand" href={withStaffPreview(workHome)}><span className="logo" aria-hidden="true">?</span><span>섭명뭐</span></a>
+      <a className="brand" href={link('home', workHome)}><span className="logo" aria-hidden="true">?</span><span>섭명뭐</span></a>
       <div className="desk-bell" onKeyDown={event => { if (event.key === 'Escape') setBellOpen(false); }}>
         <button type="button" className="desk-bell-button" aria-label="알림 이력" aria-expanded={bellOpen}
           aria-controls="desk-bell-history" onClick={() => setBellOpen(open => !open)}>
@@ -91,18 +100,18 @@ export function DeskLayout({active, children, accountName, settingsPreview, sett
         </section>
       </div>
       <span className="desk-account" aria-label={'내 계정 ' + name}><span className="desk-avatar" aria-hidden="true">{name[0]}</span>{name}<svg aria-hidden="true"><use href="#desk-down"/></svg></span>
-      <a id="desk-logout" className="desk-button desk-logout" href="../01-LoginPage/01-LoginPage.html">로그아웃</a>
+      <a id="desk-logout" className="desk-button desk-logout" href={runtime?.links.logout ?? '../01-LoginPage/01-LoginPage.html'} onClick={runtime?.logout}>로그아웃</a>
     </header>
     <nav className="desk-nav" aria-label="업무 메뉴">
-      {sidebar.home && <a className="desk-nav-item" href={withStaffPreview(workHome)} aria-current={active === "home" ? "page" : undefined}><svg aria-hidden="true"><use href="#desk-home"/></svg>업무 홈</a>}
-      {sidebar.tickets && <a className="desk-nav-item" href={withStaffPreview(ticketList)} aria-current={active === "tickets" ? "page" : undefined}><svg aria-hidden="true"><use href="#desk-ticket"/></svg>티켓 목록</a>}
-      {sidebar.inbox && <a className="desk-nav-item" href={withStaffPreview(inboxUrl)} aria-current={active === "inbox" ? "page" : undefined}><svg aria-hidden="true"><use href="#desk-inbox"/></svg>받은 요청</a>}
-      {sidebar.followup && <a className="desk-nav-item" href={withStaffPreview(followup)}
+      {sidebar.home && <a className="desk-nav-item" href={link('home', workHome)} aria-current={active === "home" ? "page" : undefined}><svg aria-hidden="true"><use href="#desk-home"/></svg>업무 홈</a>}
+      {sidebar.tickets && <a className="desk-nav-item" href={link('tickets', ticketList)} aria-current={active === "tickets" ? "page" : undefined}><svg aria-hidden="true"><use href="#desk-ticket"/></svg>티켓 목록</a>}
+      {sidebar.inbox && <a className="desk-nav-item" href={link('inbox', inboxUrl)} aria-current={active === "inbox" ? "page" : undefined}><svg aria-hidden="true"><use href="#desk-inbox"/></svg>받은 요청</a>}
+      {sidebar.followup && <a className="desk-nav-item" href={link('followup', followup)}
         aria-current={active === "followup" ? "page" : undefined}>
         <svg aria-hidden="true"><use href="#desk-clock"/></svg>팔로업
         {unread > 0 && <span className="desk-nav-unread" aria-label={unread + '건 알림'}>{unread}</span>}
       </a>}
-      {sidebar.analytics && <a className="desk-nav-item" href={active === "analytics" ? location.href : withStaffPreview(analytics)} aria-current={active === "analytics" ? "page" : undefined}><svg aria-hidden="true"><use href="#desk-analytics"/></svg>분석 대시보드</a>}
+      {sidebar.analytics && <a className="desk-nav-item" href={active === "analytics" ? location.href : link('analytics', analytics)} aria-current={active === "analytics" ? "page" : undefined}><svg aria-hidden="true"><use href="#desk-analytics"/></svg>분석 대시보드</a>}
       <button className="desk-nav-item desk-nav-settings" type="button" aria-expanded={settingsOpen}
         aria-controls="desk-settings-links" data-active={active === "settings" || undefined}
         onClick={() => setSettingsOpen(open => !open)}>
@@ -113,7 +122,7 @@ export function DeskLayout({active, children, accountName, settingsPreview, sett
         {settingGroups.map(({ id, label }) => {
           const query = new URLSearchParams({ view: id });
           if (settingsPreview) query.set("preview", settingsPreview);
-          return <a className="desk-nav-item desk-nav-subitem" key={id} href={withStaffPreview(settingsUrl + "?" + query)}
+          return <a className="desk-nav-item desk-nav-subitem" key={id} href={runtime ? runtime.links.settings + "#" + id : withStaffPreview(settingsUrl + "?" + query)}
             aria-current={settingsCategory === id ? "page" : undefined}>{label}</a>;
         })}
       </div>

@@ -42,3 +42,4 @@ exports/
 node_modules/
 dist/
 src/backend/staticfiles/
+src/backend/.followup-assets/

@@ -134,7 +134,9 @@ services:
     secrets: [postgres_password]
     depends_on: *initialized
   ticket-desk:
-    build: ./src/backend
+    build:
+      context: ./src
+      dockerfile: backend/Dockerfile
     restart: unless-stopped
     init: true
     environment:

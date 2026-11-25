@@ -13,6 +13,12 @@ def remove_track(cursor, company, staff, ticket):
     cursor.execute("""
         DELETE FROM followup_track WHERE company_uuid=%s AND staff_user_uuid=%s AND ticket_uuid=%s
     """, (company, staff, ticket))
+    if cursor.rowcount:
+        cursor.execute("""
+            UPDATE followup_contact SET reminders_stopped_at=clock_timestamp()
+            WHERE company_uuid=%s AND created_by_uuid=%s AND ticket_uuid=%s
+              AND reminders_started_at IS NOT NULL AND reminders_stopped_at IS NULL
+        """, (company, staff, ticket))
 
 
 def tracks(cursor, company, staff):
@@ -76,39 +82,26 @@ def source_exists(cursor, company, ticket, chat):
     return cursor.fetchone() is not None
 
 
-def registration_sources(cursor, company, staff, kind, keyword, *, tracking=False):
-    if kind == "ticket":
-        cursor.execute("""
-            SELECT t.ticket_uuid AS source_uuid, t.ticket_number AS label, t.title
-            FROM visible_ticket t
-            WHERE t.company_uuid=%s AND strpos(lower('#' || t.ticket_number || ' ' || t.title), lower(%s))>0
-                AND (NOT %s OR NOT EXISTS (
-                    SELECT FROM followup_track f WHERE f.company_uuid=t.company_uuid
-                      AND f.ticket_uuid=t.ticket_uuid AND f.staff_user_uuid=%s
-                ))
-            ORDER BY t.created_at DESC, t.ticket_uuid LIMIT 20
-        """, (company, keyword, tracking, staff))
-    else:
-        cursor.execute("""
-            SELECT c.chat_uuid AS source_uuid, left(c.chat_uuid::text, 8) AS label,
-                   coalesce(left(first_message.body,100), '1:1 상담') AS title
-            FROM chat c
-            LEFT JOIN LATERAL (
-                SELECT body FROM chat_message WHERE chat_uuid=c.chat_uuid AND sender_type='customer'
-                ORDER BY sent_at, chat_message_uuid LIMIT 1
-            ) first_message ON true
-            WHERE c.company_uuid=%s AND strpos(lower(concat_ws(' ',c.chat_uuid,first_message.body)),lower(%s))>0
-            ORDER BY c.waiting_at DESC, c.chat_uuid LIMIT 20
-        """, (company, keyword))
+def track_options(cursor, company, staff):
+    cursor.execute("""
+        SELECT t.ticket_uuid, t.ticket_number, t.title
+        FROM visible_ticket t
+        WHERE t.company_uuid=%s AND NOT EXISTS (
+            SELECT FROM followup_track f WHERE f.company_uuid=t.company_uuid
+              AND f.ticket_uuid=t.ticket_uuid AND f.staff_user_uuid=%s
+        )
+        ORDER BY t.created_at DESC, t.ticket_uuid
+    """, (company, staff))
     return fetch_rows(cursor)
 
 
-def add_contact(cursor, company, staff, data):
+def add_contact(cursor, company, staff, data, *, reminders=False):
     cursor.execute("""
-        INSERT INTO followup_contact(company_uuid,created_by_uuid,ticket_uuid,chat_uuid,assignee_uuid,reason,scheduled_at)
-        VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING contact_uuid
+        INSERT INTO followup_contact(company_uuid,created_by_uuid,ticket_uuid,chat_uuid,assignee_uuid,reason,scheduled_at,
+                                     reminders_started_at)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,CASE WHEN %s THEN clock_timestamp() END) RETURNING contact_uuid
     """, (company, staff, data["ticket_uuid"], data["chat_uuid"], data["assignee_uuid"],
-          data["reason"], data["scheduled_at"]))
+          data["reason"], data["scheduled_at"], reminders))
     return cursor.fetchone()[0]
 
 
@@ -116,6 +109,7 @@ def contacts(cursor, company, staff, can_read, can_chat, *, ident=None, filters=
     query = """
         SELECT c.contact_uuid, c.ticket_uuid, c.chat_uuid, t.ticket_number,
                coalesce(t.title, left(first_message.body, 100)) AS title,
+               c.reminders_started_at, c.reminders_stopped_at,
                c.reason, c.scheduled_at, c.assignee_uuid, coalesce(a.name,a.email) AS assignee,
                c.contacted_at, c.completed_by_uuid, coalesce(p.name,p.email) AS completed_by, c.result
         FROM followup_contact c
@@ -135,7 +129,7 @@ def contacts(cursor, company, staff, can_read, can_chat, *, ident=None, filters=
         params.append(ident)
         if lock:
             query += " FOR UPDATE OF c"
-    else:
+    elif filters is not None:
         query += " AND (c.contacted_at IS NOT NULL)=%s"
         params.append(filters["state"] == "completed")
         if filters["source"]:
@@ -155,7 +149,10 @@ def contacts(cursor, company, staff, can_read, can_chat, *, ident=None, filters=
 
 def complete_contact(cursor, ident, staff, contacted_at, result):
     cursor.execute("""
-        UPDATE followup_contact SET completed_by_uuid=%s, contacted_at=%s, result=%s WHERE contact_uuid=%s
+        UPDATE followup_contact SET completed_by_uuid=%s, contacted_at=%s, result=%s,
+            reminders_stopped_at=CASE WHEN reminders_started_at IS NOT NULL
+                THEN coalesce(reminders_stopped_at,clock_timestamp()) END
+        WHERE contact_uuid=%s
     """, (staff, contacted_at, result, ident))
 
 

@@ -1,4 +1,5 @@
 from django import forms
+from django.utils import timezone
 
 
 class ContactQueryForm(forms.Form):
@@ -26,7 +27,12 @@ class CompleteForm(forms.Form):
     result = forms.CharField(max_length=1000)
 
 
-class RegistrationQueryForm(forms.Form):
-    mode = forms.ChoiceField(choices=(("track", "추적 등록"), ("schedule", "연락 예약")), required=False)
-    source = forms.ChoiceField(choices=(("ticket", "티켓"), ("chat", "1:1 문의")), required=False)
-    q = forms.CharField(max_length=100, required=False)
+class TrackScheduleForm(forms.Form):
+    ticket_uuid = forms.UUIDField()
+    scheduled_at = forms.DateTimeField()
+
+    def clean_scheduled_at(self):
+        scheduled = self.cleaned_data["scheduled_at"]
+        if scheduled <= timezone.now():
+            raise forms.ValidationError("현재보다 늦은 추적 날짜와 시각을 입력해 주세요.")
+        return scheduled

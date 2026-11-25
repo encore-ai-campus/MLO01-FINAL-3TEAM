@@ -1,65 +1,15 @@
-{% extends "followup/base.html" %}
-{% block title %}팔로업{% endblock %}
-{% block content %}
-<section class="follow-page" aria-labelledby="follow-title">
-  <h1 id="follow-title">팔로업</h1>
-  <div class="follow-top">
-    <nav class="follow-actions" aria-label="팔로업 보기">
-      {% if actor.can_read %}<a class="desk-button{% if tab == 'tracks' %} desk-button-solid{% endif %}" href="?tab=tracks" {% if tab == "tracks" %}aria-current="page"{% endif %}>추적 티켓</a>{% endif %}
-      <a class="desk-button{% if tab == 'scheduled' %} desk-button-solid{% endif %}" href="?tab=scheduled" {% if tab == "scheduled" %}aria-current="page"{% endif %}>연락 예정</a>
-      <a class="desk-button{% if tab == 'completed' %} desk-button-solid{% endif %}" href="?tab=completed" {% if tab == "completed" %}aria-current="page"{% endif %}>연락 완료</a>
-    </nav>
-    {% if tab == "tracks" %}
-      <a class="desk-button" href="{% url 'followup:register' %}?mode=track">추적 등록</a>
-    {% elif tab == "scheduled" %}
-      <a class="desk-button" href="{% url 'followup:register' %}?mode=schedule{% if filters.source %}&amp;source={{ filters.source }}{% endif %}">연락 예약</a>
-    {% endif %}
-  </div>
-  <div class="follow-grid">
-    <div>
-      <form class="follow-filter" method="get">
-        <input type="hidden" name="tab" value="{{ tab }}">
-        {% if tab != "tracks" and actor.can_read and can_chat %}
-          <select name="source" aria-label="원본 문의 유형">
-            <option value="">전체 문의</option>
-            <option value="ticket" {% if filters.source == "ticket" %}selected{% endif %}>티켓</option>
-            <option value="chat" {% if filters.source == "chat" %}selected{% endif %}>1:1 문의</option>
-          </select>
-        {% endif %}
-        <input type="search" name="q" value="{{ filters.q }}" maxlength="100" aria-label="검색어" placeholder="{% if tab == 'tracks' %}티켓번호 또는 제목{% else %}문의, 담당자 또는 연락 내용{% endif %}">
-        <button class="desk-button" type="submit">검색</button>
-      </form>
-      <p class="follow-count">조회 결과 {{ items|length }}건</p>
-      <div class="follow-table-wrap">
-        <table class="follow-table">
-          <caption class="follow-sr">{% if tab == "tracks" %}추적 티켓{% elif tab == "scheduled" %}예정된 후속 연락{% else %}완료된 후속 연락{% endif %}</caption>
-          <thead><tr><th scope="col">문의</th><th scope="col">{% if tab == "completed" %}처리자 / 연락 결과{% elif tab == "scheduled" %}담당자 / 연락 사유{% else %}담당자 / 상태{% endif %}</th><th scope="col">{% if tab == "tracks" %}추적 일시{% elif tab == "scheduled" %}예정 일시{% else %}실제 연락 일시{% endif %}</th></tr></thead>
-          <tbody>
-            {% for item in items %}
-              <tr {% if selected.selected_id == item.selected_id %}data-selected{% endif %}>
-                <th scope="row">
-                  <a href="{% querystring item=item.selected_id %}#follow-detail" {% if selected.selected_id == item.selected_id %}aria-current="true"{% endif %}>
-                    <small>{% if item.ticket_number %}#{{ item.ticket_number }}{% else %}1:1 문의{% endif %}</small>
-                    <strong>{{ item.title|default:"1:1 상담" }}</strong>
-                  </a>
-                </th>
-                {% if tab == "tracks" %}
-                  <td>{{ item.assignee|default:"미지정" }}<small>{{ item.status }}</small></td>
-                  <td>{{ item.tracked_at|date:"m.d H:i" }}</td>
-                {% elif tab == "scheduled" %}
-                  <td>{{ item.assignee }}<small>{{ item.reason|truncatechars:70 }}</small></td>
-                  <td>{{ item.scheduled_at|date:"m.d H:i" }}{% if item.scheduled_at < now %}<small class="follow-late">기한 지남</small>{% endif %}</td>
-                {% else %}
-                  <td>{{ item.completed_by }}<small>{{ item.result|truncatechars:70 }}</small></td>
-                  <td>{{ item.contacted_at|date:"m.d H:i" }}</td>
-                {% endif %}
-              </tr>
-            {% empty %}<tr><td colspan="3" class="follow-empty">표시할 항목이 없습니다.</td></tr>{% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
-    {% if selected %}{% include "followup/detail.html" %}{% endif %}
-  </div>
-</section>
-{% endblock %}
+{% load static %}<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>팔로업 | 섭명뭐</title>
+  <link rel="stylesheet" href="{% static 'followup/desk.css' %}">
+  <link rel="stylesheet" href="{% static 'followup/preview.css' %}">
+</head>
+<body>
+  <div id="app"></div>
+  {{ bootstrap|json_script:"followup-bootstrap" }}
+  <script defer src="{% static 'followup/ui.js' %}"></script>
+</body>
+</html>

@@ -2,7 +2,7 @@ from contextlib import contextmanager
 
 from django.db import connection, transaction
 
-from apps.accounts.repository import company_employee, company_staff, work_permissions
+from apps.accounts.repository import company_employee, work_permissions
 from apps.accounts.services import CHAT_HANDLE, current_actor
 from config.http import DeskError
 from . import repository
@@ -39,22 +39,16 @@ class FollowUpDesk:
         self.require_ticket_read()
         return repository.notifications(self.cursor, self.company, self.staff, summary=summary)
 
-    def registration_sources(self, kind, keyword, *, tracking):
-        if kind == "ticket":
-            self.require_ticket_read()
-        else:
-            self.require_chat()
-        return repository.registration_sources(self.cursor, self.company, self.staff, kind, keyword, tracking=tracking)
-
-    def assignees(self):
-        return company_staff(self.cursor, self.company)
+    def track_options(self):
+        self.require_ticket_read()
+        return repository.track_options(self.cursor, self.company, self.staff)
 
     def track_and_schedule(self, data):
         if not self.track(data["ticket_uuid"]):
             raise DeskError(409, "ALREADY_TRACKED", "이미 추적 중인 티켓입니다.")
-        return self.schedule(data)
+        return self.schedule(data, reminders=True)
 
-    def schedule(self, data):
+    def schedule(self, data, *, reminders=False):
         if data["chat_uuid"]:
             self.require_chat()
         else:
@@ -63,10 +57,10 @@ class FollowUpDesk:
             raise DeskError(404, "SOURCE_NOT_FOUND", "원본 문의를 찾을 수 없습니다.")
         if not company_employee(self.cursor, self.company, data["assignee_uuid"], lock=True):
             raise DeskError(404, "STAFF_NOT_FOUND", "직원을 찾을 수 없습니다.")
-        ident = repository.add_contact(self.cursor, self.company, self.staff, data)
+        ident = repository.add_contact(self.cursor, self.company, self.staff, data, reminders=reminders)
         return self.contact(ident)
 
-    def contacts(self, filters):
+    def contacts(self, filters=None):
         return repository.contacts(self.cursor, self.company, self.staff, self.can_read, self.can_chat, filters=filters)
 
     def contact(self, ident, *, lock=False):

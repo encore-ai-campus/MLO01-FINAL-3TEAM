@@ -118,7 +118,7 @@ JSON 메시지 요청에는 `message_type` (`reply` 또는 `memo`), `body`, 동�
 
 ### Task 8 팔로업
 
-공통 사이드바의 팔로업 메뉴에서 `/follow-up/`을 연다. 추적 티켓과 연락 예정·완료 기록은 PostgreSQL에서 조회한다. 팔로업 CSS와 알림 배지 JS는 `ticket-desk` 이미지 빌드의 `collectstatic`에서 수집된다.
+공통 사이드바에서 `/follow-up/`을 연다. `ticket-desk` 이미지는 기존 팔로업 시안의 JSX·CSS를 빌드하고 Django `collectstatic`으로 수집한다. Django를 로컬에서 실행할 때는 먼저 저장소 루트에서 `npm ci --prefix src/backend/frontend`와 `node src/backend/frontend/build-followup.mjs`를 실행한다.
 
 `init-db-topics`가 `followup_schema.sql`을 적용한다. 기존 Docker 환경에서는 위의 빌드·초기화 명령을 다시 실행한다. API 변경 요청에는 로그인 세션과 `X-CSRFToken`이 필요하다.
 
