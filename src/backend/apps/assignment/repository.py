@@ -58,13 +58,21 @@ def category_team(cursor, ticket, category_uuid):
     return cursor.fetchone()
 
 
-def update_category(cursor, ticket_uuid, category_uuid, team_uuid, assignee_uuid, review_reason, manual, version):
+def update_category(cursor, ticket_uuid, category_uuid, team_uuid, assignee_uuid, review_reason, version):
     cursor.execute("""
         UPDATE ticket SET category_uuid=%s, category_status='succeeded', assigned_team_uuid=%s,
-            assignee_uuid=%s, category_review_reason=%s, category_manually_set=%s,
+            assignee_uuid=%s, category_review_reason=%s,
             category_applied_body_version=%s, category_applied_preprocess_version=%s, updated_at=now()
         WHERE ticket_uuid=%s
-    """, (category_uuid, team_uuid, assignee_uuid, review_reason, manual, *version, ticket_uuid))
+    """, (category_uuid, team_uuid, assignee_uuid, review_reason, *version, ticket_uuid))
+
+
+def save_manual_category(cursor, ticket_uuid, category_uuid):
+    cursor.execute("""
+        UPDATE ticket SET category_uuid=%s, category_status='succeeded', category_review_reason=NULL,
+            category_manually_set=true, updated_at=now()
+        WHERE ticket_uuid=%s
+    """, (category_uuid, ticket_uuid))
 
 
 def record_event(cursor, ticket_uuid, code, *, actor=None, recipient=None, reason=None, details=None):

@@ -93,7 +93,7 @@ def apply_category_result(*, company_uuid, event_id, preprocess_version, body_ve
         new_team = team_uuid if can_assign else ticket["assigned_team_uuid"]
         ticket_uuid = ticket["ticket_uuid"]
         repo.update_category(cursor, ticket_uuid, category_uuid, new_team, ticket["assignee_uuid"],
-                             review_reason, False, version)
+                             review_reason, version)
         repo.record_event(cursor, ticket_uuid, "ticket_category_changed", details={
             "category_before": ticket["category_uuid"], "category_after": category_uuid,
             "team_before": ticket["assigned_team_uuid"], "team_after": new_team,
@@ -111,31 +111,20 @@ def change_category(token, ticket_uuid, category_uuid, reason):
     with write_ticket(token, ticket_uuid) as (cursor, actor, _):
         company_uuid = actor["company_uuid"]
         ticket = repo.read_ticket(cursor, company_uuid, ticket_uuid)
-        team_uuid, review_reason = resolve_team(cursor, ticket, category_uuid)
-        old_team, old_assignee = ticket["assigned_team_uuid"], ticket["assignee_uuid"]
+        categories = repo.category_choices(cursor, ticket["domain_uuid"])
+        if category_uuid not in {category["category_uuid"] for category in categories}:
+            raise DeskError(422, "CATEGORY_OUTSIDE_TICKET_DOMAIN", "티켓 도메인에 속한 카테고리를 선택해 주세요.")
         if (ticket["category_manually_set"] and ticket["category_uuid"] == category_uuid
-                and old_team == team_uuid and ticket["category_review_reason"] == review_reason):
+                and ticket["category_review_reason"] is None):
             return assignment_result(ticket, "already_applied")
 
-        assignee = old_assignee if team_uuid == old_team and team_uuid is not None else None
-        version = (ticket["category_applied_body_version"], ticket["category_applied_preprocess_version"])
-        repo.update_category(cursor, ticket_uuid, category_uuid, team_uuid, assignee, review_reason, True, version)
-        if ticket["status"] == "미처리" and team_uuid and not assignee:
-            refill_team(cursor, company_uuid, team_uuid)
+        repo.save_manual_category(cursor, ticket_uuid, category_uuid)
         result = repo.read_ticket(cursor, company_uuid, ticket_uuid)
         repo.record_event(cursor, ticket_uuid, "ticket_category_changed", actor=actor["staff_user_uuid"],
                           reason=reason, details={
                               "category_before": ticket["category_uuid"], "category_after": category_uuid,
-                              "team_before": old_team, "team_after": team_uuid,
-                              "assignee_before": old_assignee, "assignee_after": result["assignee_uuid"],
-                              "review_reason": review_reason,
+                              "team_before": ticket["assigned_team_uuid"], "team_after": result["assigned_team_uuid"],
+                              "assignee_before": ticket["assignee_uuid"], "assignee_after": result["assignee_uuid"],
+                              "review_reason": result["category_review_reason"],
                           })
-        # Release the old team's slot after the move commits, avoiding opposite team lock order.
-        if old_team and old_team != team_uuid and old_assignee and ticket["status"] != "답변완료":
-            transaction.on_commit(lambda: refill_released_team(company_uuid, old_team), robust=True)
-        return assignment_result(result, "review_required" if review_reason else "applied")
-
-
-def refill_released_team(company_uuid, team_uuid):
-    with transaction.atomic(), connection.cursor() as cursor:
-        refill_team(cursor, company_uuid, team_uuid)
+        return assignment_result(result, "applied")
