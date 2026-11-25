@@ -182,6 +182,34 @@ def collector_positions():
     return config
 
 
+def flink_last_restore():
+    config = prom(15, "Flink 마지막 체크포인트 복원", 6, 21, 6, 6,
+                  '(voc_flink_last_restore_seconds * 1000) or on() (voc_flink_checkpoints{state="restored"} == 0)',
+                  kind="stat", unit="dateTimeAsLocal")
+    config["fieldConfig"]["defaults"]["mappings"] = [
+        {"type": "value", "options": {"0": {"text": "0건"}}},
+    ]
+    return config
+
+
+def flink_status():
+    config = prom(19, "Flink 작업·체크포인트 상태", 12, 21, 12, 6,
+                  'voc_flink_job_state or voc_flink_checkpoints{state!="completed"}',
+                  description="선택한 기간에 최초 Silver 저장을 마친 고객 문의 원문을 셉니다. 실패·복원 체크포인트 수는 Flink 누적값입니다.")
+    config["datasource"] = {"type": "datasource", "uid": "-- Mixed --"}
+    config["targets"][0]["datasource"] = PROM
+    config["targets"].append({
+        "datasource": SQL, "refId": "B", "rawQuery": True, "format": "table", "editorMode": "code",
+        "rawSql": f"""
+SELECT 'Flink 정제 성공' AS state, count(*) AS "Value"
+FROM voc_monitor.standardized_inquiries WHERE {period('standardized_at')}
+""",
+    })
+    omit_prometheus_fields(config)
+    config["transformations"].insert(0, {"id": "merge", "options": {}})
+    return config
+
+
 PIPELINES = [
     pipeline_canvas(),
     panel(8, "단계별 처리 시간", 0, 8, 12, 7, f"""
@@ -231,11 +259,8 @@ LEFT JOIN voc_monitor.queue_backlog q USING(stage)
 """, description="발행 전인 감성·카테고리 작업을 셉니다. 한 티켓에서 두 작업이 생길 수 있습니다. 임베딩 대기 기록은 아직 연결되지 않았습니다."),
     prom(14, "Flink 마지막 성공 체크포인트", 0, 21, 6, 6, "voc_flink_last_checkpoint_seconds * 1000",
          kind="stat", unit="dateTimeAsLocal"),
-    prom(15, "Flink 마지막 체크포인트 복원", 6, 21, 6, 6, "voc_flink_last_restore_seconds * 1000",
-         kind="stat", unit="dateTimeAsLocal"),
-    omit_prometheus_fields(prom(19, "Flink 작업·체크포인트 상태", 12, 21, 12, 6,
-                                'voc_flink_job_state or voc_flink_checkpoints',
-                                description="작업 상태와 성공·실패·복원 체크포인트 수를 표시합니다.")),
+    flink_last_restore(),
+    flink_status(),
     collector_positions(),
     omit_prometheus_fields(prom(18, "Kafka 소비 지연", 0, 33, 24, 8, "voc_kafka_consumer_lag")),
     panel(20, "분류·임베딩 모델 실패 및 복구 기록", 0, 41, 24, 8, """

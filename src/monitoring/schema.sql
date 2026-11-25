@@ -52,6 +52,11 @@ FROM voc.standardize_outbox o LEFT JOIN voc.silver_messages s
   ON (s.event_id,s.schema_version,s.body_version)=(o.event_id,o.target_schema_version,o.body_version)
 WHERE o.target_schema_version=4;
 
+CREATE OR REPLACE VIEW voc_monitor.standardized_inquiries AS
+SELECT standardized_at
+FROM voc.silver_messages
+WHERE schema_version=4 AND message_kind='customer_inquiry';
+
 CREATE OR REPLACE VIEW voc_monitor.diagnostics AS
 SELECT 'capture'::text AS stage,b.received_at AS observed_at,'원문에 기록된 수집 시각'::text AS activity,
        b.event_id::text AS event_id,NULL::text AS topic,NULL::integer AS partition_id,
