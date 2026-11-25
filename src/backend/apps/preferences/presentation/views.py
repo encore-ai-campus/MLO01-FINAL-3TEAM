@@ -36,10 +36,9 @@ def display(request):
         cards = saved.get("cards", defaults)
         sidebar = saved.get("sidebar", [key for key, _ in SIDEBAR_ITEMS])
         sidebar_items = available_sidebar_items(actor)
-        can_select_analytics = any(key == "analytics" for key, _ in sidebar_items)
         form = DisplayForm(request.POST if saving else None, initial={"cards": cards, "sidebar": sidebar})
         if saving and form.is_valid():
-            if not can_select_analytics and ("analytics" in sidebar) != ("analytics" in form.cleaned_data["sidebar"]):
+            if not actor["can_read_dashboard"] and ("analytics" in sidebar) != ("analytics" in form.cleaned_data["sidebar"]):
                 selected = [key for key in form.cleaned_data["sidebar"] if key != "analytics"]
                 if "analytics" in sidebar:
                     selected.append("analytics")

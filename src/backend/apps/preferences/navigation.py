@@ -5,7 +5,7 @@ SIDEBAR_ITEMS = (
 
 
 def available_sidebar_items(actor):
-    return [(key, label) for key, label in SIDEBAR_ITEMS if key != "analytics" or actor.get("role") == "admin"]
+    return [(key, label) for key, label in SIDEBAR_ITEMS if key != "analytics" or actor["can_read_dashboard"]]
 
 
 def visible_sidebar(actor):
