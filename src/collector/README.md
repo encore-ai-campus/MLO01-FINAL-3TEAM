@@ -159,6 +159,27 @@ LEFT JOIN voc.ticket_projection_issue i ON i.event_id=s.event_id
 WHERE s.schema_version=4 AND s.event_id=:'inquiry';
 ~~~
 
+### 지정된 문의 채널에서 자동으로 티켓 발행하기
+
+등록한 업무 채널을 고객 문의 접수 전용으로 운영할 때 자동 발행을 켠다. Discord는 연결된 방에 사람이 보낸 일반 메시지와 답글을, Gmail은 연결 사서함에서 `VOC` 라벨로 수집한 외부 발신 문의를 대상으로 한다. Flink가 직원 답변·자동 발신·초안 등으로 분류한 메시지, 발신자가 없는 메시지, Gmail 스팸·휴지통 메일은 자동 발행 대상에서 제외한다.
+
+기존 DB에는 아래 스키마를 한 번 적용한다. 새 설치는 `init-db-topics`가 적용한다.
+
+~~~bash
+docker compose exec -T postgres psql -X -1 -v ON_ERROR_STOP=1 -U voc -d voc < src/collector/channel_intake_schema.sql
+~~~
+
+다음 SQL을 위에서 확인한 회사와 해당 업무 채널의 정확한 수집 경로에 대해 실행한다. `auto_customer_from`은 최초 수집 시각(Bronze `received_at`) 기준이다. 받은 지 오래된 메일도 활성화 후 처음 `VOC` 라벨을 붙여 수집하면 접수될 수 있다.
+
+~~~sql
+UPDATE voc.ticket_source_connection SET auto_customer_from=clock_timestamp()
+WHERE company_uuid=:'company_uuid' AND channel_uuid=:'channel_id' AND auto_customer_from IS NULL
+  AND (company_id,channel,connection_id,source_channel_id)=(:'src_company_id',:'src_channel',:'src_connection_id',:'src_room')
+RETURNING channel,auto_customer_from;
+~~~
+
+적격 Silver가 처음 `unknown`으로 저장되면 DB가 해당 이벤트의 역할을 확인하고 기존 outbox로 Flink 재정제를 요청한다. 두 번째 결과가 `customer_inquiry`이면 같은 이벤트에 업무 티켓 한 건이 생성된다. `voc.standardize_outbox.auto_customer_confirmed_at`에는 최초 자동 결정 시각이 남는다. 운영자가 지정한 역할이 우선하며, 잘못된 결정은 그 이벤트의 `verified_message_kind`를 적절한 역할로 수정해 재정제할 수 있다. 정책을 해제할 때는 같은 경로의 `auto_customer_from`을 NULL로 바꾼다. 활성화 전 수집분은 기존 역할을 유지한다.
+
 ## 확인과 재처리
 
 ~~~bash

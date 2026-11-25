@@ -32,6 +32,7 @@ def init():
     with db() as cn, cn.transaction():
         cn.execute(Path(__file__).with_name("schema.sql").read_text())
         cn.execute(Path(__file__).with_name("ticket_schema.sql").read_text())
+        cn.execute(Path(__file__).with_name("channel_intake_schema.sql").read_text())
         cn.execute(Path(__file__).with_name("settings_schema.sql").read_text())
         cn.execute(Path(__file__).with_name("followup_schema.sql").read_text(encoding="utf-8"))
     admin = AdminClient({"bootstrap.servers": BROKERS})
