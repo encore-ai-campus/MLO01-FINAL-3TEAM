@@ -1,6 +1,7 @@
 from django.http import HttpResponse, JsonResponse
 from django.middleware.csrf import get_token
 from django.shortcuts import render
+from django.templatetags.static import static
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
@@ -26,6 +27,7 @@ def page(request):
     with open_desk(session_token(request)) as desk:
         bootstrap = {
             "person": {"name": desk.actor["name"], "canTrack": desk.can_read},
+            "logoUrl": static("shared/ticats-logo.png"),
             "sidebar": desk.actor["display_preferences"].get("sidebar"),
             "settingsPreview": None if desk.actor["role"] == "admin" else "employee",
             "csrfToken": get_token(request),

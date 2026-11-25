@@ -86,7 +86,10 @@ export function DeskLayout({active, children, accountName, settingsPreview, sett
   </svg>
 <div id="desk" className="desk">
     <header className="desk-bar">
-      <a className="brand" href={link('home', workHome)}><span className="logo" aria-hidden="true">?</span><span>섭명뭐</span></a>
+      <a className="brand" href={link('home', workHome)} aria-label={runtime ? 'TiCats 업무 홈' : undefined}>
+        {runtime ? <img className="brand-logo" src={runtime.logoUrl} alt="TiCats" width={102} height={34} /> :
+          <><span className="logo" aria-hidden="true">?</span><span>섭명뭐</span></>}
+      </a>
       <div className="desk-bell" onKeyDown={event => { if (event.key === 'Escape') setBellOpen(false); }}>
         <button type="button" className="desk-bell-button" aria-label="알림 이력" aria-expanded={bellOpen}
           aria-controls="desk-bell-history" onClick={() => setBellOpen(open => !open)}>

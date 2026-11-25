@@ -38,23 +38,9 @@
     }
 
     .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      color: var(--heading);
-      font-size: 19px;
-      font-weight: 700;
-    }
-
-    .logo {
-      display: grid;
-      place-items: center;
-      width: 40px;
-      height: 40px;
-      border-radius: 8px;
-      background: var(--primary);
-      color: var(--paper);
-      font-size: 24px;
+      display: block;
+      max-width: 100%;
+      height: auto;
     }
 
     h1 {
