@@ -20,6 +20,7 @@ SECRET_KEY = secret("DJANGO_SECRET_KEY", "django_secret_key")
 if not SECRET_KEY:
     raise ImproperlyConfigured("Set DJANGO_SECRET_KEY or mount /run/secrets/django_secret_key")
 DEBUG = False
+VOC_POC_RANDOM_ASSIGNMENT = os.getenv("VOC_POC_RANDOM_ASSIGNMENT") == "1"
 VOC_ASSIGNMENT_WORKER_TOKEN = secret("VOC_ASSIGNMENT_WORKER_TOKEN", "voc_assignment_worker_token")
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]").split(",")
 ROOT_URLCONF = "config.urls"
