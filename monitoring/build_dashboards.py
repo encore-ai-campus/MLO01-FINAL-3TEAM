@@ -119,13 +119,15 @@ FROM counts
 def pipeline_canvas():
     colors = ("#E4F2FD", "#E0F5F6", "#EDEBFD", "#F9EFDE", "#F7E9F3", "#E4F3E9")
     config = panel(1, "문의 처리 흐름", 0, 0, 24, 5, stage_query(), kind="canvas",
-                   description="단계를 누르면 해당 단계의 유입, 완료, 전달 및 재시도 내역으로 이동합니다.")
+                   description="클릭할 수 있는 단계에서 Kafka 전달, 실패, 재시도 기록을 확인합니다.")
     elements = []
     for index, (stage, label) in enumerate(STEPS.items()):
         left = round(1.1 + index * 16.6, 2)
         right = round(100 - left - 14.8, 2)
-        link = {"title": label + " 상세", "url": f"/d/voc-pipeline/pipeline?var-step={stage}&viewPanel=21&"
-                + "${__url_time_range}", "targetBlank": False, "oneClick": True}
+        links = []
+        if stage != "ready":
+            links.append({"title": label + " 상세", "url": f"/d/voc-pipeline-stage/pipeline-stage?var-step={stage}&"
+                          + "${__url_time_range}", "targetBlank": False, "oneClick": True})
         label_element = {
             "name": label, "type": "text", "constraint": {"horizontal": "scale", "vertical": "top"},
             "placement": {"left": left, "right": right, "top": 28, "height": 57},
@@ -133,7 +135,7 @@ def pipeline_canvas():
                        "align": "center", "valign": "middle", "size": 19},
             "background": {"color": {"fixed": colors[index]}},
             "border": {"color": {"fixed": colors[index]}, "width": 1, "radius": 10},
-            "links": [link],
+            "links": links,
         }
         if index < len(STEPS) - 1:
             label_element["connections"] = [{
@@ -148,7 +150,7 @@ def pipeline_canvas():
              "placement": {"left": left, "right": right, "top": 94, "height": 30},
              "config": {"text": {"field": stage, "mode": "field"}, "color": {"fixed": "#4B607A"},
                         "align": "center", "valign": "middle", "size": 14},
-             "links": [link]},
+             "links": links},
         ])
     config["options"] = {
         "inlineEditing": False, "panZoom": False, "zoomToContent": False,
@@ -158,10 +160,10 @@ def pipeline_canvas():
     return config
 
 
-def dashboard(name, panels, *, template=None, **options):
+def dashboard(name, panels, *, template=None, title=None, **options):
     uid = "voc-" + name
     return {
-        "uid": uid, "title": PAGES[name], "tags": ["VoC"], "schemaVersion": 41, "version": 1,
+        "uid": uid, "title": title or PAGES[name], "tags": ["VoC"], "schemaVersion": 41, "version": 1,
         "editable": False, "refresh": "15s", "timezone": "Asia/Seoul",
         "time": {"from": "now-10m", "to": "now"}, "panels": panels,
         "links": [
@@ -171,6 +173,40 @@ def dashboard(name, panels, *, template=None, **options):
         ],
         "templating": {"list": template or []}, **options,
     }
+
+
+def collector_positions():
+    config = panel(16, "채널별 수집 위치", 0, 27, 24, 6, """
+SELECT channels.channel,label AS "채널",connection_hash AS "연결",coalesce(position,'미수집') AS "수집 위치",
+       CASE phase WHEN 'active' THEN '증분 수집' WHEN 'bootstrap' THEN '초기 수집' END AS "수집 단계",
+       updated_at AS "마지막 갱신"
+FROM (VALUES ('gmail','Gmail'),('discord','Discord')) AS channels(channel,label)
+LEFT JOIN monitor.collector_position USING(channel)
+ORDER BY label DESC, connection_hash
+""", description="수집 상태는 채널 단위입니다. 수집 위치와 단계는 연결별로 표시합니다. 연결은 식별용 해시입니다.")
+    config["datasource"] = {"type": "datasource", "uid": "-- Mixed --"}
+    config["targets"][0]["datasource"] = SQL
+    config["targets"].append({
+        "refId": "B", "datasource": PROM, "instant": True, "range": False, "format": "table",
+        "expr": 'max by (channel) (voc_collector_ready{channel=~"gmail|discord"}) '
+                'or on (channel) label_replace(vector(-1), "channel", "gmail", "", "") '
+                'or on (channel) label_replace(vector(-1), "channel", "discord", "", "")',
+    })
+    config["transformations"] = [
+        {"id": "joinByField", "options": {"byField": "channel", "mode": "outerTabular"}},
+        {"id": "organize", "options": {
+            "excludeByName": {"channel": True, "Time": True},
+            "indexByName": {"채널": 0, "Value": 1, "연결": 2, "수집 위치": 3, "수집 단계": 4, "마지막 갱신": 5},
+            "renameByName": {"Value": "수집 상태"},
+        }},
+    ]
+    config["fieldConfig"]["overrides"].append({
+        "matcher": {"id": "byName", "options": "Value"},
+        "properties": [{"id": "mappings", "value": [{"type": "value", "options": {
+            "-1": {"text": "미수집"}, "0": {"text": "중단"}, "1": {"text": "수집 중"},
+        }}]}],
+    })
+    return config
 
 
 PIPELINES = [
@@ -216,87 +252,41 @@ FROM (
        count(*) FILTER(WHERE reconciliation='failed') AS failed
     FROM monitor.source_reconciliation
 ) metrics CROSS JOIN LATERAL (VALUES ('티켓 없는 원문',missing_ticket),('원문 없는 티켓',missing_source),
-    ('초과 티켓',duplicates),('처리 대기',pending),('전달 확인 중',unconfirmed),('실패 기록 있음',failed)) AS v(label,value)
+    ('중복 발행 티켓',duplicates),('정제 처리 요청 대기',pending),('Flink 정제 처리 대기',unconfirmed),
+    ('실패 기록 있음',failed)) AS v(label,value)
 """, description="현재 전체 원문과 티켓을 비교합니다. 대기·실패 기록은 누락 의심에서 제외합니다."),
-    panel(11, "발행·분석 대기", 12, 15, 12, 6, f"""
-SELECT label AS "단계", CASE WHEN q.pending>0 OR (stage='flink' AND {active('bronze')})
+    panel(11, "AI 모델 분석 대기", 12, 15, 12, 6, f"""
+SELECT label AS "단계", CASE WHEN q.pending>0
     OR (stage='classification' AND {active('classification')}) OR (stage='embedding' AND {active('embedding')})
     THEN coalesce(q.pending,0) END AS "대기 건수", q.oldest_seconds::integer AS "가장 오래된 대기 (초)"
-FROM (VALUES ('flink','원문 저장 후 Kafka 발행'),('classification','분류'),('embedding','임베딩')) AS s(stage,label)
+FROM (VALUES ('classification','분류'),('embedding','임베딩')) AS s(stage,label)
 LEFT JOIN monitor.queue_backlog q USING(stage)
 """),
-    *[show_states(prom(12+i, title, i*4, 21, 4, 4, f'voc_collector_ready{{channel="{channel}"}} or on() vector(-1)', kind="stat"),
-                  {-1: "미수집", 0: "중단", 1: "수집 중"})
-      for i, (channel, title) in enumerate((("gmail","Gmail 수집"),("discord","Discord 수집")))],
-    prom(14, "마지막 성공 체크포인트", 8, 21, 8, 4, "voc_flink_last_checkpoint_seconds * 1000",
+    prom(14, "Flink 마지막 성공 체크포인트", 0, 21, 6, 6, "voc_flink_last_checkpoint_seconds * 1000",
          kind="stat", unit="dateTimeAsLocal"),
-    prom(15, "마지막 체크포인트 복원", 16, 21, 8, 4, "voc_flink_last_restore_seconds * 1000",
+    prom(15, "Flink 마지막 체크포인트 복원", 6, 21, 6, 6, "voc_flink_last_restore_seconds * 1000",
          kind="stat", unit="dateTimeAsLocal"),
-    panel(16, "채널별 수집 위치", 0, 25, 12, 6, """
-SELECT label AS "채널",connection_hash AS "연결",coalesce(position,'미수집') AS "수집 위치",
-       CASE phase WHEN 'active' THEN '수집 중' WHEN 'bootstrap' THEN '초기 수집' END AS "상태",
-       updated_at AS "마지막 갱신"
-FROM (VALUES ('gmail','Gmail'),('discord','Discord')) AS channels(channel,label)
-LEFT JOIN monitor.collector_position USING(channel)
-""", description="채널별 수집 위치와 마지막 갱신을 확인합니다. 연결은 식별용 해시로 표시합니다."),
-    omit_prometheus_fields(prom(17, "수집 발행 대기", 12, 25, 12, 6, "voc_capture_pending")),
-    omit_prometheus_fields(prom(18, "Kafka 소비 지연", 0, 31, 12, 8, "voc_kafka_consumer_lag")),
-    omit_prometheus_fields(prom(19, "Flink 작업·체크포인트 상태", 12, 31, 12, 8,
+    omit_prometheus_fields(prom(19, "Flink 작업·체크포인트 상태", 12, 21, 12, 6,
                                 'voc_flink_job_state or voc_flink_checkpoints',
                                 description="작업 상태와 성공·실패·복원 체크포인트 수를 표시합니다.")),
-    panel(20, "미해결·복구 실패 기록", 0, 39, 24, 8, f"""
-SELECT stage AS "단계",event_id AS "원본 키",reason AS "사유",failed_at AS "실패",
-       recovered_at AS "복구",CASE WHEN recovered_at IS NULL THEN '미해결' ELSE '복구' END AS "상태"
+    collector_positions(),
+    omit_prometheus_fields(prom(18, "Kafka 소비 지연", 0, 33, 24, 8, "voc_kafka_consumer_lag")),
+    panel(20, "분류·임베딩 모델 실패 및 복구 기록", 0, 41, 24, 8, f"""
+SELECT CASE stage WHEN 'classification' THEN '분류 모델' WHEN 'embedding' THEN '임베딩 모델' END AS "모델 종류",
+       event_id AS "원본 이벤트 ID",
+       CASE reason WHEN 'incomplete_classification' THEN '분류 결과 일부 누락' ELSE reason END AS "실패 사유",
+       failed_at AS "실패 시각",recovered_at AS "복구 시각",
+       CASE WHEN recovered_at IS NULL THEN '미해결' ELSE '복구' END AS "상태"
 FROM monitor.failure
-WHERE {period('failed_at')} OR {period('recovered_at')} OR recovered_at IS NULL
+WHERE stage IN ('classification','embedding')
+  AND ({period('failed_at')} OR {period('recovered_at')} OR recovered_at IS NULL)
 ORDER BY failed_at DESC LIMIT 100
 """),
-    panel(21, "단계 상세 · ${step:text}", 0, 47, 24, 12, f"""
-WITH attempts AS (
-  SELECT *,lag(error) OVER ordered AS previous_error,
-         lag(request_partition) OVER ordered AS previous_partition,lag(request_offset) OVER ordered AS previous_offset
-  FROM monitor.flink_attempt WHERE started_at<={TIME_TO}
-    AND ${{step:sqlstring}} IN ('all','flink')
-  WINDOW ordered AS (PARTITION BY event_id ORDER BY started_at,attempt_id)
-), retries AS (
-  SELECT event_id,'flink' AS stage,count(*) AS retries,max(started_at) AS last_at
-  FROM attempts
-  WHERE previous_error IS NOT NULL OR (request_partition,request_offset)=(previous_partition,previous_offset)
-  GROUP BY event_id
-  UNION ALL
-  SELECT event_id,stage,retries,last_at FROM monitor.analysis_retries WHERE ${{step:sqlstring}} IN ('all','compute')
-), detail AS (
-  SELECT started_at AS event_at,'유입' AS activity,stage,event_id,
-         NULL::text AS topic,NULL::integer AS partition_id,NULL::bigint AS kafka_offset,NULL::bigint AS retries
-  FROM monitor.stage WHERE {period('started_at')}
-  UNION ALL
-  SELECT succeeded_at,'완료',stage,event_id,NULL,NULL,NULL,NULL
-  FROM monitor.stage WHERE {period('succeeded_at')}
-  UNION ALL
-  SELECT recorded_at,'Kafka 전달',stage,event_id,topic,partition_id,kafka_offset,NULL
-  FROM monitor.kafka_delivery WHERE {period('recorded_at')} AND stage IN ('capture','bronze','flink')
-  UNION ALL
-  SELECT failed_at,'실패',stage,event_id,NULL,NULL,NULL,NULL
-  FROM monitor.failure WHERE {period('failed_at')} AND event_id IS NOT NULL AND stage IN ('capture','bronze','ticket')
-  UNION ALL
-  SELECT last_at,'재시도',stage,event_id,NULL,NULL,NULL,retries FROM retries
-  WHERE {period('last_at')}
-)
-SELECT event_at AS "이벤트 시각",activity AS "이벤트 종류",
-       CASE stage {" ".join(f"WHEN '{stage}' THEN '{label}'" for stage, label in STEPS.items())}
-           WHEN 'classification' THEN '분류' WHEN 'embedding' THEN '임베딩' END AS "단계",
-       event_id AS "원본 이벤트 ID",topic AS "Kafka 토픽",partition_id AS "파티션",kafka_offset AS "오프셋",
-       retries AS "재시도 횟수"
-FROM detail
-WHERE ${{step:sqlstring}} IN ('all',stage) OR (${{step:sqlstring}}='compute' AND stage IN ('classification','embedding'))
-ORDER BY event_at DESC LIMIT 150
-""", description="선택한 단계의 이벤트를 최근 150건까지 표시합니다. 원본 이벤트 ID는 단계마다 같은 원본 문의를 찾는 데 쓰입니다.",
-          empty="—"),
-    panel(23, "대조가 필요한 원본 키", 0, 59, 24, 8, """
-SELECT event_id AS "원본 키",channel AS "채널",ticket_count AS "티켓",extra_tickets AS "초과",
+    panel(23, "대조가 필요한 원본 키", 0, 49, 24, 8, """
+SELECT event_id AS "원본 키",channel AS "채널",ticket_count AS "티켓",extra_tickets AS "중복 발행 티켓",
        CASE reconciliation WHEN 'source_without_ticket' THEN '티켓 없는 원문'
         WHEN 'ticket_without_source' THEN '원문 없는 티켓'
-        WHEN 'failed' THEN '실패 기록 있음' WHEN 'unconfirmed_delivery' THEN '전달 확인 중' ELSE '대조 완료' END AS "대조 상태"
+        WHEN 'failed' THEN '실패 기록 있음' WHEN 'unconfirmed_delivery' THEN 'Flink 정제 처리 대기' ELSE '대조 완료' END AS "대조 상태"
 FROM monitor.source_reconciliation
 WHERE reconciliation IN ('source_without_ticket','ticket_without_source','failed','unconfirmed_delivery') OR extra_tickets>0
 ORDER BY received_at DESC NULLS FIRST LIMIT 100
@@ -306,10 +296,47 @@ ORDER BY received_at DESC NULLS FIRST LIMIT 100
 for pipeline_panel in PIPELINES[1:]:
     pipeline_panel["gridPos"]["y"] -= 3
 
+
+STAGE_DETAIL = panel(21, "단계 상세 · ${step:text}", 0, 0, 24, 18, f"""
+WITH attempts AS (
+  SELECT *,lag(error) OVER ordered AS previous_error,
+         lag(request_partition) OVER ordered AS previous_partition,lag(request_offset) OVER ordered AS previous_offset
+  FROM monitor.flink_attempt WHERE started_at<={TIME_TO}
+    AND ${{step:sqlstring}}='flink'
+  WINDOW ordered AS (PARTITION BY event_id ORDER BY started_at,attempt_id)
+), retries AS (
+  SELECT event_id,'flink' AS stage,count(*) AS retries,max(started_at) AS last_at
+  FROM attempts
+  WHERE previous_error IS NOT NULL OR (request_partition,request_offset)=(previous_partition,previous_offset)
+  GROUP BY event_id
+  UNION ALL
+  SELECT event_id,stage,retries,last_at FROM monitor.analysis_retries WHERE ${{step:sqlstring}}='compute'
+), detail AS (
+  SELECT recorded_at AS event_at,'Kafka 전달' AS activity,stage,event_id,topic,partition_id,kafka_offset,
+         NULL::bigint AS retries,NULL::text AS reason
+  FROM monitor.kafka_delivery WHERE {period('recorded_at')} AND stage IN ('capture','bronze','flink')
+  UNION ALL
+  SELECT failed_at,'실패',stage,event_id,NULL,NULL,NULL,NULL,reason
+  FROM monitor.failure WHERE {period('failed_at')} AND stage IN ('capture','bronze','flink','ticket')
+  UNION ALL
+  SELECT last_at,'재시도',stage,event_id,NULL,NULL,NULL,retries,NULL FROM retries
+  WHERE {period('last_at')}
+)
+SELECT event_at AS "이벤트 시각",activity AS "이벤트 종류",
+       CASE stage {" ".join(f"WHEN '{stage}' THEN '{label}'" for stage, label in STEPS.items())}
+           WHEN 'classification' THEN '분류' WHEN 'embedding' THEN '임베딩' END AS "단계",
+       event_id AS "원본 이벤트 ID",topic AS "Kafka 토픽",partition_id AS "파티션",kafka_offset AS "오프셋",
+       retries AS "재시도 횟수",reason AS "실패 사유"
+FROM detail
+WHERE ${{step:sqlstring}}=stage OR (${{step:sqlstring}}='compute' AND stage IN ('classification','embedding'))
+ORDER BY event_at DESC LIMIT 150
+""", description="선택한 단계의 Kafka 전달, 실패, 재시도를 최근 150건까지 표시합니다.",
+    empty="—")
+
 filter_variable = {
-    "name": "step", "type": "custom", "label": "단계 상세",
-    "query": "전체 : all," + ",".join(f"{label} : {key}" for key, label in STEPS.items()),
-    "current": {"text": "전체", "value": "all"},
+    "name": "step", "type": "custom", "label": "단계 상세", "hide": 2,
+    "query": ",".join(f"{label} : {key}" for key, label in STEPS.items() if key != "ready"),
+    "current": {"text": STEPS["capture"], "value": "capture"},
 }
 
 
@@ -410,7 +437,8 @@ ORDER BY 1 DESC,2,3,4
 
 if __name__ == "__main__":
     payloads = [
-        dashboard("pipeline", PIPELINES, template=[filter_variable]),
+        dashboard("pipeline", PIPELINES),
+        dashboard("pipeline-stage", [STAGE_DETAIL], template=[filter_variable], title="문의 처리 단계 상세"),
         dashboard("inference", INFERENCE),
         dashboard("deployment", [text(1, "", "## 준비 중", y=0, h=8)], refresh=""),
     ]
