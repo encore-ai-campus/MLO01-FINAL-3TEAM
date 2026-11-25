@@ -44,7 +44,9 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
+    command: ["postgres", "-c", "timezone=UTC", "-c", "log_timezone=UTC"]
     environment:
+      TZ: UTC
       POSTGRES_DB: voc
       POSTGRES_USER: voc
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password

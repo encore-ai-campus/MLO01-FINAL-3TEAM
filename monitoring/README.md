@@ -26,6 +26,39 @@ Grafana의 로컬 접속은 조회 전용이며 PostgreSQL 보고 뷰는 원문�
 전체 모드에서는 Flink를 [18181 포트](http://127.0.0.1:18181), 티켓 업무 화면을 [18182 포트](http://127.0.0.1:18182)에서 연다.
 명명된 Compose 프로젝트에 있는 서비스를 종료할 때는 `./scripts/monitoring-review compose stop`을 쓴다. 데이터는 유지한다.
 
+### Docker 테스트 환경
+
+`voc-monitoring-test` 프로젝트는 별도 DB와 테스트 계정을 사용한다. 샘플 문의는 실제 Kafka와 Flink를 통과한다.
+테스트가 모델 응답과 회신을 흉내 내므로, 팀 모델과 채널 계정 없이 상담 흐름을 확인할 수 있다.
+
+~~~bash
+./scripts/monitoring-test start
+./scripts/monitoring-test seed
+./scripts/monitoring-test password
+~~~
+
+- [티켓 목록](http://127.0.0.1:28082/tickets/)에서 `agent@voc-test.invalid`와 위 명령에 나온 비밀번호로 로그인한다.
+- [파이프라인](http://127.0.0.1:23000/d/voc-pipeline/pipeline) · [AI 추론](http://127.0.0.1:23000/d/voc-inference/inference) · [Flink](http://127.0.0.1:28081/)을 열어 처리 흐름을 확인한다.
+- `seed`를 실행할 때마다 새 문의가 들어온다. 분류·임베딩을 마친 뒤 상담사 화면에서 답변을 보낼 수 있다.
+- `seed`가 출력하는 `batch` 값으로 티켓 제목을 검색한다. 오래된 배치의 지표는 Grafana에서 조회 기간을 넓혀 확인한다.
+
+| 제목 끝 | 상담사 화면에서 할 일 | 재학습 후보 |
+| --- | --- | --- |
+| `KEEP` | 감성과 카테고리를 그대로 두고 답변을 보낸다. | 확인 후 유지 두 개 |
+| `CHANGE` | 카테고리를 결제 문의로 저장한 뒤 답변을 보낸다. | 감성 확인 후 유지, 카테고리 직접 수정 |
+| `RETURN` | 카테고리를 결제 문의로 저장했다가 배송 문의로 되돌리고 답변을 보낸다. | 확인 후 유지 두 개 |
+| `FAIL` | 분류 실패로 보이는 문의의 카테고리를 비워 두고 답변을 보낸다. | 감성 확인 후 유지 한 개 |
+
+~~~bash
+./scripts/monitoring-test candidates
+./scripts/monitoring-test status
+./scripts/monitoring-test stop
+~~~
+
+`candidates`는 후보와 근거를 JSON 줄로 출력한다. `stop`은 테스트 서비스만 멈추고 볼륨은 보존한다.
+테스트 DB는 모든 시각을 `timestamptz`로 저장하며 조회 세션과 로그의 시간대는 UTC다.
+상담사 화면은 운영과 같은 한국 시간으로 표시한다. 실제 채팅 종료 화면은 별도 서비스가 연결될 때 확인할 수 있다.
+
 ### 기존 수집 프로젝트에 연결
 
 기존 프로젝트에 이 브랜치를 적용한 뒤, 기존 Compose 프로젝트 이름과 볼륨 설정으로 실행한다.
