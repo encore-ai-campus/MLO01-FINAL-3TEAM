@@ -20,31 +20,13 @@
     button:disabled { cursor: wait; }
     :focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      color: var(--heading);
-      font-size: 19px;
-      font-weight: 700;
-    }
-    .logo {
-      display: grid;
-      place-items: center;
-      width: 40px;
-      height: 40px;
-      border-radius: 8px;
-      background: var(--primary);
-      color: var(--paper);
-      font-size: 24px;
-    }
     [hidden] { display: none !important; }
     .desk { --desk-line: #e4e4e4; --desk-soft: #f3f3f3; --desk-muted: #626262; --rail: 200px; --bar: 64px; color: var(--heading); }
     .desk a { color: inherit; text-decoration: none; }
     .desk svg { width: 19px; height: 19px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
     .desk-bar { display: flex; align-items: center; gap: 18px; padding: 0 24px; position: fixed; z-index: 2; inset: 0 0 auto; height: var(--bar); background: var(--paper); border-bottom: 1px solid var(--desk-line); }
-    .desk-bar .logo { width: 30px; height: 30px; border-radius: 6px; font-size: 18px; }
-    .desk-bar .brand { margin-right: auto; gap: 10px; font-size: 18px; }
+    .desk-bar .brand { margin-right: auto; min-width: 0; }
+    .desk-bar .brand img { display: block; max-width: 100%; height: auto; }
     .desk-account { display: flex; align-items: center; gap: 8px; border-left: 1px solid var(--desk-line); padding-left: 14px; font-size: 13px; font-weight: 600; }
     .desk-account svg { width: 14px; height: 14px; }
     .desk-logout { min-height: 34px; min-width: 72px; white-space: nowrap; }

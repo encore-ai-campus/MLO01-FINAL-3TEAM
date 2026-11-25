@@ -228,13 +228,13 @@ class TicketTests(unittest.TestCase):
         self.login(company=2)
         self.assertEqual(self.client.get(f"{contacts}/{ident}").status_code, 404)
 
-    def test_followup_preview_shell_and_mutations_use_django(self):
+    def test_followup_page_and_api_mutations_use_django(self):
         page_url = reverse("followup:page")
         self.assertEqual(self.client.get(page_url).status_code, 302)
         self.login()
         self.assertContainsHTML(self.client.get(reverse("tickets:list")), f'href="{page_url}"')
         page = self.client.get(page_url)
-        for value in ('id="app"', 'id="followup-bootstrap"', "followup/desk.css", "followup/preview.css", "followup/ui.js"):
+        for value in ('id="follow-title"', 'id="follow-register"', "followup/page.css", "followup/page.js", "shared/ticats-logo.png"):
             self.assertContainsHTML(page, value)
         ticket = self.tickets[1]
         register = reverse("followup:track-schedule")
@@ -268,6 +268,37 @@ class TicketTests(unittest.TestCase):
         self.assertEqual(csrf_client.delete(tracked["remove_url"], **headers).status_code, 204)
         self.assertEqual(csrf_client.get("/api/follow-up/tracks").json()["items"], [])
         self.assertTrue(any(item["result"] == "고객 확인" for item in csrf_client.get(state).json()["contacts"]))
+
+    def test_followup_html_forms_render_and_persist_state(self):
+        self.login()
+        page = reverse("followup:page")
+        ticket = self.tickets[0]
+        csrf_client = Client(enforce_csrf_checks=True)
+        csrf_client.cookies.update(self.client.cookies)
+        self.assertContainsHTML(csrf_client.get(page), f'value="{ticket}"')
+        headers = {"HTTP_X_CSRFTOKEN": csrf_client.cookies["csrftoken"].value}
+        register = {"action": "register", "ticket_uuid": ticket, "scheduled_at": "2000-01-01T12:00"}
+        self.assertEqual(csrf_client.post(page, register).status_code, 403)
+        invalid = csrf_client.post(page, register, **headers)
+        self.assertEqual(invalid.status_code, 422)
+        self.assertIn("현재보다 늦은 추적 날짜와 시각을 입력해 주세요.", invalid.text)
+        register["scheduled_at"] = timezone.localtime(timezone.now() + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
+        tracked = csrf_client.post(page, register, follow=True, **headers)
+        self.assertContainsHTML(tracked, "추적을 등록했습니다.")
+        self.assertContainsHTML(tracked, f'href="{reverse("tickets:detail", args=[ticket])}"')
+        self.assertContainsHTML(csrf_client.get(page, {"q": "no-matching-ticket"}), "조회 결과 0건")
+        self.assertContainsHTML(csrf_client.get(page, {"tab": "scheduled"}), "추적 후속 연락")
+        contacts = csrf_client.get(reverse("followup:page-data")).json()["contacts"]
+        [contact] = [row for row in contacts if row["ticket_uuid"] == ticket and row["contacted_at"] is None]
+        response = csrf_client.post(page + "?tab=scheduled&selected=" + contact["contact_uuid"], {
+            "action": "complete", "contact_uuid": contact["contact_uuid"], "result": "Django 폼으로 연락 완료",
+            "contacted_at": timezone.now().isoformat(),
+        }, follow=True, **headers)
+        self.assertContainsHTML(response, "연락 완료를 저장했습니다.")
+        self.assertContainsHTML(response, "Django 폼으로 연락 완료")
+        response = csrf_client.post(page, {"action": "untrack", "ticket_uuid": ticket}, follow=True, **headers)
+        self.assertContainsHTML(response, "추적을 해제했습니다.")
+        self.assertContainsHTML(response, "조회 결과 0건")
 
     def test_inbox_links_received_transfers_and_reviews_to_their_own_ticket(self):
         transfer_ticket, review_ticket = self.tickets[:2]

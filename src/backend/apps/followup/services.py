@@ -46,7 +46,9 @@ class FollowUpDesk:
     def track_and_schedule(self, data):
         if not self.track(data["ticket_uuid"]):
             raise DeskError(409, "ALREADY_TRACKED", "이미 추적 중인 티켓입니다.")
-        return self.schedule(data, reminders=True)
+        return self.schedule({
+            **data, "chat_uuid": None, "reason": "추적 후속 연락", "assignee_uuid": self.staff,
+        }, reminders=True)
 
     def schedule(self, data, *, reminders=False):
         if data["chat_uuid"]:

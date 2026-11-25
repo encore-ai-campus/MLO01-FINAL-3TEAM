@@ -1,11 +1,11 @@
 from django.urls import path
 
-from . import views
+from . import page, views
 
 
 app_name = "followup"
 urlpatterns = [
-    path("follow-up/", views.page, name="page"),
+    path("follow-up/", page.index, name="page"),
     path("follow-up/chats/<uuid:chat_uuid>/", views.chat_page, name="chat-page"),
     path("api/follow-up/page-data", views.page_data, name="page-data"),
     path("api/follow-up/track-schedule", views.track_schedule, name="track-schedule"),

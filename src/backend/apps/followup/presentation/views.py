@@ -1,5 +1,4 @@
 from django.http import HttpResponse, JsonResponse
-from django.middleware.csrf import get_token
 from django.shortcuts import render
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
@@ -22,26 +21,6 @@ def with_source(row):
 
 
 @require_GET
-def page(request):
-    with open_desk(session_token(request)) as desk:
-        bootstrap = {
-            "person": {"name": desk.actor["name"], "canTrack": desk.can_read},
-            "sidebar": desk.actor["display_preferences"].get("sidebar"),
-            "settingsPreview": None if desk.actor["role"] == "admin" else "employee",
-            "csrfToken": get_token(request),
-            "dataUrl": reverse("followup:page-data"),
-            "registerUrl": reverse("followup:track-schedule"),
-            "links": {
-                "home": reverse("workspace:home"), "tickets": reverse("tickets:list"),
-                "inbox": reverse("workspace:inbox"), "followup": reverse("followup:page"),
-                "analytics": reverse("workspace:analytics"), "settings": reverse("preferences:index"),
-                "logout": reverse("accounts:logout"),
-            },
-        }
-    return render(request, "followup/page.html", {"bootstrap": bootstrap})
-
-
-@require_GET
 def page_data(request):
     with open_desk(session_token(request)) as desk:
         return response({
@@ -59,10 +38,7 @@ def page_data(request):
 @require_POST
 def track_schedule(request):
     with open_desk(session_token(request)) as desk:
-        data = validate_form(TrackScheduleForm, request)
-        contact = desk.track_and_schedule({
-            **data, "chat_uuid": None, "reason": "추적 후속 연락", "assignee_uuid": desk.staff,
-        })
+        contact = desk.track_and_schedule(validate_form(TrackScheduleForm, request))
         return response(with_source(contact), 201)
 
 

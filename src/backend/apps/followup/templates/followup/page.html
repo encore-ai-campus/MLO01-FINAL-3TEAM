@@ -1,15 +1,144 @@
-{% load static %}<!doctype html>
-<html lang="ko">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>팔로업 | 섭명뭐</title>
-  <link rel="stylesheet" href="{% static 'followup/desk.css' %}">
-  <link rel="stylesheet" href="{% static 'followup/preview.css' %}">
-</head>
-<body>
-  <div id="app"></div>
-  {{ bootstrap|json_script:"followup-bootstrap" }}
-  <script defer src="{% static 'followup/ui.js' %}"></script>
-</body>
-</html>
+{% extends "followup/base.html" %}
+{% load static %}
+{% block title %}팔로업{% endblock %}
+{% block content %}
+<section class="follow-page" aria-labelledby="follow-title">
+  <h1 id="follow-title">팔로업</h1>
+  <p class="follow-muted">추적 중인 문의와 연락 일정을 확인합니다.</p>
+  <div class="follow-top">
+    <nav class="follow-actions" aria-label="팔로업 보기">
+      {% for key, label, url in tabs %}
+        <a class="desk-button{% if tab == key %} desk-button-solid{% endif %}" href="{{ url }}"{% if tab == key %} aria-current="page"{% endif %}>{{ label }}</a>
+      {% endfor %}
+    </nav>
+    {% if tab == "tracked" %}
+      <button class="desk-button desk-button-solid" type="button" data-follow-dialog="follow-register">추적 등록</button>
+    {% endif %}
+  </div>
+  {% if notice %}<p class="follow-notice" role="status">{{ notice }}</p>{% endif %}
+  {% if error and action == "untrack" %}<p class="follow-error" role="alert">{{ error }}</p>{% endif %}
+  {% if error and action == "complete" and not detail %}<p class="follow-error" role="alert">{{ error }}</p>{% endif %}
+  <div class="follow-grid">
+    <div class="follow-list">
+      <form class="follow-filter" method="get" action="{% url 'followup:page' %}">
+        <input type="hidden" name="tab" value="{{ tab }}">
+        <input type="search" name="q" value="{{ query }}" maxlength="100" aria-label="티켓번호 또는 제목 검색" placeholder="티켓번호 또는 제목으로 검색">
+        <button class="desk-button" type="submit">검색</button>
+      </form>
+      <p class="follow-count">조회 결과 {{ rows|length }}건</p>
+      <div class="follow-table-wrap">
+        <table class="follow-table" aria-label="{{ tab_name }} 목록">
+          <thead><tr>
+            <th scope="col">문의</th>
+            <th scope="col">{% if tab == "tracked" %}담당자 / 상태{% elif tab == "scheduled" %}담당자 / 연락 사유{% else %}처리자 / 연락 결과{% endif %}</th>
+            <th scope="col">{% if tab == "tracked" %}추적 일시{% elif tab == "scheduled" %}예정 일시{% else %}연락 일시{% endif %}</th>
+          </tr></thead>
+          <tbody>
+            {% for row in rows %}
+              <tr{% if row.id == detail.id %} data-selected{% endif %}>
+                <th scope="row"><a class="follow-row-button" href="{{ row.url }}"{% if row.id == detail.id %} aria-current="true"{% endif %}><small>{{ row.number }}</small><strong>{{ row.title }}</strong></a></th>
+                {% if tab == "tracked" %}
+                  <td><strong>{{ row.assignee|default:"미지정" }}</strong><span class="follow-badge">{{ row.status }}</span></td>
+                  <td><strong>{{ row.tracked_at|date:"Y-m-d H:i" }}</strong>{% if row.events %}<small>{{ row.events.0.label }}</small>{% endif %}</td>
+                {% elif tab == "scheduled" %}
+                  <td><strong>{{ row.assignee }}</strong><small class="follow-summary">{{ row.reason }}</small></td>
+                  <td><strong>{{ row.scheduled_at|date:"Y-m-d H:i" }}</strong>{% include "followup/schedule_badge.html" %}</td>
+                {% else %}
+                  <td><strong>{{ row.completed_by }}</strong><small class="follow-summary">{{ row.result }}</small></td>
+                  <td><strong>{{ row.contacted_at|date:"Y-m-d H:i" }}</strong></td>
+                {% endif %}
+              </tr>
+            {% empty %}
+              <tr><td class="follow-empty" colspan="3">표시할 {{ tab_name }} 항목이 없습니다.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% if detail %}
+      <aside class="follow-detail" aria-labelledby="follow-detail-title">
+        <h2 id="follow-detail-title">{{ tab_name }} 상세</h2>
+        <div class="follow-detail-body">
+          <p class="follow-muted">{{ detail.number }}</p>
+          <h3>{{ detail.title }}</h3>
+          {% if tab == "tracked" %}
+            <p class="follow-meta">{{ detail.assignee|default:"미지정" }} · {{ detail.status }}</p>
+            <dl><dt>추적 일시</dt><dd>{{ detail.tracked_at|date:"Y-m-d H:i" }}</dd></dl>
+            <h4>최근 변경</h4>
+            {% if detail.events %}
+              <ol class="follow-events">
+                {% for event in detail.events %}
+                  <li><div><strong>{{ event.label }}</strong><time datetime="{{ event.occurred_at|date:'c' }}">{{ event.occurred_at|date:"Y-m-d H:i" }}</time></div><p>{{ event.body }}</p></li>
+                {% endfor %}
+              </ol>
+            {% else %}<p class="follow-muted">추적을 시작한 뒤 변경된 내용이 없습니다.</p>{% endif %}
+            <form class="follow-actions" method="post" action="{{ detail.url }}">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="untrack">
+              <input type="hidden" name="ticket_uuid" value="{{ detail.id }}">
+              <button class="desk-button" type="submit">추적 해제</button>
+            </form>
+          {% else %}
+            {% if tab == "scheduled" %}{% include "followup/schedule_badge.html" with row=detail %}{% endif %}
+            <dl>
+              <dt>{% if tab == "scheduled" %}연락 사유{% else %}예약 사유{% endif %}</dt><dd>{{ detail.reason }}</dd>
+              <dt>예정 일시</dt><dd>{{ detail.scheduled_at|date:"Y-m-d H:i" }}</dd>
+              <dt>예약 담당자</dt><dd>{{ detail.assignee }}</dd>
+              {% if tab == "completed" %}
+                <dt>실제 연락 일시</dt><dd>{{ detail.contacted_at|date:"Y-m-d H:i" }}</dd>
+                <dt>처리자</dt><dd>{{ detail.completed_by }}</dd>
+              {% endif %}
+            </dl>
+            {% if tab == "scheduled" %}
+              <button class="desk-button desk-button-solid" type="button" data-follow-dialog="follow-complete">연락 완료 처리</button>
+            {% else %}<h4>연락 결과</h4><p class="follow-result">{{ detail.result }}</p>{% endif %}
+          {% endif %}
+          <div class="follow-origin"><a class="desk-button" href="{{ detail.source_url }}">{% if detail.ticket_uuid %}원본 티켓 열기{% else %}원본 상담 열기{% endif %} ›</a></div>
+        </div>
+      </aside>
+    {% endif %}
+  </div>
+</section>
+{% if tab == "tracked" %}
+  <dialog class="follow-dialog" id="follow-register" aria-labelledby="follow-register-title"{% if error and action == "register" %} data-reopen{% endif %}>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="register">
+      <h2 id="follow-register-title">추적 등록</h2>
+      <label>티켓
+        <select name="ticket_uuid" required autofocus>
+          <option value="">선택해 주세요</option>
+          {% for ticket in track_options %}
+            <option value="{{ ticket.ticket_uuid }}"{% if submitted.ticket_uuid == ticket.ticket_uuid|stringformat:"s" %} selected{% endif %}>#{{ ticket.ticket_number }} {{ ticket.title }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>추적 날짜 및 시각<input type="datetime-local" name="scheduled_at" required value="{{ submitted.scheduled_at }}"></label>
+      <p class="follow-muted">자동 알림 · {{ reminder_summary }}</p>
+      {% if error and action == "register" %}<p class="follow-error" role="alert">{{ error }}</p>{% endif %}
+      <div class="follow-actions">
+        <button class="desk-button" type="button" data-close-dialog>취소</button>
+        <button class="desk-button desk-button-solid" type="submit"{% if not track_options %} disabled{% endif %}>추적 등록</button>
+      </div>
+    </form>
+  </dialog>
+{% elif tab == "scheduled" and detail %}
+  <dialog class="follow-dialog" id="follow-complete" aria-labelledby="follow-complete-title"{% if error and action == "complete" %} data-reopen{% endif %}>
+    <form method="post" action="{{ detail.url }}">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="complete">
+      <input type="hidden" name="contact_uuid" value="{{ detail.id }}">
+      <h2 id="follow-complete-title">연락 완료 처리</h2>
+      <p class="follow-result">{{ detail.number }} {{ detail.title }}<br>예정 {{ detail.scheduled_at|date:"Y-m-d H:i" }} · {{ detail.assignee }}</p>
+      <label>실제 연락 일시<input type="datetime-local" name="contacted_at" required value="{% if submitted.contacted_at %}{{ submitted.contacted_at }}{% else %}{{ now|date:'Y-m-d\TH:i' }}{% endif %}"></label>
+      <label>연락 결과<textarea name="result" rows="4" maxlength="1000" required>{{ submitted.result }}</textarea></label>
+      {% if error and action == "complete" %}<p class="follow-error" role="alert">{{ error }}</p>{% endif %}
+      <div class="follow-actions">
+        <button class="desk-button" type="button" data-close-dialog>취소</button>
+        <button class="desk-button desk-button-solid" type="submit">완료 처리</button>
+      </div>
+    </form>
+  </dialog>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script defer src="{% static 'followup/page.js' %}"></script>{% endblock %}
