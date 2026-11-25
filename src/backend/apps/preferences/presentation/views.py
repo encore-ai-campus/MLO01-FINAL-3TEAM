@@ -7,13 +7,14 @@ from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
 from apps.accounts.presentation.views import session_token
-from apps.accounts.repository import company_staff, dashboard_allowed, work_permissions
-from apps.accounts.services import DASHBOARD_READ, TEAM_REPLY_EDIT, current_actor, require_settings_admin, require_work_permission
+from apps.accounts.repository import company_staff, work_permissions
+from apps.accounts.services import TEAM_REPLY_EDIT, current_actor, require_settings_admin, require_work_permission
 from config.http import DeskError
 
 from .. import repository
+from ..navigation import SIDEBAR_ITEMS, available_sidebar_items
 from .forms import (
-    HOME_CARD_LABELS, PROVIDERS, SIDEBAR_ITEMS, DisplayForm, HomeCardsForm, MessengerForm, QuickReplyForm, ReplySearchForm,
+    HOME_CARD_LABELS, PROVIDERS, DisplayForm, HomeCardsForm, MessengerForm, QuickReplyForm, ReplySearchForm,
 )
 
 
@@ -34,10 +35,11 @@ def display(request):
         saved = actor["display_preferences"]
         cards = saved.get("cards", defaults)
         sidebar = saved.get("sidebar", [key for key, _ in SIDEBAR_ITEMS])
-        show_analytics = dashboard_allowed(cursor, actor, DASHBOARD_READ)
+        sidebar_items = available_sidebar_items(actor)
+        can_select_analytics = any(key == "analytics" for key, _ in sidebar_items)
         form = DisplayForm(request.POST if saving else None, initial={"cards": cards, "sidebar": sidebar})
         if saving and form.is_valid():
-            if not show_analytics and ("analytics" in sidebar) != ("analytics" in form.cleaned_data["sidebar"]):
+            if not can_select_analytics and ("analytics" in sidebar) != ("analytics" in form.cleaned_data["sidebar"]):
                 selected = [key for key in form.cleaned_data["sidebar"] if key != "analytics"]
                 if "analytics" in sidebar:
                     selected.append("analytics")
@@ -51,7 +53,7 @@ def display(request):
     return render(request, "preferences/display.html", {
         "actor": actor, "active": "settings", "form": form, "cards_json": json.dumps(cards), "card_rows": card_rows,
         "card_order": list(HOME_CARD_LABELS), "use_local_cards": "cards" not in saved and not saving,
-        "sidebar": sidebar_selection, "sidebar_items": SIDEBAR_ITEMS, "show_analytics": show_analytics,
+        "sidebar": sidebar_selection, "sidebar_items": sidebar_items,
         "settings_url": settings_url, "return_url": return_url,
     }, status=400 if saving else 200)
 

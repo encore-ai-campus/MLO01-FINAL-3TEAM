@@ -26,7 +26,7 @@ def page(request):
     with open_desk(session_token(request)) as desk:
         bootstrap = {
             "person": {"name": desk.actor["name"], "canTrack": desk.can_read},
-            "sidebar": desk.actor["display_preferences"].get("sidebar"),
+            "sidebar": desk.actor["visible_sidebar"],
             "settingsPreview": None if desk.actor["role"] == "admin" else "employee",
             "csrfToken": get_token(request),
             "dataUrl": reverse("followup:page-data"),

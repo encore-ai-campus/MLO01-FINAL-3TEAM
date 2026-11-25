@@ -40,13 +40,11 @@
     {{ form.sidebar.errors }}
     <div class="settings-sidebar-options">
       {% for key, label in sidebar_items %}
-        {% if key != "analytics" or show_analytics %}
-          <label class="settings-sidebar-option">
-            <strong>{{ label }}</strong>
-            <input class="desk-switch" type="checkbox" role="switch" name="sidebar" value="{{ key }}"
-                   aria-label="{{ label }} 메뉴 표시" {% if key in sidebar %}checked{% endif %}>
-          </label>
-        {% endif %}
+        <label class="settings-sidebar-option">
+          <strong>{{ label }}</strong>
+          <input class="desk-switch" type="checkbox" role="switch" name="sidebar" value="{{ key }}"
+                 aria-label="{{ label }} 메뉴 표시" {% if key in sidebar %}checked{% endif %}>
+        </label>
       {% endfor %}
     </div>
   </section>

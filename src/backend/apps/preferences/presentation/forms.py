@@ -1,14 +1,12 @@
 from django import forms
 
+from ..navigation import SIDEBAR_ITEMS
+
 HOME_CARD_LABELS = {
     "tickets": ("내게 할당된 티켓", "오늘 배정된 티켓과 처리가 남은 티켓"),
     "requests": ("받은 요청", "나에게 들어온 검토 요청"),
     "performance": ("내 실적", "오늘과 전날의 처리 건수"),
 }
-SIDEBAR_ITEMS = (
-    ("home", "업무 홈"), ("tickets", "티켓 목록"), ("inbox", "받은 요청"),
-    ("followup", "팔로업"), ("analytics", "분석 대시보드"),
-)
 REPLY_SCOPES = (("personal", "내 신속답변"), ("team", "팀 신속답변"))
 PROVIDERS = (("slack", "Slack"), ("discord", "Discord"))
 

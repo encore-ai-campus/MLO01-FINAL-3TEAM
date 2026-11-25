@@ -5,6 +5,7 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from django.db import DatabaseError, connection
 
+from apps.preferences.navigation import visible_sidebar
 from config.http import DeskError
 from . import repository
 
@@ -49,6 +50,7 @@ def current_actor(token, cursor=None):
         else:
             actor = repository.find_staff(cursor, token)
         if actor:
+            actor["visible_sidebar"] = visible_sidebar(actor)
             return actor
     raise DeskError(401, "LOGIN_REQUIRED", "로그인해 주세요.")
 
