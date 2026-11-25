@@ -18,7 +18,7 @@ SRC = Path(__file__).resolve().parents[2]
 
 
 @unittest.skipUnless(os.environ.get("VOC_TICKET_TEST_ADMIN_DSN"), "Set VOC_TICKET_TEST_ADMIN_DSN for PostgreSQL tests")
-class TicketTests(unittest.TestCase):
+class TicketDatabase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         admin_dsn = os.environ["VOC_TICKET_TEST_ADMIN_DSN"]
@@ -283,11 +283,17 @@ class TicketTests(unittest.TestCase):
         self.cur.execute("DELETE FROM collab_request WHERE requester_uuid=%s", (sender,))
         self.cur.execute("DELETE FROM staff_user WHERE staff_user_uuid=%s", (sender,))
 
-    def login(self, company=1):
-        response = self.client.post("/api/auth/login", data={"email": f"agent1@qa{company}.test", "password": "SamplePass1!"}, content_type="application/json")
+    def login(self, company=1, employee=1):
+        response = self.client.post(
+            "/api/auth/login", data={"email": f"agent{employee}@qa{company}.test", "password": "SamplePass1!"},
+            content_type="application/json",
+        )
         self.assertEqual(response.status_code, 200, response.text)
         self.assertTrue(response.cookies["voc_session"]["httponly"])
 
+
+
+class TicketTests(TicketDatabase):
     def test_identity_tenant_permissions_and_logout(self):
         self.assertEqual(self.client.get("/api/tickets").status_code, 401)
         self.login()

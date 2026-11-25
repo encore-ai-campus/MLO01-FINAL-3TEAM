@@ -86,6 +86,7 @@ def send(token, ticket, data):
             raise DeskError(409, "TICKET_COMPLETED", "답변완료한 티켓입니다.")
         if (dispatch and dispatch["busy"]) or (not dispatch and pending_reply(cursor, ticket)):
             raise DeskError(409, "REPLY_IN_PROGRESS", "발송 확인을 기다리고 있는 답변이 있습니다.")
+        services.record_form_display(cursor, actor, ticket, data)
         cursor.execute("""
             INSERT INTO voc.reply_dispatch(reply_uuid,ticket_uuid,staff_user_uuid,body,claim_token,lease_until)
             VALUES (%s,%s,%s,%s,%s,clock_timestamp()+interval '30 seconds')

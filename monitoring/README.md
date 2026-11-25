@@ -147,6 +147,43 @@ Stable 주소나 임베딩 주소가 비어 있으면 해당 작업을 대기 �
 기존 발송기가 따로 있으면 현재 직원과 티켓의 발송 확인 메시지를 `ticket_message`에 저장한다.
 `delivery_status='delivered'`와 `sent_at`을 기록하면 상세에서 답변완료를 연결할 수 있다.
 
+## 재학습 후보
+
+Gmail·Discord는 발송을 확인한 답변완료에서 감성과 카테고리를 따로 저장한다.
+완료 상담사가 본 운영 예측이 최종값과 같으면 출처는 `상담사 확인 후 유지`다.
+예측값으로 되돌렸더라도 완료 상담사가 그 예측을 봤으면 같은 출처를 쓴다.
+상담사가 직접 수정·지정한 값은 모델 예측이 없어도 후보에 들어간다.
+티켓의 후보는 해당 버전의 모델 입력, 완료 답변, 상담사, 근거 시각과 예측 시도를 연결한다.
+후보는 운영 수정률과 별도다. 고정 평가셋 정답은 독립 검수한 `independent_review`만 받는다.
+
+기존 DB는 연결 대상 Compose 프로젝트에서 스키마를 먼저 적용한다. 기존 완료 건은 별도 명령으로 확인한다.
+
+~~~bash
+docker compose run --rm --no-deps --build init-db-topics schema
+docker compose up -d --build classify embed ticket-desk
+company_uuid='조회할 회사 UUID'
+docker compose exec ticket-desk python manage.py training_candidates "$company_uuid" --limit 100
+docker compose exec ticket-desk python manage.py backfill_training_candidates "$company_uuid"
+~~~
+
+`training_candidates`는 회사별 후보의 식별자, 분류값, 근거를 JSON 줄로 출력한다.
+티켓 입력은 `voc.model_text_history`의 회사·원본·전처리 버전·본문 버전으로 찾는다.
+과거 후보 명령은 기본으로 최대 100개의 근거 있는 미저장 항목 수를 보여 준다.
+확인된 답변완료에 당시 예측 표시 또는 직접 지정 근거와 입력 버전을 연결할 수 있을 때 집계한다.
+대상 회사와 건수를 확인한 뒤 명령에 `--apply`를 붙이면 저장한다.
+
+### 채팅 서비스 연결
+
+채팅 서버에서 실제 대화를 종료할 때 `apps.chat.training.record_chat_end(session_token, event)`를 호출한다.
+`ChatClosed`는 안정적인 종료 UUID, 대화 UUID, 회사 UUID, 도메인, 종료 상담사, 종료 시각을 담는다.
+`ChatInput`의 UUID, 버전, SHA-256은 최초 고객 메시지의 확정 입력 스냅샷을 가리킨다.
+채팅 서비스는 해당 스냅샷과 예측 요청의 연결을 보존하고 UUID와 버전으로 다시 조회할 수 있어야 한다.
+`labels`에 항목별 최종값과 저장한 운영 예측, 실제 화면 표시, 마지막 직접 지정 근거를 전달한다.
+채팅 서버가 채팅 종료 권한을 확인하고 저장한 기록을 사용한다.
+어댑터는 직원 세션과 종료 상담사·회사·도메인을 비교한다.
+같은 종료 이벤트는 한 번 저장한다. 같은 종료 UUID에 내용이 달라지면 충돌로 처리한다.
+현재 브랜치는 서버 어댑터를 제공한다. 실제 채팅 화면과 팀 서비스 연결은 연결 작업이 필요하다.
+
 ## 저장·복구와 검증
 
 수집 커서는 SQLite가 확정한 마지막 위치다. 대기열에서 복구할 수 있는 위치이며 Kafka 저장 확인은 별도다.
@@ -167,5 +204,5 @@ Django 티켓 테스트는 임시 DB에서 회신 미연결·미확인·재시�
 `VOC_TICKET_TEST_ADMIN_DSN`을 임시 DB 생성이 가능한 테스트 인스턴스로 지정하고 `src/backend`에서 실행한다.
 
 ~~~bash
-python manage.py test tests.test_tickets --verbosity 2
+python manage.py test tests.test_tickets tests.test_training_candidates --verbosity 2
 ~~~

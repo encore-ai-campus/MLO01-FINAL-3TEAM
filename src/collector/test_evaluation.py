@@ -4,12 +4,34 @@ import os
 import unittest
 from contextlib import nullcontext
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import Thread
 from unittest.mock import patch
 from uuid import uuid4
 
 from . import evaluation
 from .pipeline import db
+
+
+class EvaluationSnapshotTests(unittest.TestCase):
+    def test_only_independent_review_can_supply_fixed_evaluation_labels(self):
+        label = {"id": "label", "value": "중립", "reviewer": "reviewer", "evidence": "reviewed"}
+        data = {"dataset_version": "fixture", "samples": [{
+            "id": "sample", "title": "검증", "text": "검증 문의", "domain_id": str(uuid4()),
+            "labels": {"sentiment": label},
+        }]}
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / "snapshot.json"
+            for origin in ("상담사 확인 후 유지", "상담사 직접 수정·지정", "independent_review"):
+                with self.subTest(origin=origin):
+                    label["origin"] = origin
+                    path.write_text(json.dumps(data), encoding="utf-8")
+                    if origin == "independent_review":
+                        self.assertEqual(len(evaluation.checked_snapshot(path)[2]), 1)
+                    else:
+                        with self.assertRaises(evaluation.EvaluationError):
+                            evaluation.checked_snapshot(path)
 
 
 @unittest.skipUnless(os.getenv("VOC_RUN_MONITORING_TESTS") == "1", "requires initialized test PostgreSQL")

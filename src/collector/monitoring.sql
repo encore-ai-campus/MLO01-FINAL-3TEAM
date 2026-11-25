@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS voc.inference_attempt (
     rollout text CHECK (rollout IN ('stable','canary')),
     http_status integer, response_ms double precision, model_ms double precision, error text
 );
+ALTER TABLE voc.inference_attempt ADD COLUMN IF NOT EXISTS preprocess_version integer;
 ALTER TABLE public.ticket ADD COLUMN IF NOT EXISTS embedding_attempt_id uuid REFERENCES voc.inference_attempt;
 CREATE INDEX IF NOT EXISTS inference_attempt_by_time ON voc.inference_attempt(api,traffic,started_at);
 
@@ -112,7 +113,121 @@ CREATE TABLE IF NOT EXISTS voc.ticket_answer_completion (
     delivery_uuid uuid NOT NULL REFERENCES public.ticket_message
 );
 
+-- The current classifier input uses the same Silver and preprocessing versions as project_ticket.
+CREATE OR REPLACE VIEW voc.ticket_training_input AS
+SELECT t.ticket_uuid,t.company_uuid,t.domain_uuid,h.event_id,h.body_version,h.preprocess_version,h.available_at
+FROM public.ticket t
+JOIN voc.silver_messages s ON s.event_id=t.source_event_id AND s.schema_version=4
+JOIN voc.model_text_history h ON h.company_uuid=t.company_uuid AND h.event_id=s.event_id
+    AND h.body_version=s.body_version AND h.silver_schema_version=s.schema_version
+WHERE s.message_kind='customer_inquiry' AND h.preprocess_version=1;
+
+CREATE TABLE IF NOT EXISTS voc.ticket_classification_edit (
+    ticket_uuid uuid NOT NULL REFERENCES public.ticket,
+    kind text NOT NULL CHECK (kind IN ('sentiment','category')),
+    value text, staff_user_uuid uuid NOT NULL REFERENCES public.staff_user,
+    body_version integer NOT NULL, preprocess_version integer NOT NULL,
+    edited_at timestamptz NOT NULL,
+    PRIMARY KEY(ticket_uuid,kind)
+);
+
+CREATE TABLE IF NOT EXISTS voc.chat_training_completion (
+    completion_uuid uuid PRIMARY KEY,
+    conversation_uuid uuid NOT NULL,
+    company_uuid uuid NOT NULL REFERENCES public.company,
+    domain_uuid uuid NOT NULL REFERENCES public.domain,
+    completed_by uuid NOT NULL,
+    completed_at timestamptz NOT NULL,
+    input_uuid uuid NOT NULL,
+    input_version integer NOT NULL CHECK(input_version>0),
+    input_sha256 text NOT NULL CHECK (input_sha256 ~ '^[0-9a-f]{64}$'),
+    event_sha256 text NOT NULL CHECK (event_sha256 ~ '^[0-9a-f]{64}$'),
+    FOREIGN KEY(company_uuid,completed_by) REFERENCES public.staff_user(company_uuid,staff_user_uuid)
+);
+
+CREATE TABLE IF NOT EXISTS voc.retraining_candidate (
+    ticket_uuid uuid REFERENCES voc.ticket_answer_completion,
+    chat_completion_uuid uuid REFERENCES voc.chat_training_completion,
+    channel text NOT NULL,
+    company_uuid uuid NOT NULL REFERENCES public.company,
+    domain_uuid uuid NOT NULL REFERENCES public.domain,
+    input_uuid uuid NOT NULL,
+    input_version integer NOT NULL CHECK(input_version>0),
+    preprocess_version integer,
+    kind text NOT NULL CHECK(kind IN ('sentiment','category')),
+    value text NOT NULL CHECK(btrim(value)<>''),
+    origin text NOT NULL CHECK(origin IN ('상담사 확인 후 유지','상담사 직접 수정·지정')),
+    completed_by uuid NOT NULL,
+    completed_at timestamptz NOT NULL,
+    label_staff_uuid uuid NOT NULL,
+    evidence_at timestamptz NOT NULL CHECK(evidence_at<=completed_at),
+    ticket_attempt_uuid uuid REFERENCES voc.inference_attempt,
+    chat_attempt_uuid uuid,
+    predicted_value text,
+    model_name text,
+    model_version text,
+    rollout text CHECK (rollout IN ('stable','canary')),
+    UNIQUE NULLS NOT DISTINCT (ticket_uuid,chat_completion_uuid,kind),
+    FOREIGN KEY(company_uuid,completed_by) REFERENCES public.staff_user(company_uuid,staff_user_uuid),
+    FOREIGN KEY(company_uuid,label_staff_uuid) REFERENCES public.staff_user(company_uuid,staff_user_uuid),
+    FOREIGN KEY(company_uuid,input_uuid,preprocess_version,input_version) REFERENCES voc.model_text_history,
+    CHECK ((channel IN ('gmail','discord') AND ticket_uuid IS NOT NULL AND chat_completion_uuid IS NULL
+            AND preprocess_version IS NOT NULL AND chat_attempt_uuid IS NULL)
+           OR (channel='chat' AND chat_completion_uuid IS NOT NULL AND ticket_uuid IS NULL
+               AND preprocess_version IS NULL AND ticket_attempt_uuid IS NULL)),
+    CHECK (origin<>'상담사 확인 후 유지'
+           OR (coalesce(ticket_attempt_uuid,chat_attempt_uuid) IS NOT NULL
+               AND predicted_value IS NOT NULL AND predicted_value=value AND label_staff_uuid=completed_by))
+);
+CREATE INDEX IF NOT EXISTS retraining_candidate_company_completion
+    ON voc.retraining_candidate(company_uuid,completed_at DESC,ticket_uuid,chat_completion_uuid,kind);
+
+CREATE OR REPLACE FUNCTION voc.eligible_ticket_retraining_candidates(completion voc.ticket_answer_completion)
+RETURNS SETOF voc.retraining_candidate LANGUAGE sql STABLE AS $$
+    SELECT (completion).ticket_uuid,NULL::uuid,ch.type,i.company_uuid,i.domain_uuid,i.event_id,i.body_version,i.preprocess_version,
+           f.kind,f.value,
+           CASE WHEN d.displayed_at IS NOT NULL THEN '상담사 확인 후 유지' ELSE '상담사 직접 수정·지정' END,
+           (completion).completed_by,(completion).completed_at,coalesce(d.staff_user_uuid,e.staff_user_uuid),
+           coalesce(d.displayed_at,e.edited_at),p.attempt_id,NULL::uuid,p.value,p.model_name,p.model_version,p.rollout
+    FROM voc.ticket_training_input i
+    JOIN public.ticket t ON t.ticket_uuid=i.ticket_uuid
+    JOIN public.channel ch ON ch.channel_uuid=t.channel_uuid AND ch.type IN ('gmail','discord')
+    JOIN public.staff_user finisher ON finisher.staff_user_uuid=(completion).completed_by
+        AND finisher.company_uuid=i.company_uuid
+    JOIN public.ticket_message m ON m.ticket_message_uuid=(completion).delivery_uuid AND m.ticket_uuid=t.ticket_uuid
+        AND m.staff_user_uuid=finisher.staff_user_uuid AND m.sender_type='staff' AND m.message_type='reply'
+        AND m.delivery_status='delivered' AND m.created_at<=(completion).completed_at
+    CROSS JOIN (VALUES ('sentiment',(completion).sentiment),('category',(completion).category_uuid::text)) f(kind,value)
+    LEFT JOIN LATERAL (
+        SELECT p.attempt_id,p.value,a.model_name,a.model_version,a.rollout,a.ended_at
+        FROM voc.ticket_prediction p JOIN voc.inference_attempt a USING(attempt_id)
+        WHERE p.ticket_uuid=i.ticket_uuid AND p.kind=f.kind AND a.ticket_uuid=i.ticket_uuid
+          AND a.api='classification' AND a.traffic='operational' AND a.ended_at<=(completion).completed_at
+          AND a.body_version=i.body_version
+          AND (a.preprocess_version=i.preprocess_version OR (a.preprocess_version IS NULL AND NOT EXISTS (
+              SELECT FROM voc.model_text_history h
+              WHERE h.company_uuid=i.company_uuid AND h.event_id=i.event_id AND h.body_version=i.body_version
+                AND h.preprocess_version<>i.preprocess_version
+          )))
+          AND nullif(btrim(a.model_name),'') IS NOT NULL AND nullif(btrim(a.model_version),'') IS NOT NULL
+          AND a.rollout IS NOT NULL
+    ) p ON true
+    LEFT JOIN voc.prediction_display d ON d.ticket_uuid=i.ticket_uuid AND d.kind=f.kind
+        AND d.staff_user_uuid=(completion).completed_by AND d.attempt_id=p.attempt_id
+        AND d.displayed_value=p.value AND p.value=f.value
+        AND d.displayed_at BETWEEN p.ended_at AND (completion).completed_at
+    LEFT JOIN voc.ticket_classification_edit e ON e.ticket_uuid=i.ticket_uuid AND e.kind=f.kind
+        AND e.value=f.value AND e.body_version=i.body_version AND e.preprocess_version=i.preprocess_version
+        AND e.edited_at<=(completion).completed_at
+        AND EXISTS (SELECT FROM public.staff_user st
+                    WHERE st.staff_user_uuid=e.staff_user_uuid AND st.company_uuid=i.company_uuid)
+    WHERE i.ticket_uuid=(completion).ticket_uuid AND i.available_at<=(completion).completed_at
+      AND nullif(btrim(f.value),'') IS NOT NULL
+      AND (d.displayed_at IS NOT NULL OR e.edited_at IS NOT NULL);
+$$;
+
 CREATE OR REPLACE FUNCTION voc.observe_answer_completion() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE completion voc.ticket_answer_completion%ROWTYPE;
 BEGIN
     INSERT INTO voc.ticket_answer_completion(ticket_uuid,category_uuid,sentiment,completed_by,delivery_uuid)
     SELECT NEW.ticket_uuid,NEW.category_uuid,NEW.sentiment,m.staff_user_uuid,m.ticket_message_uuid
@@ -120,6 +235,14 @@ BEGIN
     WHERE m.ticket_message_uuid=NEW.reply_delivery_uuid AND m.ticket_uuid=NEW.ticket_uuid
       AND st.company_uuid=NEW.company_uuid AND m.sender_type='staff' AND m.message_type='reply'
       AND m.delivery_status='delivered'
+    ON CONFLICT DO NOTHING
+    RETURNING * INTO completion;
+    IF NOT FOUND THEN
+        RETURN NEW;
+    END IF;
+
+    INSERT INTO voc.retraining_candidate
+    SELECT * FROM voc.eligible_ticket_retraining_candidates(completion)
     ON CONFLICT DO NOTHING;
     RETURN NEW;
 END $$;

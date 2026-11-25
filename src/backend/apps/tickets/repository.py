@@ -165,22 +165,51 @@ def confirmed_replies(cursor, actor, ticket):
 
 def lock_visible(cursor, actor, ticket):
     cursor.execute("""
-        SELECT t.domain_uuid,t.status,t.reply_delivery_uuid FROM public.ticket t
+        SELECT t.domain_uuid,t.status,t.reply_delivery_uuid,t.sentiment,t.category_uuid FROM public.ticket t
         JOIN visible_ticket v USING(ticket_uuid)
         WHERE t.ticket_uuid=%s AND t.company_uuid=%s FOR UPDATE OF t
     """, (ticket, actor["company_uuid"]))
     return next(iter(fetch_rows(cursor)), None)
 
 
-def set_classification(cursor, ticket, domain, sentiment, category):
-    if category:
-        cursor.execute("SELECT 1 FROM category WHERE domain_uuid=%s AND category_uuid=%s", (domain, category))
-        if cursor.fetchone() is None:
-            return False
+def training_input_version(cursor, ticket):
+    cursor.execute(
+        "SELECT body_version,preprocess_version FROM voc.ticket_training_input WHERE ticket_uuid=%s",
+        (ticket,),
+    )
+    return cursor.fetchone()
+
+
+def category_exists(cursor, domain, category):
+    cursor.execute("SELECT 1 FROM category WHERE domain_uuid=%s AND category_uuid=%s", (domain, category))
+    return cursor.fetchone() is not None
+
+
+def set_classification(cursor, actor, ticket, sentiment, category, *, signed, version):
     cursor.execute("""
-        UPDATE ticket SET sentiment=%s,category_uuid=%s,updated_at=clock_timestamp() WHERE ticket_uuid=%s
-    """, (sentiment, category, ticket))
-    return True
+        WITH input AS (
+            SELECT * FROM voc.ticket_training_input WHERE ticket_uuid=%s
+        ), allowed AS (
+            SELECT 1 WHERE NOT %s
+                OR (SELECT ARRAY[body_version,preprocess_version] FROM input) IS NOT DISTINCT FROM %s::int[]
+        ), edits AS (
+            INSERT INTO voc.ticket_classification_edit(
+                ticket_uuid,kind,value,staff_user_uuid,body_version,preprocess_version,edited_at
+            )
+            SELECT i.ticket_uuid,f.kind,f.value,%s,i.body_version,i.preprocess_version,clock_timestamp()
+            FROM input i JOIN public.ticket t USING(ticket_uuid)
+            CROSS JOIN allowed
+            CROSS JOIN (VALUES ('sentiment',%s::text),('category',%s::text)) f(kind,value)
+            WHERE f.value IS DISTINCT FROM
+                  CASE f.kind WHEN 'sentiment' THEN t.sentiment ELSE t.category_uuid::text END
+            ON CONFLICT(ticket_uuid,kind) DO UPDATE SET
+                value=excluded.value,staff_user_uuid=excluded.staff_user_uuid,edited_at=excluded.edited_at,
+                body_version=excluded.body_version,preprocess_version=excluded.preprocess_version
+        )
+        UPDATE ticket SET sentiment=%s,category_uuid=%s,updated_at=clock_timestamp()
+        WHERE ticket_uuid=%s AND EXISTS (SELECT FROM allowed)
+    """, (ticket, signed, version, actor["staff_user_uuid"], sentiment, category, sentiment, category, ticket))
+    return cursor.rowcount == 1
 
 
 def complete_delivered(cursor, actor, ticket, delivery):

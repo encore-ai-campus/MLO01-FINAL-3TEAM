@@ -130,11 +130,11 @@ def redact(text, *identifiers):
     return text
 
 
-def start_call(cn, attempt, api, traffic, route, ticket=None, body_version=None):
+def start_call(cn, attempt, api, traffic, route, ticket=None, body_version=None, preprocess_version=None):
     return cn.execute("""
-        INSERT INTO voc.inference_attempt(attempt_id,ticket_uuid,body_version,api,traffic,preferred_route)
-        VALUES (%s,%s,%s,%s,%s,%s) RETURNING started_at
-    """, (attempt, ticket, body_version, api, traffic, route)).fetchone()["started_at"]
+        INSERT INTO voc.inference_attempt(attempt_id,ticket_uuid,body_version,preprocess_version,api,traffic,preferred_route)
+        VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING started_at
+    """, (attempt, ticket, body_version, preprocess_version, api, traffic, route)).fetchone()["started_at"]
 
 
 def finish_call(cn, attempt, end, result):
@@ -198,7 +198,7 @@ def claim(cn, api):
                   (%(event_id)s,%(preprocess_version)s,%(body_version)s,%(analysis_kind)s)
         """, work)
         started = start_call(cn, work["claim_token"], api, "operational", work["route"],
-                             work["ticket_uuid"], work["body_version"])
+                             work["ticket_uuid"], work["body_version"], work["preprocess_version"])
         observe(cn, work["event_id"], "compute", started)
         return work
 
