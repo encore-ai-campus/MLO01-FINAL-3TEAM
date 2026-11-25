@@ -1,7 +1,8 @@
 .ticket-detail {
   position: relative;
   min-height: max(360px, calc(100dvh - var(--bar) - 66px));
-  margin-top: 3px;
+  max-width: 1320px;
+  margin: 3px auto 0;
 }
 
 .ticket-detail .ticket-detail-back {
@@ -14,25 +15,54 @@
 }
 
 .ticket-detail h1 {
-  margin-top: 15px;
+  margin: 10px 0 8px;
+  font-size: clamp(21px, 3vw, 29px);
   color: var(--primary);
   line-height: 1.2;
 }
 
-
-.ticket-detail { max-width: 1000px; margin-inline: auto; }
-.ticket-detail-summary, .ticket-conversation {
-  padding: 20px; margin-top: 18px; border: 1px solid var(--desk-line);
+.detail-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.detail-meta > span { padding: 5px 8px; border-radius: 6px; background: var(--desk-soft); font-size: 12px; font-weight: 600; }
+.detail-meta > p, .detail-customer-id { color: var(--desk-muted); font-size: 13px; }
+.detail-meta [data-ticket-status="답변완료"], .detail-meta [data-emotion="긍정"] { background: #e9f3eb; color: #2e6240; }
+.detail-meta :is([data-emotion="부정"], [data-emotion="매우 부정"], [data-emotion="분석 실패"]) { background: #fbe9e6; color: #a6312a; }
+.detail-meta [data-emotion="중립"] { background: #fbefd9; color: #805819; }
+.detail-customer-id { margin-top: 5px; }
+.ticket-conversation {
+  padding: 14px; margin-top: 14px; border: 1px solid var(--desk-line);
   border-radius: 12px; background: var(--paper); overflow-wrap: anywhere;
 }
-.ticket-detail-summary h2, .ticket-conversation h2 { font-size: 18px; }
-.ticket-detail-number { margin-bottom: 6px; color: var(--desk-muted); font-size: 13px; }
-.ticket-detail-summary dl { display: flex; flex-wrap: wrap; gap: 14px 28px; margin-bottom: 0; }
-.ticket-detail-summary dt, .ticket-conversation header { color: var(--desk-muted); font-size: 12px; }
-.ticket-detail-summary dd { margin: 4px 0 0; font-size: 14px; }
-.ticket-conversation ol { padding: 0; list-style: none; margin-bottom: 0; }
-.ticket-conversation li { max-width: 85%; margin: 12px 0; padding: 12px 16px; border-radius: 10px; background: var(--desk-soft); }
-.ticket-conversation li[data-sender="staff"] { margin-left: auto; background: #e7f3e8; }
+.ticket-conversation h2 { font-size: 17px; }
+.detail-column { min-width: 0; }
+.detail-messages { display: flex; flex-direction: column; gap: 10px; padding: 12px 0 0; list-style: none; margin: 0; }
+.detail-message { display: grid; justify-items: start; align-self: flex-start; max-width: min(82%, 700px); }
+.detail-message[data-sender="staff"] { justify-items: end; align-self: flex-end; }
+.detail-bubble { width: fit-content; max-width: 100%; padding: 8px 11px; border-radius: 8px; background: var(--desk-soft); }
+.detail-message[data-sender="staff"] .detail-bubble { background: #e7f3e8; }
+.detail-message[data-message-type="memo"] .detail-bubble { background: #fff1be; }
 .ticket-conversation header { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+.ticket-conversation header { color: var(--desk-muted); font-size: 12px; }
 .ticket-conversation header a { text-decoration: underline; }
 .ticket-conversation p { margin-top: 6px; white-space: pre-wrap; }
+.ticket-actions form, .ticket-actions label { display: grid; gap: 8px; }
+.ticket-actions form { margin-top: 10px; }
+.ticket-actions details { margin-top: 12px; }
+.ticket-actions textarea, .ticket-actions select { width: 100%; border: 1px solid var(--desk-line); border-radius: 8px; padding: 7px 9px; }
+.ticket-actions textarea { resize: vertical; }
+.ticket-actions button { justify-self: start; }
+.detail-modes { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; border: 0; }
+.detail-modes legend { margin-bottom: 5px; }
+.detail-modes label { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; background: var(--desk-soft); }
+.detail-commit { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.detail-commit > span { color: var(--desk-muted); font-size: 13px; }
+.detail-composer:not(:has(input[value="memo"]:checked)) [data-label="memo"],
+.detail-composer:has(input[value="memo"]:checked) [data-label="reply"] { display: none; }
+.ticket-detail-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(245px, 31%); gap: 14px; }
+.ticket-detail-body:has(.ticket-side-panel:not([open])) { grid-template-columns: minmax(0, 1fr) auto; }
+.ticket-side-panel { margin-top: 14px; }
+.ticket-side-panel > summary { cursor: pointer; font-weight: 600; padding: 8px 10px; }
+.ticket-side-panel ul { padding-inline-start: 17px; }
+.ticket-side-panel li + li { margin-top: 6px; }
+@media (max-width: 780px) {
+  .ticket-detail-body, .ticket-detail-body:has(.ticket-side-panel:not([open])) { grid-template-columns: minmax(0, 1fr); }
+}

@@ -66,7 +66,9 @@
             </div>
             <p>{{ selected.memo }}</p>
           </section>
-          {% if selected.attachment_names %}<section class="inbox-reference"><h3>참고 자료</h3><p class="inbox-file">{{ selected.attachment_names|join:", " }}</p></section>{% endif %}
+          {% if selected.attachment_names %}<section class="inbox-reference"><h3>참고 자료</h3><p class="inbox-file">{{ selected.attachment_names|join:", " }}</p>
+            {% if selected.has_download %}<a href="{% url 'tickets:request-attachment' selected.id %}">참고 자료 내려받기</a>{% endif %}
+          </section>{% endif %}
           {% if selected.sent_reply %}<section class="inbox-sent-reply"><h3>보낸 답변</h3><p>{{ selected.sent_reply }}</p></section>{% endif %}
           {% if selected.kind == 'reply' %}<details class="inbox-reference"><summary>원래 검토 요청 보기</summary><p>{{ selected.original_memo }}</p></details>{% endif %}
         </div>

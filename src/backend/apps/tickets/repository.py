@@ -36,19 +36,27 @@ def filter_options(cursor, company_uuid):
     return {"teams": teams, "assignees": assignees, "categories": fetch_rows(cursor)}
 
 
-def detail(cursor, company_uuid, ticket_uuid):
-    cursor.execute("SELECT " + TICKET_COLUMNS + ", t.customer_uuid " + TICKET_FROM
+def detail(cursor, company_uuid, ticket_uuid, include_memos=False):
+    cursor.execute("SELECT " + TICKET_COLUMNS + ", t.customer_uuid,t.assignee_uuid,t.csv_import_kind " + TICKET_FROM
                    + " WHERE t.ticket_uuid=%s AND t.company_uuid=%s", (str(ticket_uuid), company_uuid))
     ticket = next(iter(fetch_rows(cursor)), None)
     if ticket is None:
         return None
+    customer_uuid = ticket.pop("customer_uuid")
     cursor.execute("""
-        SELECT t.ticket_uuid,t.ticket_number,m.sender_type,m.message_type,m.body,m.created_at
+        SELECT t.ticket_uuid,t.ticket_number,m.sender_type,m.message_type,m.body,m.created_at,m.delivery_status,
+               CASE WHEN m.sender_type='customer' THEN c.name ELSE s.name END AS author_name
         FROM visible_ticket t JOIN ticket_message m ON m.ticket_uuid=t.ticket_uuid
-        WHERE t.company_uuid=%s AND t.customer_uuid=%s
+        JOIN customer c ON c.customer_uuid=t.customer_uuid AND c.company_uuid=t.company_uuid
+        LEFT JOIN staff_user s ON s.staff_user_uuid=m.staff_user_uuid AND s.company_uuid=t.company_uuid
+        WHERE t.company_uuid=%s AND t.customer_uuid=%s AND (%s OR m.message_type<>'memo')
         ORDER BY m.created_at,t.ticket_number,m.ticket_message_uuid
-        """, (company_uuid, ticket.pop("customer_uuid")))
+        """, (company_uuid, customer_uuid, include_memos))
     messages = fetch_rows(cursor)
+    cursor.execute("SELECT " + TICKET_COLUMNS + TICKET_FROM + """
+        WHERE t.company_uuid=%s AND t.customer_uuid=%s ORDER BY t.created_at,t.ticket_number
+    """, (company_uuid, customer_uuid))
+    related = fetch_rows(cursor)
     cursor.execute("""
         SELECT peer.ticket_uuid,peer.ticket_number,peer.title,ch.type AS channel
         FROM ticket_duplicate_candidate link
@@ -59,7 +67,8 @@ def detail(cursor, company_uuid, ticket_uuid):
             AND peer.company_uuid=%s AND ch.type<>%s
         ORDER BY peer.created_at,peer.ticket_number
         """, (str(ticket_uuid), str(ticket_uuid), str(ticket_uuid), company_uuid, ticket["channel"]))
-    return {"ticket": ticket, "messages": messages, "duplicate_candidates": fetch_rows(cursor)}
+    return {"ticket": ticket, "messages": messages, "customer_tickets": related,
+            "duplicate_candidates": fetch_rows(cursor)}
 
 
 def _id_filter(conditions, params, column, entries):

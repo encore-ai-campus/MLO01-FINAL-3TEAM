@@ -6,7 +6,7 @@ from apps.accounts.services import TICKET_HANDLE, current_actor, require_work_pe
 from config.database import read_snapshot
 from config.http import DeskError
 
-from . import repository
+from . import action_repository, repository
 
 
 def add_memo(token, ticket_uuid, body):
@@ -39,10 +39,15 @@ class TicketDesk:
     def filter_options(self):
         return repository.filter_options(self._cursor, self.actor["company_uuid"])
 
-    def detail(self, ticket_uuid):
-        result = repository.detail(self._cursor, self.actor["company_uuid"], ticket_uuid)
+    def detail(self, ticket_uuid, with_controls=False):
+        can_conduct = action_repository.can_conduct(self._cursor, self.actor)
+        result = repository.detail(self._cursor, self.actor["company_uuid"], ticket_uuid, can_conduct)
         if result is None:
             raise DeskError(404, "TICKET_NOT_FOUND", "티켓을 찾을 수 없습니다.")
+        result["can_conduct"] = can_conduct
+        if with_controls and can_conduct:
+            result.update(action_repository.options(self._cursor, self.actor, result["ticket"]))
+            result["quick_replies"] = action_repository.quick_replies(self._cursor, self.actor, ticket_uuid)
         return result
 
 
