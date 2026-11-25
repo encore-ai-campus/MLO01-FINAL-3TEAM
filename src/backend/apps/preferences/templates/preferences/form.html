@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="desk-heading"><h1>{{ title }}</h1><a class="desk-button" href="{% url back_url %}">돌아가기</a></div>
+<section class="desk-card">
+  {% if subject %}<h2>{{ subject }}</h2>{% endif %}
+  {% if home_link %}<p><a href="{% url 'workspace:home' %}#02-02">업무 홈 카드 표시 및 순서 변경</a></p>{% endif %}
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    {% if batch_sizes %}
+      <datalist id="assignment-batch-sizes">{% for size in batch_sizes %}<option value="{{ size }}">{% endfor %}</datalist>
+    {% endif %}
+    <button class="desk-button desk-button-solid" type="submit">저장</button>
+  </form>
+  {% if can_delete %}
+    <form method="post" class="desk-actions">
+      {% csrf_token %}
+      <button class="desk-button" type="submit" name="action" value="delete">삭제</button>
+    </form>
+  {% endif %}
+</section>
+{% endblock %}

@@ -240,18 +240,28 @@ def counselor_context(cursor, filters, history, first_answers, review_counts, se
 
 
 def analytics_context(cursor, actor, params):
-    scopes = {"org": "조직 전체"}
     company = actor["company_uuid"]
-    scopes.update((team["id"], team["name"]) for team in repository.teams(cursor, company))
-    scope = params.get("scope", "org")
+    role = actor.get("role")
+    admin = role == "admin"
+    team_uuid = actor.get("team_uuid")
+    scopes = {"org": "조직 전체"} if admin else {}
+    scopes.update((team["id"], team["name"]) for team in repository.teams(cursor, company)
+                  if admin or team["id"] == team_uuid)
+    if not scopes:
+        raise DeskError(403, "ANALYTICS_TEAM_REQUIRED", "조회할 수 있는 소속 팀이 없습니다.")
+    scope = params.get("scope", next(iter(scopes)))
     period = params.get("period", "current")
     tab = params.get("tab", "summary")
     if scope not in scopes or period not in dict(PERIODS) or tab not in {"summary", "agents"}:
         raise DeskError(400, "INVALID_ANALYTICS_FILTER", "조회 조건을 확인해 주세요.")
+    can_view_agents = role in {"admin", "team_lead"}
+    if tab == "agents" and not can_view_agents:
+        raise DeskError(403, "ANALYTICS_AGENTS_FORBIDDEN", "상담사별 실적을 조회할 권한이 없습니다.")
     bounds = period_bounds(period, timezone.now())
     context = {
         "tab": tab, "period": period, "periods": PERIODS, "scope": scope, "scopes": scopes.items(),
         "scope_name": scopes[scope], "bounds": bounds,
+        "can_view_agents": can_view_agents,
     }
     filters = {**bounds, "company": company, "team": None if scope == "org" else scope}
     sources = repository.available_sources(cursor)

@@ -45,9 +45,14 @@
     <div class="desk-actions">
       <button type="button" class="desk-button" id="desk-reset">기본 배치로 되돌리기</button>
       <a href="#02-01" class="desk-button">취소</a>
-      <button type="button" class="desk-button desk-button-solid" id="desk-save">저장</button>
+      <form id="desk-card-form" method="post" action="{% url 'preferences:home-cards' %}">
+        {% csrf_token %}
+        <button type="submit" class="desk-button desk-button-solid" id="desk-save">저장</button>
+      </form>
     </div>
+    <p id="desk-card-error" role="alert" hidden>화면 설정을 저장하지 못했습니다. 다시 시도해 주세요.</p>
   </section>
 </section>
+{{ actor.display_preferences.cards|json_script:"desk-saved-cards" }}
 {% endblock %}
 {% block scripts %}<script defer src="{% static 'workspace/home.js' %}"></script>{% endblock %}

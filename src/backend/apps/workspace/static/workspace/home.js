@@ -11,13 +11,19 @@ const defaultCards = () => Object.keys(cardDefinitions).map(id => ({ id, visible
 const cardElements = new Map([...deskCards.children].map(card => [card.dataset.card, card]));
 const storageKey = 'voc.work-home.' + deskHome.dataset.owner + '.v1';
 
+function validCards(cards) {
+  const ids = Object.keys(cardDefinitions);
+  return Array.isArray(cards) && cards.length === ids.length &&
+    new Set(cards.map(card => card?.id)).size === ids.length &&
+    cards.every(card => ids.includes(card?.id) && typeof card.visible === 'boolean');
+}
+
 function loadDeskCards() {
+  const serverCards = JSON.parse(document.querySelector('#desk-saved-cards').textContent);
+  if (validCards(serverCards)) return serverCards;
   try {
     const cards = JSON.parse(localStorage.getItem(storageKey));
-    const ids = Object.keys(cardDefinitions);
-    if (Array.isArray(cards) && cards.length === ids.length &&
-        new Set(cards.map(card => card?.id)).size === ids.length &&
-        cards.every(card => ids.includes(card?.id) && typeof card.visible === 'boolean')) return cards;
+    if (validCards(cards)) return cards;
   } catch {
     // A local file preview can run with browser storage disabled.
   }
@@ -103,14 +109,25 @@ document.querySelector('#desk-reset').addEventListener('click', () => {
   editingCards = defaultCards();
   renderDeskSettings();
 });
-document.querySelector('#desk-save').addEventListener('click', () => {
-  savedCards = editingCards.map(card => ({ ...card }));
+document.querySelector('#desk-card-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const saveButton = document.querySelector('#desk-save');
+  const errorMessage = document.querySelector('#desk-card-error');
+  const data = new FormData(form);
+  data.set('cards', JSON.stringify(editingCards));
+  saveButton.disabled = true;
+  errorMessage.hidden = true;
   try {
-    localStorage.setItem(storageKey, JSON.stringify(savedCards));
+    const response = await fetch(form.action, {method: 'POST', body: data});
+    if (!response.ok || response.redirected) throw new Error('Save failed');
+    savedCards = (await response.json()).cards;
+    location.hash = '02-01';
   } catch {
-    // The current preview keeps its preferences in memory.
+    errorMessage.hidden = false;
+  } finally {
+    saveButton.disabled = false;
   }
-  location.hash = '02-01';
 });
 
 function showScreenFromHash() {
