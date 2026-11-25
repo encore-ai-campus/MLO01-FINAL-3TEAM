@@ -3,7 +3,7 @@ import hashlib
 import json
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.request import urlopen
@@ -30,8 +30,9 @@ def capture_metrics(rows):
         try:
             info = json.loads((ROOT / "status" / f"{source}.json").read_text())
             observed = datetime.fromisoformat(info["at"])
-            ready = int(info["state"] == "ready" and
-                        (datetime.now(timezone.utc) - observed).total_seconds() < 150)
+            if observed.tzinfo is None:
+                continue
+            ready = int(info["state"] == "ready")
             sample(rows, "collector_status_observed_seconds", observed.timestamp(), channel=source)
             sample(rows, "collector_ready", ready, channel=source)
         except (OSError, KeyError, ValueError, TypeError):

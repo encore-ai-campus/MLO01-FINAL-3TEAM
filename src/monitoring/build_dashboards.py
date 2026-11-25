@@ -155,26 +155,25 @@ def dashboard(name, panels, *, template=None, title=None, **options):
 
 
 def collector_positions():
+    observed = ('last_over_time(voc_collector_status_observed_seconds[$__range]) '
+                '>= (${__from} / 1000) <= (${__to} / 1000)')
+    ready = f'max by(channel) (last_over_time(voc_collector_ready[$__range]) and ({observed}))'
+    positions = 'voc_collector_position'
+    stale_positions = f'label_replace(({positions} unless on(channel) ({ready})), "phase", "-", "", "") * -1'
     fallback = ('label_replace(vector(-1), "channel", "gmail", "", "") '
                 'or label_replace(vector(-1), "channel", "discord", "", "")')
-    config = prom(16, "채널별 수집 위치", 0, 27, 24, 6,
-                  f'voc_collector_position or on(channel) ({fallback})',
-                  description="SQLite에 기록된 연결별 위치와 가장 최근 채널 상태를 읽습니다.")
-    config["targets"].append({
-        **config["targets"][0], "refId": "B",
-        "expr": f'max by(channel) (voc_collector_ready) or on(channel) ({fallback})',
-    })
-    config["transformations"] = [
-        {"id": "joinByField", "options": {"byField": "channel", "mode": "outerTabular"}},
-        {"id": "organize", "options": {
-            "excludeByName": {name: True for name in ("Time", "Time 1", "Time 2", "__name__", "job", "instance",
-                                                      "Value #A")},
-            "renameByName": {"channel": "채널", "source": "연결", "position": "수집 위치",
-                             "phase": "수집 단계", "Value #B": "수집 상태"},
-        }},
-    ]
+    # Cursor samples have value 1, so the multiplication keeps their labels and uses readiness as the value.
+    config = omit_prometheus_fields(prom(
+        16, "채널별 수집 위치", 0, 27, 24, 6,
+        f'({positions} * on(channel) group_left() ({ready})) or ({stale_positions}) '
+        f'or on(channel) ({ready}) or on(channel) label_replace(({fallback}), "phase", "-", "", "")',
+        description="Gmail과 Discord의 저장된 위치를 표시합니다. 선택한 기간에 상태 기록이 없으면 수집 상태는 미수집, 수집 단계는 -로 표시합니다.",
+    ))
+    fields = config["transformations"][0]["options"]
+    fields["excludeByName"]["source"] = True
+    fields["renameByName"].update({"phase": "수집 단계", "Value": "수집 상태"})
     config["fieldConfig"]["overrides"] = [{
-        "matcher": {"id": "byName", "options": "Value #B"},
+        "matcher": {"id": "byType", "options": "number"},
         "properties": [{"id": "mappings", "value": [{"type": "value", "options": {
             "-1": {"text": "미수집"}, "0": {"text": "준비 상태 아님"}, "1": {"text": "수집 중"},
         }}]}],
@@ -182,26 +181,60 @@ def collector_positions():
     return config
 
 
+def flink_last_restore():
+    config = prom(15, "Flink 마지막 체크포인트 복원", 6, 21, 6, 6,
+                  '(voc_flink_last_restore_seconds * 1000) or on() (voc_flink_checkpoints{state="restored"} == 0)',
+                  kind="stat", unit="dateTimeAsLocal")
+    config["fieldConfig"]["defaults"]["mappings"] = [
+        {"type": "value", "options": {"0": {"text": "0건"}}},
+    ]
+    return config
+
+
+def flink_status():
+    config = prom(19, "Flink 작업·체크포인트 상태", 12, 21, 12, 6,
+                  'voc_flink_job_state or voc_flink_checkpoints{state!="completed"}',
+                  description="선택한 기간에 최초 Silver 저장을 마친 고객 문의 원문을 셉니다. 실패·복원 체크포인트 수는 Flink 누적값입니다.")
+    config["datasource"] = {"type": "datasource", "uid": "-- Mixed --"}
+    config["targets"][0]["datasource"] = PROM
+    config["targets"].append({
+        "datasource": SQL, "refId": "B", "rawQuery": True, "format": "table", "editorMode": "code",
+        "rawSql": f"""
+SELECT 'Flink 정제 성공' AS state, count(*) AS "Value"
+FROM voc_monitor.standardized_inquiries WHERE {period('standardized_at')}
+""",
+    })
+    omit_prometheus_fields(config)
+    config["transformations"].insert(0, {"id": "merge", "options": {}})
+    return config
+
+
 PIPELINES = [
     pipeline_canvas(),
     panel(8, "단계별 처리 시간", 0, 8, 12, 7, f"""
-WITH samples AS (
-  SELECT CASE WHEN published_at>=queued_at THEN extract(epoch FROM published_at-queued_at) END AS queued_seconds,
-         CASE WHEN standardized_at>=published_at THEN extract(epoch FROM standardized_at-published_at) END AS stored_seconds
-  FROM voc_monitor.standardization WHERE {period('standardized_at')}
+WITH samples(stage, seconds) AS (
+    SELECT 'publish',extract(epoch FROM published_at-queued_at)
+    FROM voc_monitor.standardization WHERE {period('published_at')} AND published_at>=queued_at
+    UNION ALL
+    SELECT 'silver',extract(epoch FROM standardized_at-published_at)
+    FROM voc_monitor.standardization WHERE {period('standardized_at')} AND standardized_at>=published_at
 )
-SELECT label AS "측정 구간",nullif(count(seconds),0) AS "완료 표본",
+SELECT label AS "측정 구간",count(seconds) AS "완료 표본",
        round(percentile_cont(0.95) WITHIN GROUP(ORDER BY seconds)::numeric,2) AS "P95 (초)"
-FROM (VALUES ('요청 대기 → Kafka 전달'),('Kafka 전달 → Silver 저장')) v(label)
-LEFT JOIN samples ON true
-LEFT JOIN LATERAL (SELECT CASE label WHEN '요청 대기 → Kafka 전달' THEN queued_seconds ELSE stored_seconds END AS seconds)
-    duration ON true
-GROUP BY label
-""", description="현재 정제 요청과 최초 Silver 저장 기록의 시각을 비교합니다. Kafka 전달 기록은 발행 트랜잭션의 시각입니다."),
-    panel(9, "전체 처리 시간과 30초 목표", 12, 8, 12, 7, """
-SELECT label AS "지표", '미수집' AS "측정값"
-FROM (VALUES ('전체 시간 P95 (초)'),('30초 이내 완료 (건)'),('목표 미달 (건)'),('대상 (건)'),('30초 내 완료율 (%)')) v(label)
-""", description="문의 등록 시각과 최종 결과 저장 시각을 연결하는 기록이 필요합니다."),
+FROM (VALUES ('publish','요청 대기 → Kafka 전달'),('silver','Kafka 전달 → Silver 저장')) AS stages(stage,label)
+LEFT JOIN samples USING(stage)
+GROUP BY stages.stage,label
+ORDER BY stages.stage
+""", empty="-", description="각 구간의 완료 시각을 기준으로 집계합니다. Kafka 전달 기록은 발행 트랜잭션의 시각입니다."),
+    panel(9, "전체 처리 시간과 30초 목표", 12, 8, 12, 7, f"""
+SELECT label AS "지표",
+       CASE WHEN NOT EXISTS (
+           SELECT 1 FROM voc_monitor.diagnostics WHERE stage='capture' AND {period('observed_at')}
+       ) THEN empty_value ELSE '미수집' END AS "측정값"
+FROM (VALUES (1,'전체 시간 P95 (초)','-'),(2,'30초 이내 완료 (건)','0'),(3,'목표 미달 (건)','0'),
+             (4,'대상 (건)','0'),(5,'30초 내 완료율 (%)','0%')) AS metrics(position,label,empty_value)
+ORDER BY position
+""", description="선택한 기간에 수집 기록이 없으면 건수는 0입니다. 수집 기록이 있으면 분류·임베딩 최종 완료 시각이 없어 미수집으로 표시합니다."),
     panel(10, "원문과 티켓 대조", 0, 15, 12, 6, """
 SELECT label AS "대조 상태",CASE WHEN observed THEN value END AS "건수"
 FROM (
@@ -218,17 +251,15 @@ FROM (
     ('티켓 생성 보류',projection_issues)) AS v(label,value)
 """, description="수집 원문을 업무 티켓과 대조합니다. Flink 정제 처리 대기는 발행 이후 현재 Silver 저장을 확인하지 못한 건입니다."),
     panel(11, "AI 모델 분석 대기", 12, 15, 12, 6, """
-SELECT label AS "단계", q.pending AS "대기 작업", q.oldest_seconds::integer AS "가장 오래된 대기 (초)"
+SELECT label AS "단계", q.pending AS "대기 작업",
+       CASE WHEN q.pending=0 THEN '-' ELSE q.oldest_seconds::integer::text END AS "가장 오래된 대기 (초)"
 FROM (VALUES ('classification','분류 요청'),('embedding','임베딩')) AS s(stage,label)
 LEFT JOIN voc_monitor.queue_backlog q USING(stage)
-""", description="기존 아웃박스의 감성·카테고리 대기 작업을 셉니다. 한 티켓이 두 작업을 가질 수 있습니다."),
+""", description="발행 전인 감성·카테고리 작업을 셉니다. 한 티켓에서 두 작업이 생길 수 있습니다. 임베딩 대기 기록은 아직 연결되지 않았습니다."),
     prom(14, "Flink 마지막 성공 체크포인트", 0, 21, 6, 6, "voc_flink_last_checkpoint_seconds * 1000",
          kind="stat", unit="dateTimeAsLocal"),
-    prom(15, "Flink 마지막 체크포인트 복원", 6, 21, 6, 6, "voc_flink_last_restore_seconds * 1000",
-         kind="stat", unit="dateTimeAsLocal"),
-    omit_prometheus_fields(prom(19, "Flink 작업·체크포인트 상태", 12, 21, 12, 6,
-                                'voc_flink_job_state or voc_flink_checkpoints',
-                                description="작업 상태와 성공·실패·복원 체크포인트 수를 표시합니다.")),
+    flink_last_restore(),
+    flink_status(),
     collector_positions(),
     omit_prometheus_fields(prom(18, "Kafka 소비 지연", 0, 33, 24, 8, "voc_kafka_consumer_lag")),
     panel(20, "분류·임베딩 모델 실패 및 복구 기록", 0, 41, 24, 8, """

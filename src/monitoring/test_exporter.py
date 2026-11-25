@@ -16,8 +16,9 @@ class CollectorReadTests(unittest.TestCase):
             root = Path(folder)
             status = root / "status"
             status.mkdir()
+            observed = datetime(2025, 1, 1, tzinfo=timezone.utc)
             (status / "gmail.json").write_text(json.dumps({
-                "at": datetime.now(timezone.utc).isoformat(), "state": "ready", "account": "private-mailbox",
+                "at": observed.isoformat(), "state": "ready", "account": "private-mailbox",
             }))
             (status / "discord.json").write_text('{"state":"ready"}')
             with closing(sqlite3.connect(root / "capture.sqlite3")) as db:
@@ -35,10 +36,23 @@ class CollectorReadTests(unittest.TestCase):
                 exporter.capture_metrics(rows)
             actual = "\n".join(rows)
             self.assertIn('voc_collector_ready{channel="gmail"} 1', actual)
+            self.assertIn(f'voc_collector_status_observed_seconds{{channel="gmail"}} {observed.timestamp()}', actual)
             self.assertNotIn('voc_collector_ready{channel="discord"}', actual)
             self.assertIn('voc_capture_pending{channel="gmail"} 1', actual)
             self.assertIn('position="1299555050899079218"', actual)
             self.assertNotIn("private-", actual)
+
+    def test_reports_non_ready_status_without_a_cursor(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            status = root / "status"
+            status.mkdir()
+            (status / "discord.json").write_text('{"at":"2025-01-01T00:00:00+00:00","state":"reconnecting"}')
+            rows = []
+            with patch.object(exporter, "ROOT", root):
+                exporter.capture_metrics(rows)
+            self.assertIn('voc_collector_ready{channel="discord"} 0', rows)
+            self.assertFalse(any(row.startswith("voc_collector_position") for row in rows))
 
 
 if __name__ == "__main__":
