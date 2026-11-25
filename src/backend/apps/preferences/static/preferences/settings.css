@@ -37,9 +37,6 @@
 .settings-toolbar [aria-current="page"] { color: var(--paper); background: var(--primary); border-color: var(--primary); }
 .settings-search { grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: end; }
 .settings-search > .errorlist { grid-column: 1 / -1; }
-.settings-nav { display: grid; gap: 3px; padding-left: 31px; }
-.settings-nav a { padding: 5px 3px; font-size: 13px; }
-.settings-nav a:hover { text-decoration: underline; }
 .settings-link-group { scroll-margin-top: calc(var(--bar) + 16px); }
 .settings-header { margin-bottom: 26px; }
 .settings-header .desk-sub { margin-top: 5px; }

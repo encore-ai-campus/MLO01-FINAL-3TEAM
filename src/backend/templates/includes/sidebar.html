@@ -16,14 +16,17 @@
   <a class="desk-nav-item" href="/analytics/" {% if active == "analytics" %}aria-current="page"{% endif %}><svg aria-hidden="true"><use href="#desk-analytics"></use></svg>분석 대시보드</a>
   {% endif %}
   {% endwith %}
-  <a class="desk-nav-item desk-nav-settings" href="{% url 'preferences:index' %}" {% if active == "settings" %}aria-current="page"{% endif %}><svg aria-hidden="true"><use href="#desk-settings"></use></svg>설정</a>
-  {% if active == "settings" %}
-    <div class="settings-nav" role="group" aria-label="설정 메뉴">
-      <a href="{% url 'preferences:index' %}#personal">개인 설정</a>
+  <details class="desk-settings-menu"{% if active == "settings" %} open{% endif %}>
+    <summary class="desk-nav-item desk-nav-settings"{% if active == "settings" %} data-active{% endif %}>
+      <svg aria-hidden="true"><use href="#desk-settings"></use></svg>설정
+      <svg class="desk-settings-chevron" aria-hidden="true"><use href="#desk-down"></use></svg>
+    </summary>
+    <div class="desk-settings-links" role="group" aria-label="설정 메뉴">
+      <a class="desk-nav-item desk-nav-subitem" href="{% url 'preferences:index' %}#personal">개인 설정</a>
       {% if actor.role == "admin" %}
-        <a href="{% url 'preferences:index' %}#work">업무 관리</a>
-        <a href="{% url 'preferences:index' %}#hr">인사 관리</a>
+        <a class="desk-nav-item desk-nav-subitem" href="{% url 'preferences:index' %}#work">업무 관리</a>
+        <a class="desk-nav-item desk-nav-subitem" href="{% url 'preferences:index' %}#hr">인사 관리</a>
       {% endif %}
     </div>
-  {% endif %}
+  </details>
 </nav>
