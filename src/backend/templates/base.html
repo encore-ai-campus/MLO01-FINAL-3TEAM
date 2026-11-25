@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="{% static 'shared/desk.css' %}">
   {% block styles %}{% endblock %}
   <script defer src="{% static 'shared/legacy.js' %}"></script>
-  {% if actor.can_read %}<script defer src="{% static 'followup/badge.js' %}"></script>{% endif %}
+  {% if actor.can_read and not show_followup_history %}<script defer src="{% static 'followup/badge.js' %}"></script>{% endif %}
 </head>
 <body>
   {% include "includes/icons.html" %}

@@ -58,6 +58,7 @@ VALUES (:'company_id'::uuid,lower(:'email'),:'staff_name',:'password_hash');
 | `src/backend/apps/accounts` | 로그인·로그아웃·직원 세션 |
 | `src/backend/apps/preferences`, `assignment` | 신속답변·개인 화면·메신저·자동 배정 설정 |
 | `src/backend/apps/tickets` | 티켓 목록·내 티켓·필터·상세·고객 대화 |
+| `src/backend/apps/followup` | 티켓 추적·후속 연락·알림 이력 |
 | `src/backend/apps/workspace`, `collaboration`, `analytics` | 업무 홈·받은 요청·VoC 분석의 시연 화면 |
 | `src/backend/templates`, `src/backend/static` | 공통 레이아웃·탐색·정적 파일 |
 | `src/collector`, `src/infra/channel_probe` | Discord·Gmail 수집, Flink 정제, PostgreSQL 적재 및 채널 점검 |
@@ -118,7 +119,7 @@ JSON 메시지 요청에는 `message_type` (`reply` 또는 `memo`), `body`, 동�
 
 ### Task 8 팔로업
 
-공통 사이드바에서 `/follow-up/`을 연다. `ticket-desk` 이미지는 기존 팔로업 시안의 JSX·CSS를 빌드하고 Django `collectstatic`으로 수집한다. Django를 로컬에서 실행할 때는 먼저 저장소 루트에서 `npm ci --prefix src/backend/frontend`와 `node src/backend/frontend/build-followup.mjs`를 실행한다.
+공통 사이드바에서 `/follow-up/`을 연다. Django가 팔로업 화면을 렌더링하고 `collectstatic`으로 CSS와 JavaScript를 수집한다.
 
 `init-db-topics`가 `followup_schema.sql`을 적용한다. 기존 Docker 환경에서는 위의 빌드·초기화 명령을 다시 실행한다. API 변경 요청에는 로그인 세션과 `X-CSRFToken`이 필요하다.
 

@@ -1,0 +1,15 @@
+<details class="follow-history">
+  <summary aria-label="알림 이력"><svg aria-hidden="true"><use href="#desk-bell"></use></svg></summary>
+  <div class="follow-history-panel">
+    <h2>업데이트 이력</h2>
+    <p data-follow-empty>표시할 업데이트가 없습니다.</p>
+    <ul class="follow-events">
+      {% for entry in followup_history %}
+        <li data-follow-alert="{{ entry.occurred_at|date:'c' }}"{% if entry.unread %} data-unread-ticket="{{ entry.ticket_uuid }}"{% endif %}{% if entry.occurred_at > now %} hidden{% endif %}>
+          <strong>{{ entry.label }}</strong><p>{{ entry.number }} {{ entry.title }}</p>
+          <time datetime="{{ entry.occurred_at|date:'c' }}">{{ entry.occurred_at|date:"Y-m-d H:i" }}</time>
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+</details>

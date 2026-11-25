@@ -1,7 +1,11 @@
 {% load static %}
 <header class="desk-bar">
   <a class="brand" href="/home/" aria-label="TiCats 업무 홈"><img src="{% static 'shared/ticats-logo.png' %}" alt="TiCats" width="102" height="34"></a>
-  <span title="알림"><svg aria-label="알림" role="img"><use href="#desk-bell"></use></svg></span>
+  {% if show_followup_history %}
+    {% include "followup/history.html" %}
+  {% else %}
+    <span title="알림"><svg aria-label="알림" role="img"><use href="#desk-bell"></use></svg></span>
+  {% endif %}
   {% if actor %}{% firstof actor.name actor.email as account_name %}
     <span class="desk-account" aria-label="내 계정 {{ account_name }}"><span class="desk-avatar" aria-hidden="true">{{ account_name|first }}</span>{{ account_name }}</span>
     <form method="post" action="/logout/">{% csrf_token %}<button id="desk-logout" class="desk-button desk-logout">로그아웃</button></form>

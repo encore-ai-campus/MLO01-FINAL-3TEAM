@@ -1,0 +1,1 @@
+<span class="follow-badge{% if row.scheduled_at < now %} late{% else %} waiting{% endif %}" data-scheduled-at="{{ row.scheduled_at|date:'c' }}">{% if row.scheduled_at < now %}기한 지남{% else %}예정{% endif %}</span>
