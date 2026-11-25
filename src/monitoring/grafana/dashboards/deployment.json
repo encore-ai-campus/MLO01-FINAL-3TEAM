@@ -1,0 +1,72 @@
+{
+  "uid": "voc-deployment",
+  "title": "카나리 배포",
+  "tags": [
+    "VoC"
+  ],
+  "schemaVersion": 41,
+  "version": 1,
+  "editable": false,
+  "refresh": "",
+  "timezone": "Asia/Seoul",
+  "time": {
+    "from": "now-10m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집"
+        },
+        "overrides": []
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "## 준비 중"
+      }
+    }
+  ],
+  "links": [
+    {
+      "type": "link",
+      "title": "파이프라인",
+      "url": "/d/voc-pipeline/pipeline",
+      "includeVars": false,
+      "keepTime": true,
+      "tooltip": "파이프라인"
+    },
+    {
+      "type": "link",
+      "title": "AI 추론",
+      "url": "/d/voc-inference/inference",
+      "includeVars": false,
+      "keepTime": true,
+      "tooltip": "AI 추론"
+    },
+    {
+      "type": "link",
+      "title": "카나리 배포",
+      "url": "/d/voc-deployment/deployment",
+      "includeVars": false,
+      "keepTime": true,
+      "tooltip": "카나리 배포"
+    }
+  ],
+  "templating": {
+    "list": []
+  }
+}
