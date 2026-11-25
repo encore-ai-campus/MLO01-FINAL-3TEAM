@@ -108,3 +108,13 @@ def list_tickets(cursor, company_uuid, assignee_uuid, query):
                    + ", t.ticket_number ASC LIMIT %s OFFSET %s",
                    [*params, query.page_size, (page - 1) * query.page_size])
     return {"items": fetch_rows(cursor), "total": total, "page": page, "page_size": query.page_size}
+
+
+def add_memo(cursor, company, staff, ticket, body):
+    cursor.execute("""
+        INSERT INTO ticket_message(ticket_uuid,staff_user_uuid,body,sender_type,message_type,created_at)
+        SELECT ticket_uuid,%s,%s,'staff','memo',clock_timestamp()
+        FROM visible_ticket WHERE company_uuid=%s AND ticket_uuid=%s
+        RETURNING ticket_message_uuid, ticket_uuid, staff_user_uuid, body, created_at
+    """, (staff, body, company, ticket))
+    return next(iter(fetch_rows(cursor)), None)

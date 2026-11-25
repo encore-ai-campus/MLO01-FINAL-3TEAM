@@ -2,12 +2,12 @@ from uuid import UUID
 
 from django.http import JsonResponse
 from django.shortcuts import render
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_POST
 
 from apps.accounts.presentation.views import session_token
-from config.http import DeskError, DeskJSONEncoder
+from config.http import DeskError, DeskJSONEncoder, validate_form
 from .. import services
-from .forms import parse_query
+from .forms import MemoForm, parse_query
 
 
 @require_GET
@@ -48,3 +48,10 @@ def detail(request, ticket_uuid, as_json=False):
     return render(request, "tickets/detail.html", {
         **result, "actor": desk.actor, "scope": request.GET.get("scope", "all"), "active": "detail",
     })
+
+
+@require_POST
+def add_memo(request, ticket_uuid):
+    data = validate_form(MemoForm, request)
+    memo = services.add_memo(session_token(request), ticket_uuid, data["body"])
+    return JsonResponse(memo, status=201, encoder=DeskJSONEncoder)
