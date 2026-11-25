@@ -16,6 +16,11 @@ def require_conduct(actor, cursor):
     require_work_permission(cursor, actor, TICKET_HANDLE)
 
 
+def require_assignee(actor, ticket):
+    if ticket["assignee_uuid"] != actor["staff_user_uuid"]:
+        raise DeskError(403, "TICKET_ASSIGNEE_REQUIRED", "현재 담당 상담사만 이 작업을 할 수 있습니다.")
+
+
 @contextmanager
 def write_ticket(token, ticket_uuid):
     with transaction.atomic(), connection.cursor() as cursor:
@@ -29,24 +34,57 @@ def write_ticket(token, ticket_uuid):
 
 def transfer(token, ticket_uuid, recipient, reason, attached_reply):
     with write_ticket(token, ticket_uuid) as (cursor, actor, ticket):
-        if recipient in (actor["staff_user_uuid"], ticket["assignee_uuid"]):
+        require_assignee(actor, ticket)
+        if recipient == actor["staff_user_uuid"]:
             raise DeskError(422, "INVALID_RECIPIENT", "이관할 새 상담사를 선택해 주세요.")
         cursor.execute(f"""
-            SELECT tm.team_uuid FROM staff_user s LEFT JOIN team tm USING (company_uuid,team_uuid)
+            SELECT FROM staff_user s
             WHERE s.staff_user_uuid=%s AND s.company_uuid=%s AND {repo.CONDUCT}
         """, (recipient, actor["company_uuid"]))
-        target = cursor.fetchone()
-        if target is None:
+        if cursor.fetchone() is None:
             raise DeskError(422, "INVALID_RECIPIENT", "이관할 새 상담사를 선택해 주세요.")
-        team_uuid = target[0]
-        cursor.execute("UPDATE ticket SET assignee_uuid=%s,assigned_team_uuid=%s,updated_at=now() WHERE ticket_uuid=%s",
-                       (recipient, team_uuid, ticket_uuid))
-        request = repo.add_request(cursor, ticket_uuid, actor, recipient, "transfer", "accepted", reason)
+        cursor.execute("""
+            SELECT 1 FROM collab_request WHERE ticket_uuid=%s AND requester_uuid=%s
+              AND request_type='transfer' AND status='pending' LIMIT 1
+        """, (ticket_uuid, actor["staff_user_uuid"]))
+        if cursor.fetchone() is not None:
+            raise DeskError(409, "TRANSFER_PENDING", "이미 수락을 기다리는 이관 요청이 있습니다.")
+        request = repo.add_request(cursor, ticket_uuid, actor, recipient, "transfer", "pending", reason)
         if attached_reply:
             repo.add_attachment(cursor, request, {"content_type": "text/plain", "content": attached_reply})
-        event = repo.add_event(cursor, ticket_uuid, actor, "ticket_transfer", request=request,
-                               recipient=recipient, reason=reason)
-    return {"event_id": event, "assignee_uuid": recipient, "assigned_team_uuid": team_uuid}
+    return {"transfer_request_uuid": request, "status": "pending"}
+
+
+def accept_transfer(token, ticket_uuid, request_uuid):
+    with write_ticket(token, ticket_uuid) as (cursor, actor, ticket):
+        recipient = actor["staff_user_uuid"]
+        cursor.execute("""
+            SELECT requester_uuid,status,memo FROM collab_request
+            WHERE ticket_uuid=%s AND collab_request_uuid=%s AND recipient_uuid=%s AND request_type='transfer'
+            FOR UPDATE
+        """, (ticket_uuid, request_uuid, recipient))
+        request = cursor.fetchone()
+        if request is None:
+            raise DeskError(404, "TRANSFER_NOT_FOUND", "이관 요청을 찾을 수 없습니다.")
+        requester, status, reason = request
+        if status == "accepted":
+            return
+        if status != "pending" or requester != ticket["assignee_uuid"]:
+            raise DeskError(409, "TRANSFER_NOT_AVAILABLE", "담당자가 변경됐거나 이미 처리된 요청입니다.")
+        cursor.execute("""
+            SELECT 1 FROM ticket_message WHERE ticket_uuid=%s AND delivery_status IN ('sending','unknown')
+        """, (ticket_uuid,))
+        if cursor.fetchone() is not None:
+            raise DeskError(409, "DELIVERY_UNCERTAIN", "기존 답변의 발송 결과를 확인한 뒤 이관을 수락해 주세요.")
+        cursor.execute("""
+            UPDATE ticket SET assignee_uuid=%s,assigned_team_uuid=%s,updated_at=now() WHERE ticket_uuid=%s
+        """, (recipient, actor["team_uuid"], ticket_uuid))
+        cursor.execute("""
+            UPDATE collab_request SET status='accepted',decided_at=now(),read_at=coalesce(read_at, now())
+            WHERE collab_request_uuid=%s
+        """, (request_uuid,))
+        repo.add_event(cursor, ticket_uuid, actor, "ticket_transfer", request=request_uuid,
+                       recipient=recipient, reason=reason)
 
 
 def request_review(token, ticket_uuid, channel, memo, attachment):
@@ -90,6 +128,8 @@ def request_attachment(token, action_uuid):
 
 def store_message(token, ticket_uuid, message_type, body, request_key):
     with write_ticket(token, ticket_uuid) as (cursor, actor, ticket):
+        if message_type == "reply":
+            require_assignee(actor, ticket)
         cursor.execute(f"SELECT {repo.MESSAGE_FIELDS} FROM ticket_message WHERE ticket_uuid=%s AND request_key=%s",
                        (ticket_uuid, request_key))
         existing = next(iter(fetch_rows(cursor)), None)

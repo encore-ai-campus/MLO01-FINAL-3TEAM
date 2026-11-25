@@ -122,10 +122,11 @@ def event_history(cursor, filters):
             SELECT * FROM visible_ticket WHERE company_uuid = %(company)s AND created_at < %(now)s
         ),
         ledger AS (
-            SELECT e.*, kind.code
+            SELECT e.*, CASE WHEN kind.code = 'ticket_transfer' THEN 'transferred' ELSE kind.code END AS code
             FROM ticket_event AS e JOIN event_type AS kind USING (event_type_uuid)
             JOIN tickets USING (ticket_uuid)
-            WHERE kind.code IN ('assigned', 'transferred', 'answer_completed') AND e.created_at < %(now)s
+            WHERE kind.code IN ('assigned', 'transferred', 'ticket_transfer', 'answer_completed')
+              AND e.created_at < %(now)s
         ),
         last_assignment AS (
             SELECT DISTINCT ON (ticket_uuid) ticket_uuid, recipient_uuid, code, created_at

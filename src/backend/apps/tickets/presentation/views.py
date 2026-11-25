@@ -49,6 +49,7 @@ def detail(request, ticket_uuid, as_json=False):
         return JsonResponse(result, encoder=DeskJSONEncoder)
     return render(request, "tickets/detail.html", {
         **result, "actor": desk.actor, "scope": request.GET.get("scope", "all"), "active": "detail",
+        "is_assignee": result["ticket"]["assignee_uuid"] == desk.actor["staff_user_uuid"],
         "request_key": uuid4(),
     })
 
@@ -83,6 +84,12 @@ def ticket_action(request, ticket_uuid, action, as_json=False):
         return JsonResponse(result, encoder=DeskJSONEncoder, status=200 if action == "messages" else 201)
     url = reverse("tickets:detail", args=(ticket_uuid,))
     return redirect(f"{url}?{request.GET.urlencode()}" if request.GET else url)
+
+
+@require_POST
+def accept_transfer(request, ticket_uuid, request_uuid):
+    actions.accept_transfer(session_token(request), ticket_uuid, request_uuid)
+    return JsonResponse({"status": "accepted"})
 
 
 @require_GET

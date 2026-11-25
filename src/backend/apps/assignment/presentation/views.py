@@ -11,7 +11,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 from apps.accounts.presentation.views import session_token
 from apps.accounts.repository import company_staff
 from apps.accounts.services import current_actor, require_settings_admin, settings_employee
-from apps.tickets.actions import require_conduct
+from apps.tickets.actions import require_assignee, require_conduct
 from config.database import read_snapshot
 from config.http import DeskError, validate_form
 
@@ -84,6 +84,7 @@ def category(request, ticket_uuid, as_json=False):
         ticket = repo.read_ticket(cursor, actor["company_uuid"], ticket_uuid)
         if ticket is None:
             raise DeskError(404, "TICKET_NOT_FOUND", "티켓을 찾을 수 없습니다.")
+        require_assignee(actor, ticket)
         categories = repo.category_choices(cursor, ticket["domain_uuid"])
     if as_json:
         return JsonResponse({"current_category_uuid": ticket["category_uuid"], "categories": categories})

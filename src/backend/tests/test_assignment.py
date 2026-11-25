@@ -186,10 +186,9 @@ class AssignmentTests(unittest.TestCase):
         self.assertIsNone(self.insert("SELECT assigned_team_uuid FROM ticket WHERE ticket_uuid=%s", ticket))
         manual = self.client.post(f"/api/tickets/{ticket}/category", {"category_uuid": self.categories[0]},
                                   content_type="application/json")
-        self.assertEqual(manual.status_code, 200, manual.content)
-        self.assertIsNone(manual.json()["assigned_team_uuid"])
-        self.assertIsNone(manual.json()["assignee_uuid"])
-        self.assertIsNone(manual.json()["review_reason"])
+        self.assertEqual(manual.status_code, 403, manual.content)
+        self.assertEqual(self.insert("SELECT category_review_reason FROM ticket WHERE ticket_uuid=%s", ticket),
+                         "classification_abstained")
         other_event, _ = self.ticket()
         self.assertEqual(self.result(other_event, self.categories[2])["review_reason"], "no_team_mapping")
 

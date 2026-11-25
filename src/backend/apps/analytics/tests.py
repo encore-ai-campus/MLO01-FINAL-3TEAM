@@ -112,7 +112,7 @@ class AnalyticsPageTests(TestCase):
                 request_type text, status text
             );
         """)
-        kinds = {code: str(uuid4()) for code in ("assigned", "transferred", "answer_completed")}
+        kinds = {code: str(uuid4()) for code in ("assigned", "ticket_transfer", "answer_completed")}
         for code, uid in kinds.items():
             self.cur.execute("INSERT INTO event_type VALUES (%s,%s)", (uid, code))
         for ticket, code, time in (
@@ -120,7 +120,7 @@ class AnalyticsPageTests(TestCase):
             (self.solved, "assigned", "2026-11-24T08:02:00+09"),
             (self.solved, "answer_completed", "2026-11-24T10:00:00+09"),
             (self.solved, "answer_completed", "2026-11-24T10:05:00+09"),
-            (self.held, "transferred", "2026-11-22T09:01:00+09"),
+            (self.held, "ticket_transfer", "2026-11-22T09:01:00+09"),
             (self.past, "answer_completed", "2026-11-17T23:59:59+09"),
         ):
             complete = code == "answer_completed"

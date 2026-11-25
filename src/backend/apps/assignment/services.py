@@ -122,9 +122,10 @@ def apply_category_result(*, company_uuid, event_id, preprocess_version, body_ve
 
 
 def change_category(token, ticket_uuid, category_uuid, reason):
-    from apps.tickets.actions import write_ticket
+    from apps.tickets.actions import require_assignee, write_ticket
 
-    with write_ticket(token, ticket_uuid) as (cursor, actor, _):
+    with write_ticket(token, ticket_uuid) as (cursor, actor, locked_ticket):
+        require_assignee(actor, locked_ticket)
         company_uuid = actor["company_uuid"]
         ticket = repo.read_ticket(cursor, company_uuid, ticket_uuid)
         categories = repo.category_choices(cursor, ticket["domain_uuid"])
