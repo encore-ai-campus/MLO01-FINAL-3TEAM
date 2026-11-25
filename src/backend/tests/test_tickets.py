@@ -5,6 +5,7 @@ import re
 import unittest
 from base64 import b64decode
 from contextlib import closing
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
@@ -13,6 +14,7 @@ import psycopg2
 from argon2 import PasswordHasher
 from django.test import Client
 from django.urls import reverse
+from django.utils import timezone
 
 from tests.database import use_database
 from psycopg2 import sql
@@ -159,9 +161,9 @@ class TicketTests(unittest.TestCase):
         self.assertEqual(notifications["count"], 2)
         self.assertEqual(self.client.get(base + "/notifications", {"summary": "1"}).json(),
                          {"count": 2, "ticket_count": 1})
-        track_page = self.client.get(reverse("followup:page"), {"tab": "tracks", "item": tracked})
-        for value in ("팔로업 메모", "고객 후속 문의", "원본 티켓 열기", "followup/followup.css", "followup/badge.js"):
-            self.assertContainsHTML(track_page, value)
+        state = self.client.get(reverse("followup:page-data")).json()
+        self.assertEqual(state["tracks"][0]["ticket_uuid"], tracked)
+        self.assertEqual({item["kind"] for item in state["notifications"]}, {"memo", "customer_inquiry"})
         self.assertEqual({item["kind"] for item in notifications["items"]}, {"memo", "customer_inquiry"})
         self.assertEqual(next(item for item in notifications["items"] if item["kind"] == "customer_inquiry")
                          ["related_ticket_uuid"], followup)
@@ -219,48 +221,53 @@ class TicketTests(unittest.TestCase):
         self.assertEqual(self.client.get(consultation["source_url"]).json()["messages"][0]["body"], "배송지 변경 상담")
         self.assertEqual(writer.get(consultation["source_url"]).status_code, 403)
         chat_page = reverse("followup:chat-page", args=[chat])
-        appointment_page = self.client.get(reverse("followup:page"), {
-            "tab": "scheduled", "source": "chat", "item": consultation["contact_uuid"],
-        })
-        self.assertContainsHTML(appointment_page, f'href="{chat_page}">원본 상담 열기')
+        state = self.client.get(reverse("followup:page-data")).json()
+        self.assertTrue(any(item["chat_uuid"] == chat for item in state["contacts"]))
         self.assertContainsHTML(self.client.get(chat_page), "배송지 변경 상담")
         self.assertEqual(writer.get(chat_page).status_code, 403)
         self.login(company=2)
         self.assertEqual(self.client.get(f"{contacts}/{ident}").status_code, 404)
 
-    def test_followup_page_registers_completes_and_untracks(self):
+    def test_followup_preview_shell_and_mutations_use_django(self):
         page_url = reverse("followup:page")
         self.assertEqual(self.client.get(page_url).status_code, 302)
         self.login()
         self.assertContainsHTML(self.client.get(reverse("tickets:list")), f'href="{page_url}"')
-        self.assertContainsHTML(self.client.get(page_url), "추적 티켓")
+        page = self.client.get(page_url)
+        for value in ('id="app"', 'id="followup-bootstrap"', "followup/desk.css", "followup/preview.css", "followup/ui.js"):
+            self.assertContainsHTML(page, value)
         ticket = self.tickets[1]
-        register = reverse("followup:register")
-        self.assertContainsHTML(self.client.get(register, {"mode": "track", "q": "00000002"}), ticket)
+        register = reverse("followup:track-schedule")
+        state = reverse("followup:page-data")
+        self.assertTrue(any(item["ticket_uuid"] == ticket for item in self.client.get(state).json()["tickets"]))
         csrf_client = Client(enforce_csrf_checks=True)
         csrf_client.cookies.update(self.client.cookies)
-        data = {
-            "mode": "track", "source": "ticket", "source_uuid": ticket,
-            "assignee_uuid": self.employees[0], "reason": "예약한 후속 연락",
-            "scheduled_at": "2026-11-26T14:00",
-        }
+        data = {"ticket_uuid": ticket, "scheduled_at": (timezone.now() + timedelta(hours=2)).isoformat()}
         headers = {"HTTP_X_CSRFTOKEN": csrf_client.cookies["csrftoken"].value}
-        self.assertEqual(csrf_client.post(register, data).status_code, 403)
-        tracked = csrf_client.post(register, data, follow=True, **headers)
-        self.assertContainsHTML(tracked, "추적 티켓 상세")
-        self.assertEqual(csrf_client.post(register, data, **headers).status_code, 409)
-        [contact] = csrf_client.get("/api/follow-up/contacts", {"q": "예약한 후속 연락"}).json()["items"]
-        finish = reverse("followup:finish", args=[contact["contact_uuid"]])
-        scheduled = csrf_client.get(page_url, {"tab": "scheduled", "item": contact["contact_uuid"]})
-        self.assertContainsHTML(scheduled, f'action="{finish}"')
-        completed = csrf_client.post(finish, {"result": "고객 확인", "contacted_at": "2026-11-26T14:12"},
-                                     follow=True, **headers)
-        self.assertContainsHTML(completed, "연락 완료 상세")
-        self.assertContainsHTML(completed, "고객 확인")
-        remove = reverse("followup:remove", args=[ticket])
-        self.assertEqual(csrf_client.post(remove, **headers).status_code, 302)
+        request_json = {"content_type": "application/json"}
+        self.assertEqual(csrf_client.post(register, data, **request_json).status_code, 403)
+        self.assertEqual(csrf_client.post(register, {**data, "scheduled_at": timezone.now().isoformat()},
+                                          **request_json, **headers).status_code, 422)
+        created = csrf_client.post(register, data, **request_json, **headers)
+        self.assertEqual(created.status_code, 201, created.text)
+        self.assertEqual(csrf_client.post(register, data, **request_json, **headers).status_code, 409)
+        snapshot = csrf_client.get(state).json()
+        [contact] = [row for row in snapshot["contacts"] if row["contact_uuid"] == created.json()["contact_uuid"]]
+        [tracked] = snapshot["tracks"]
+        self.assertNotIn(ticket, {item["ticket_uuid"] for item in snapshot["tickets"]})
+        self.assertEqual(contact["reason"], "추적 후속 연락")
+        self.assertEqual(contact["assignee_uuid"], self.employees[0])
+        self.assertTrue(contact["reminders_started_at"])
+        self.assertIsNone(contact["reminders_stopped_at"])
+        completed = csrf_client.post(contact["complete_url"],
+                                     {"result": "고객 확인", "contacted_at": timezone.now().isoformat()},
+                                     **request_json, **headers)
+        self.assertEqual(completed.status_code, 200, completed.text)
+        self.assertEqual(completed.json()["result"], "고객 확인")
+        self.assertTrue(completed.json()["reminders_stopped_at"])
+        self.assertEqual(csrf_client.delete(tracked["remove_url"], **headers).status_code, 204)
         self.assertEqual(csrf_client.get("/api/follow-up/tracks").json()["items"], [])
-        self.assertContainsHTML(csrf_client.get(page_url, {"tab": "completed", "q": "고객 확인"}), "고객 확인")
+        self.assertTrue(any(item["result"] == "고객 확인" for item in csrf_client.get(state).json()["contacts"]))
 
     def test_inbox_links_received_transfers_and_reviews_to_their_own_ticket(self):
         transfer_ticket, review_ticket = self.tickets[:2]

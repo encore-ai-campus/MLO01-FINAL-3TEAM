@@ -82,7 +82,7 @@ function FollowUpDetail({ row, tab, now, onUntrack, onFinish }) {
           <><h4>연락 결과</h4><p className="follow-result">{row.result}</p></>}
       </>}
       {source.type === '티켓' && <div className="follow-origin">
-        <a className="desk-button" href={withStaffPreview(ticketUrl + '?ticket=' + encodeURIComponent(source.id))}>원본 티켓 열기 ›</a>
+        <a className="desk-button" href={source.url ?? withStaffPreview(ticketUrl + '?ticket=' + encodeURIComponent(source.id))}>원본 티켓 열기 ›</a>
       </div>}
     </div>
   </aside>;
@@ -105,7 +105,7 @@ function FollowUpDialog({ modal, available, error, onClose, onSave }) {
     <form onSubmit={submit}>
       <h2 id="follow-dialog-title">{title}</h2>
       {finish ? <>
-        <p className="follow-result">{sources[modal.contact.sourceId].number} {sources[modal.contact.sourceId].title}<br />예정 {timestamp(modal.contact.scheduled)} · {modal.contact.assignee}</p>
+        <p className="follow-result">{modal.contact.source.number} {modal.contact.source.title}<br />예정 {timestamp(modal.contact.scheduled)} · {modal.contact.assignee}</p>
         <label>실제 연락 일시<input type="datetime-local" name="completed" required defaultValue={localStamp()} /></label>
         <label>연락 결과<textarea required name="result" maxLength={1000} rows={4} /></label>
       </> : <>
@@ -129,9 +129,9 @@ function FollowUpDialog({ modal, available, error, onClose, onSave }) {
   </dialog>;
 }
 
-function FollowUpPage({ person }) {
-  const [data, setData] = useState(() => loadFollowUp(person.id));
-  const [tab, setTab] = useState(0);
+function FollowUpPage({ person, runtime }) {
+  const [data, setData] = useState(() => runtime ? runtime.empty : loadFollowUp(person.id));
+  const [tab, setTab] = useState(runtime && !person.canTrack ? 1 : 0);
   const [selectedId, select] = useState('');
   const [query, setQuery] = useState('');
   const [modal, setModal] = useState(null);
@@ -140,6 +140,23 @@ function FollowUpPage({ person }) {
   const [now, setNow] = useState(localStamp);
   useEffect(() => {
     const timer = setInterval(() => setNow(localStamp()), 1000 * 60);
+    if (runtime) {
+      let mounted = true;
+      const refresh = () => runtime.load().then(next => {
+        if (mounted) setData(next);
+      }).catch(() => {
+        if (mounted) setNotice('팔로업 정보를 불러올 수 없습니다.');
+      });
+      refresh();
+      window.addEventListener('pageshow', refresh);
+      window.addEventListener('focus', refresh);
+      return () => {
+        mounted = false;
+        clearInterval(timer);
+        window.removeEventListener('pageshow', refresh);
+        window.removeEventListener('focus', refresh);
+      };
+    }
     const refresh = () => setData(loadFollowUp(person.id));
     const sync = event => { if (event.key === followUpKey || event.key === null) refresh(); };
     window.addEventListener('storage', sync);
@@ -149,20 +166,21 @@ function FollowUpPage({ person }) {
       window.removeEventListener('storage', sync);
       window.removeEventListener('pageshow', refresh);
     };
-  }, [person.id]);
+  }, [person.id, runtime]);
 
+  const currentSources = runtime ? data.sources : sources;
   const trackRows = data.tracks.map(track => ({
-    ...track, id: track.sourceId, source: sources[track.sourceId], events: trackedEvents(track),
+    ...track, id: track.sourceId, source: currentSources[track.sourceId], events: runtime ? track.events : trackedEvents(track),
     scheduled: data.contacts.find(contact => contact.id === track.contactId)?.scheduled
   })).sort((a, b) => (b.events[0]?.time ?? b.started).localeCompare(a.events[0]?.time ?? a.started));
   const contacts = data.contacts.filter(contact => tab === 1 ? !contact.completed : contact.completed)
-    .map(contact => ({ ...contact, source: sources[contact.sourceId] }))
+    .map(contact => ({ ...contact, source: currentSources[contact.sourceId] }))
     .sort((a, b) => tab === 1 ? a.scheduled.localeCompare(b.scheduled) : b.completed.localeCompare(a.completed));
   const term = query.trim().toLowerCase();
   const rows = (tab === 0 ? trackRows : contacts).filter(row => row.source &&
     (row.source.number.toLowerCase().includes(term) || row.source.title.toLowerCase().includes(term)));
   const detail = rows.find(row => row.id === selectedId) ?? rows[0];
-  const available = followUpTickets.filter(source => !data.tracks.some(track => track.sourceId === source.id));
+  const available = runtime ? data.tickets : followUpTickets.filter(source => !data.tracks.some(track => track.sourceId === source.id));
 
   function switchTab(index, id = '') {
     setTab(index);
@@ -180,14 +198,46 @@ function FollowUpPage({ person }) {
     setNotice('');
     setModal({ kind, ...fields });
   }
-  function untrack(sourceId) {
+  async function untrack(sourceId) {
+    if (runtime) {
+      try {
+        await runtime.remove(data.tracks.find(track => track.sourceId === sourceId).removeUrl);
+        setData(await runtime.load());
+        setNotice('추적을 해제했습니다.');
+      } catch (error) { setNotice(error.message); }
+      return;
+    }
     const fresh = loadFollowUp(person.id);
     const tracks = fresh.tracks.filter(track => track.sourceId !== sourceId);
     if (!commit({ ...fresh, tracks }, '추적을 해제했습니다.')) {
       setNotice('브라우저에 변경사항을 저장할 수 없습니다.');
     }
   }
-  function save(fields) {
+  const saving = useRef(false);
+  async function save(fields) {
+    if (runtime) {
+      if (saving.current) return;
+      setError('');
+      const tracking = modal.kind === 'track';
+      if (tracking && !(Date.parse(fields.scheduled + '+09:00') > Date.now())) {
+        return setError('현재보다 늦은 추적 날짜와 시각을 입력해 주세요.');
+      }
+      saving.current = true;
+      let saved = false;
+      try {
+        if (tracking) await runtime.register(fields);
+        else await runtime.complete(modal.contact.completeUrl, fields);
+        saved = true;
+        setModal(null);
+        switchTab(tracking ? 0 : 2, tracking ? fields.sourceId : modal.contact.id);
+        setNotice(tracking ? '추적을 등록했습니다.' : '연락 완료를 저장했습니다.');
+        setData(await runtime.load());
+      } catch (error) {
+        if (saved) setNotice('저장했지만 팔로업 정보를 새로 불러올 수 없습니다.');
+        else setError(error.message);
+      } finally { saving.current = false; }
+      return;
+    }
     const fresh = loadFollowUp(person.id);
     if (modal.kind === 'track') {
       if (sources[fields.sourceId]?.type !== '티켓') return setError('추적할 티켓을 선택해 주세요.');
@@ -213,7 +263,7 @@ function FollowUpPage({ person }) {
     setModal(null);
   }
 
-  return <DeskLayout active="followup">
+  return <DeskLayout active="followup" runtime={runtime} followUpData={data}>
     <section className="follow-page" aria-labelledby="follow-title">
       <h1 id="follow-title">팔로업</h1>
       <p className="follow-muted">추적 중인 문의와 연락 일정을 확인합니다.</p>
@@ -222,7 +272,7 @@ function FollowUpPage({ person }) {
           {tabs.map((name, index) => <button className={'desk-button' + (tab === index ? ' desk-button-solid' : '')} type="button"
             key={name} aria-pressed={tab === index} onClick={() => switchTab(index)}>{name}</button>)}
         </nav>
-        {tab === 0 && <button className="desk-button desk-button-solid" type="button" onClick={() => showModal('track')}>추적 등록</button>}
+        {tab === 0 && <button className="desk-button desk-button-solid" type="button" onClick={() => showModal('track')} disabled={runtime && !person.canTrack}>추적 등록</button>}
       </div>
       {notice && <p className="follow-notice" role="status">{notice}</p>}
       <div className="follow-grid">
@@ -240,7 +290,11 @@ function FollowUpPage({ person }) {
   </DeskLayout>;
 }
 
-const person = currentStaff();
-createRoot(document.getElementById('app')).render(person?.account === 'active'
-  ? <FollowUpPage person={person} />
-  : <DeskLayout active="followup"><h1>팔로업</h1><p role="status">활성 계정이 필요합니다.</p></DeskLayout>);
+export function mountFollowUp(root, runtime) {
+  const person = runtime?.person ?? currentStaff();
+  createRoot(root).render(runtime || person?.account === 'active'
+    ? <FollowUpPage person={person} runtime={runtime} />
+    : <DeskLayout active="followup"><h1>팔로업</h1><p role="status">활성 계정이 필요합니다.</p></DeskLayout>);
+}
+
+if (!document.getElementById('followup-bootstrap')) mountFollowUp(document.getElementById('app'));
