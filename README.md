@@ -116,7 +116,9 @@ Task 10은 배정 트랜잭션에서 `apps.assignment.services.get_policy(cursor
 
 JSON 메시지 요청에는 `message_type` (`reply` 또는 `memo`), `body`, 동작마다 생성한 UUID인 `request_key`를 보낸다. 재호출에는 같은 키를 쓴다. 응답의 `message.delivery_status`가 `sent`면 답변완료, `failed`면 기존 상태 유지, `unknown` 또는 `sending`이면 중복 발송 방지를 위해 채널에서 전송 여부를 확인할 때까지 추가 발송을 막는다. CSV 이관을 적재할 때는 `ticket.csv_import_kind='migration'`과 원문 메시지를 연결하면 답변 처리 결과가 `internal_only`로 저장된다. 홈페이지 CSV 샘플은 별도 값인 `homepage_sample`로 구분한다. 두 CSV 유형의 티켓 번호는 기존 수집 티켓과 같은 회사별 카운터에서 할당된다.
 
-### Task 8 팔로업 백엔드
+### Task 8 팔로업
+
+공통 사이드바의 팔로업 메뉴에서 `/follow-up/`을 연다. 추적 티켓과 연락 예정·완료 기록은 PostgreSQL에서 조회한다. 팔로업 CSS와 알림 배지 JS는 `ticket-desk` 이미지 빌드의 `collectstatic`에서 수집된다.
 
 `init-db-topics`가 `followup_schema.sql`을 적용한다. 기존 Docker 환경에서는 위의 빌드·초기화 명령을 다시 실행한다. API 변경 요청에는 로그인 세션과 `X-CSRFToken`이 필요하다.
 

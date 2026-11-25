@@ -27,10 +27,11 @@ def tracks(cursor, company, staff):
     return fetch_rows(cursor)
 
 
-def notifications(cursor, company, staff):
-    cursor.execute("""
+def notifications(cursor, company, staff, *, summary=False):
+    query = """
         WITH tracked AS (
-            SELECT t.*, f.staff_user_uuid, f.tracked_at
+            SELECT t.ticket_uuid, t.company_uuid, t.customer_uuid, t.source_event_id,
+                   t.ticket_number, t.title, t.status, f.staff_user_uuid, f.tracked_at
             FROM followup_track f JOIN visible_ticket t USING(company_uuid,ticket_uuid)
             WHERE f.company_uuid=%s AND f.staff_user_uuid=%s
         )
@@ -57,9 +58,14 @@ def notifications(cursor, company, staff):
           AND coalesce(n.occurred_at,n.received_at)>coalesce(root.occurred_at,root.received_at)
           -- The closed Gmail thread rule is pending team agreement.
           AND (root.channel<>'gmail' OR t.status<>'답변완료')
-        ORDER BY occurred_at DESC, event_uuid, ticket_uuid
-    """, (company, staff))
-    return fetch_rows(cursor)
+    """
+    if summary:
+        query = "SELECT count(*) AS count, count(DISTINCT ticket_uuid) AS ticket_count FROM (" + query + ") events"
+    else:
+        query += " ORDER BY occurred_at DESC, event_uuid, ticket_uuid"
+    cursor.execute(query, (company, staff))
+    rows = fetch_rows(cursor)
+    return rows[0] if summary else rows
 
 
 def source_exists(cursor, company, ticket, chat):
@@ -68,6 +74,33 @@ def source_exists(cursor, company, ticket, chat):
     else:
         cursor.execute("SELECT 1 FROM chat WHERE company_uuid=%s AND chat_uuid=%s", (company, chat))
     return cursor.fetchone() is not None
+
+
+def registration_sources(cursor, company, staff, kind, keyword, *, tracking=False):
+    if kind == "ticket":
+        cursor.execute("""
+            SELECT t.ticket_uuid AS source_uuid, t.ticket_number AS label, t.title
+            FROM visible_ticket t
+            WHERE t.company_uuid=%s AND strpos(lower('#' || t.ticket_number || ' ' || t.title), lower(%s))>0
+                AND (NOT %s OR NOT EXISTS (
+                    SELECT FROM followup_track f WHERE f.company_uuid=t.company_uuid
+                      AND f.ticket_uuid=t.ticket_uuid AND f.staff_user_uuid=%s
+                ))
+            ORDER BY t.created_at DESC, t.ticket_uuid LIMIT 20
+        """, (company, keyword, tracking, staff))
+    else:
+        cursor.execute("""
+            SELECT c.chat_uuid AS source_uuid, left(c.chat_uuid::text, 8) AS label,
+                   coalesce(left(first_message.body,100), '1:1 상담') AS title
+            FROM chat c
+            LEFT JOIN LATERAL (
+                SELECT body FROM chat_message WHERE chat_uuid=c.chat_uuid AND sender_type='customer'
+                ORDER BY sent_at, chat_message_uuid LIMIT 1
+            ) first_message ON true
+            WHERE c.company_uuid=%s AND strpos(lower(concat_ws(' ',c.chat_uuid,first_message.body)),lower(%s))>0
+            ORDER BY c.waiting_at DESC, c.chat_uuid LIMIT 20
+        """, (company, keyword))
+    return fetch_rows(cursor)
 
 
 def add_contact(cursor, company, staff, data):
