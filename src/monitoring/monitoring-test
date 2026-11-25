@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 umask 077
+project=${VOC_MONITOR_PROJECT:-voc-monitoring-test}
+state_dir="./.local/${project#voc-}"
 
-export VOC_MONITOR_SECRETS_DIR=./.local/monitoring-test/secrets
+export VOC_MONITOR_SECRETS_DIR="$state_dir"/secrets
 export VOC_COLLECTOR_SECRETS_DIR="$VOC_MONITOR_SECRETS_DIR"
-export VOC_CAPTURE_DIR=./.local/monitoring-test/capture
-export VOC_EVAL_DIR=./.local/monitoring-test/eval
+export VOC_CAPTURE_DIR="$state_dir"/capture
+export VOC_EVAL_DIR="$state_dir"/eval
 export VOC_MONITOR_RUNTIME=true VOC_GRAFANA_ANONYMOUS=true
-export VOC_GRAFANA_PORT=23000 VOC_PROMETHEUS_PORT=29090 VOC_FLINK_PORT=28081 VOC_DESK_PORT=28082
-compose=(docker compose -p voc-monitoring-test -f compose.yaml -f compose.monitoring.yaml -f compose.monitoring-test.yaml)
+export VOC_GRAFANA_PORT=${VOC_GRAFANA_PORT:-23000} VOC_PROMETHEUS_PORT=${VOC_PROMETHEUS_PORT:-29090}
+export VOC_FLINK_PORT=${VOC_FLINK_PORT:-28081} VOC_DESK_PORT=${VOC_DESK_PORT:-28082}
+compose=(docker compose -p "$project" -f compose.yaml -f src/monitoring/compose.monitoring.yaml -f src/monitoring/compose.monitoring-test.yaml)
 
 mode=${1:-start}
 if (( $# > 0 )); then shift; fi
@@ -33,7 +36,7 @@ case "$mode" in
     company=$("${compose[@]}" exec -T postgres psql -XAt -U voc -d voc -v ON_ERROR_STOP=1 \
       -c "SELECT company_uuid FROM public.company WHERE email_domain='voc-test.invalid'")
     if [[ -z "$company" ]]; then
-      echo "먼저 scripts/monitoring-test seed를 실행하세요." >&2
+      echo "먼저 src/monitoring/monitoring-test seed를 실행하세요." >&2
       exit 1
     fi
     exec "${compose[@]}" exec -T ticket-desk python manage.py training_candidates "$company" "$@"
@@ -43,7 +46,7 @@ case "$mode" in
   stop) exec "${compose[@]}" stop ;;
   compose) exec "${compose[@]}" "$@" ;;
   *)
-    echo "사용법: scripts/monitoring-test {start|seed|candidates|password|status|stop|compose}" >&2
+    echo "사용법: src/monitoring/monitoring-test {start|seed|candidates|password|status|stop|compose}" >&2
     exit 2
     ;;
 esac

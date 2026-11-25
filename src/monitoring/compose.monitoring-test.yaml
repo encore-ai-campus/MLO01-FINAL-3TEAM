@@ -36,7 +36,7 @@ services:
       TZ: UTC
       PYTHONPATH: /app/src
     volumes:
-      - ./monitoring/test-fixture.py:/opt/voc-test-fixture.py:ro
+      - ./src/monitoring/test-fixture.py:/opt/voc-test-fixture.py:ro
       - ${VOC_CAPTURE_DIR:?Set the test capture directory}:/data
     secrets: [postgres_password]
     healthcheck:

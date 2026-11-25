@@ -94,6 +94,16 @@ class TicketDatabase(unittest.TestCase):
     def setUp(self):
         self.client = Client()
 
+    def login(self, company=1, employee=1):
+        response = self.client.post(
+            "/api/auth/login", data={"email": f"agent{employee}@qa{company}.test", "password": "SamplePass1!"},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.cookies["voc_session"]["httponly"])
+
+
+class TicketTests(TicketDatabase):
     def test_followup_tracking_notifications_and_contact_completion(self):
         base = "/api/follow-up"
         tracked = self.tickets[0]
@@ -152,6 +162,11 @@ class TicketDatabase(unittest.TestCase):
         followup = str(self.cur.fetchone()[0])
         self.addCleanup(self.cur.execute, "UPDATE voc.silver_messages SET message_kind='other' WHERE event_id=%s",
                         (event,))
+        self.assertEqual(self.client.get(base + "/notifications").json()["count"], 1)
+        self.cur.execute("""
+            UPDATE ticket SET classification_final_at=clock_timestamp(),
+                sentiment_status='succeeded',category_status='succeeded' WHERE ticket_uuid=%s
+        """, (followup,))
         notifications = self.client.get(base + "/notifications").json()
         self.assertEqual(notifications["count"], 2)
         self.assertEqual({item["kind"] for item in notifications["items"]}, {"memo", "customer_inquiry"})
@@ -283,17 +298,6 @@ class TicketDatabase(unittest.TestCase):
         self.cur.execute("DELETE FROM collab_request WHERE requester_uuid=%s", (sender,))
         self.cur.execute("DELETE FROM staff_user WHERE staff_user_uuid=%s", (sender,))
 
-    def login(self, company=1, employee=1):
-        response = self.client.post(
-            "/api/auth/login", data={"email": f"agent{employee}@qa{company}.test", "password": "SamplePass1!"},
-            content_type="application/json",
-        )
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertTrue(response.cookies["voc_session"]["httponly"])
-
-
-
-class TicketTests(TicketDatabase):
     def test_identity_tenant_permissions_and_logout(self):
         self.assertEqual(self.client.get("/api/tickets").status_code, 401)
         self.login()

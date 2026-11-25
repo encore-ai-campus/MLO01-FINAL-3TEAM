@@ -1,6 +1,6 @@
 # MLO01-FINAL-3TEAM
 
-[VoC 모니터링 실행·모델 연결 가이드](monitoring/README.md)
+[VoC 모니터링 실행·모델 연결 가이드](src/monitoring/README.md)
 
 - 팀명 : MLO01-FINAL-3TEAM
 - 프로젝트 기간 : 26.11.13 \~ 27.01.07
@@ -21,7 +21,7 @@ docker compose up -d --build ticket-desk db-worker classify embed
 사업자·직원·고객의 실제 매핑은 관리자가 등록한다. 등록한 수집 연결에서 `customer_inquiry`로 확인된 Silver 메시지가 들어오면 티켓번호와 첫 문의 메시지를 한 트랜잭션으로 생성한다. 수집 기록의 `message_kind`가 `unknown`이면 확인 전까지 업무 목록에서 대기한다. [회사·권한·채널 연결과 Silver 적재 가이드](src/collector/README.md)
 
 분류 워커는 Stable API 주소를 설정하면 대기한 문의를 처리한다. 감성과 카테고리를 모두 저장하면 상담사에게 티켓을 공개한다.
-세 번째 호출까지 실패한 티켓은 `분류 실패`로 공개한다. 임베딩 워커는 별도로 벡터를 저장한다. [팀 모델 연결](monitoring/README.md#팀-모델-연결)
+세 번째 호출까지 실패한 티켓은 `분류 실패`로 공개한다. 임베딩 워커는 별도로 벡터를 저장한다. [팀 모델 연결](src/monitoring/README.md#팀-모델-연결)
 
 새 로컬 DB에서 첫 직원을 등록하려면 회사와 도메인을 먼저 구성한다. 관리자가 아래 명령에 새 직원의 비밀번호를 입력하면 Argon2id 해시가 출력된다.
 
@@ -65,6 +65,7 @@ VALUES (:'company_id'::uuid,lower(:'email'),:'staff_name',:'password_hash');
 | `src/backend/apps/workspace`, `collaboration`, `analytics` | 업무 홈·받은 요청·VoC 분석의 시연 화면 |
 | `src/backend/templates`, `src/backend/static` | 공통 레이아웃·탐색·정적 파일 |
 | `src/collector`, `src/infra/channel_probe` | Discord·Gmail 수집, Flink 정제, PostgreSQL 적재 및 채널 점검 |
+| `src/monitoring` | Grafana·Prometheus 설정과 모니터링 테스트 환경 |
 
 `src/workers/`와 `src/ml/`은 후속 비동기 추론·학습 구현 위치다. 데이터 규격과 기존 적재 코드는 [VoC 데이터 계약](src/contracts/README.md)에 정리했다.
 

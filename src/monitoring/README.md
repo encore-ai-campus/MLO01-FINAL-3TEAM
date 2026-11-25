@@ -7,7 +7,7 @@ Grafana는 **파이프라인**, **AI 추론**, **카나리 배포** 세 화면�
 저장소 루트에서 실행한다. 미리보기는 별도 Compose 프로젝트 `voc-monitoring-review`와 `.local/monitoring-review` 데이터를 쓴다.
 
 ~~~bash
-./scripts/monitoring-review lite --build
+./src/monitoring/monitoring-review lite --build
 ~~~
 
 - Grafana [파이프라인](http://127.0.0.1:13000/d/voc-pipeline/pipeline) · [AI 추론](http://127.0.0.1:13000/d/voc-inference/inference) · [카나리 배포](http://127.0.0.1:13000/d/voc-deployment/deployment)
@@ -19,12 +19,12 @@ Grafana의 로컬 접속은 조회 전용이며 PostgreSQL 보고 뷰는 원문�
 전체 로컬 파이프라인을 테스트하려면 아래 명령을 쓴다. Gmail·Discord 외부 연동은 두 명령 모두 실행하지 않는다.
 
 ~~~bash
-./scripts/monitoring-review full --build
-./scripts/monitoring-review compose ps -a
+./src/monitoring/monitoring-review full --build
+./src/monitoring/monitoring-review compose ps -a
 ~~~
 
 전체 모드에서는 Flink를 [18181 포트](http://127.0.0.1:18181), 티켓 업무 화면을 [18182 포트](http://127.0.0.1:18182)에서 연다.
-명명된 Compose 프로젝트에 있는 서비스를 종료할 때는 `./scripts/monitoring-review compose stop`을 쓴다. 데이터는 유지한다.
+명명된 Compose 프로젝트에 있는 서비스를 종료할 때는 `./src/monitoring/monitoring-review compose stop`을 쓴다. 데이터는 유지한다.
 
 ### Docker 테스트 환경
 
@@ -32,9 +32,9 @@ Grafana의 로컬 접속은 조회 전용이며 PostgreSQL 보고 뷰는 원문�
 테스트가 모델 응답과 회신을 흉내 내므로, 팀 모델과 채널 계정 없이 상담 흐름을 확인할 수 있다.
 
 ~~~bash
-./scripts/monitoring-test start
-./scripts/monitoring-test seed
-./scripts/monitoring-test password
+./src/monitoring/monitoring-test start
+./src/monitoring/monitoring-test seed
+./src/monitoring/monitoring-test password
 ~~~
 
 - [티켓 목록](http://127.0.0.1:28082/tickets/)에서 `agent@voc-test.invalid`와 위 명령에 나온 비밀번호로 로그인한다.
@@ -50,12 +50,14 @@ Grafana의 로컬 접속은 조회 전용이며 PostgreSQL 보고 뷰는 원문�
 | `FAIL` | 분류 실패로 보이는 문의의 카테고리를 비워 두고 답변을 보낸다. | 감성 확인 후 유지 한 개 |
 
 ~~~bash
-./scripts/monitoring-test candidates
-./scripts/monitoring-test status
-./scripts/monitoring-test stop
+./src/monitoring/monitoring-test candidates
+./src/monitoring/monitoring-test status
+./src/monitoring/monitoring-test stop
 ~~~
 
 `candidates`는 후보와 근거를 JSON 줄로 출력한다. `stop`은 테스트 서비스만 멈추고 볼륨은 보존한다.
+다른 테스트 환경과 함께 실행하려면 `VOC_MONITOR_PROJECT`, `VOC_GRAFANA_PORT`, `VOC_PROMETHEUS_PORT`, `VOC_FLINK_PORT`, `VOC_DESK_PORT`를 지정한다.
+`seed`, `status`, `stop`에서도 처음 지정한 값을 사용한다.
 테스트 DB는 모든 시각을 `timestamptz`로 저장하며 조회 세션과 로그의 시간대는 UTC다.
 상담사 화면은 운영과 같은 한국 시간으로 표시한다. 실제 채팅 종료 화면은 별도 서비스가 연결될 때 확인할 수 있다.
 
@@ -73,11 +75,11 @@ Grafana의 로컬 접속은 조회 전용이며 PostgreSQL 보고 뷰는 원문�
   done
 )
 VOC_GRAFANA_PORT=13001 VOC_PROMETHEUS_PORT=19091 \
-  docker compose -f compose.yaml -f compose.monitoring.yaml up -d --build \
+  docker compose -f compose.yaml -f src/monitoring/compose.monitoring.yaml up -d --build \
   grafana db-worker publish taskmanager classify embed ticket-desk
 ~~~
 
-연결 후 [기존 프로젝트의 Grafana](http://127.0.0.1:13001/d/voc-pipeline/pipeline)에서 확인한다. Gmail·Discord 인증과 수집기 시작 절차는 [채널 수집 가이드](../src/collector/README.md)를 따른다.
+연결 후 [기존 프로젝트의 Grafana](http://127.0.0.1:13001/d/voc-pipeline/pipeline)에서 확인한다. Gmail·Discord 인증과 수집기 시작 절차는 [채널 수집 가이드](../collector/README.md)를 따른다.
 
 ## 화면에서 확인할 값
 
@@ -97,10 +99,10 @@ VOC_GRAFANA_PORT=13001 VOC_PROMETHEUS_PORT=19091 \
 답변완료 이력을 수집하는 상태에서 조회 기간 해당 버전의 표시 표본이 없으면 수정률은 `표본 없음`이다.
 이전 DB의 보존 티켓과 원문은 현재 대조에 포함한다. 이전 단계 완료 시각과 과거 모델 버전은 소급 입력하지 않는다.
 
-Git에 포함된 Canvas를 수정할 때 `monitoring/build_dashboards.py`를 편집하고 다시 생성한다.
+Git에 포함된 Canvas를 수정할 때 `src/monitoring/build_dashboards.py`를 편집하고 다시 생성한다.
 
 ~~~bash
-python3 monitoring/build_dashboards.py
+python3 src/monitoring/build_dashboards.py
 ~~~
 
 ## 팀 모델 연결
@@ -127,7 +129,7 @@ python3 monitoring/build_dashboards.py
 
 두 워커는 병렬로 실행한다. 분류는 Stable 주소를 설정해야 출발한다. 재시도는 Stable로 직접 보낸다.
 Stable 주소나 임베딩 주소가 비어 있으면 해당 작업을 대기 상태로 둔다. Worker 중단으로 결과가 불명확한 시도는 완료 호출 집계에서 제외한다.
-모델 연결 후 미리보기에서는 `./scripts/monitoring-review full --build`로 적용한다.
+모델 연결 후 미리보기에서는 `./src/monitoring/monitoring-review full --build`로 적용한다.
 기존 수집 프로젝트는 `docker compose up -d --build classify embed`로 분석 워커를 적용한다.
 정상 수집한 시간 범위의 무발생은 `0건`이다. Stable만 설정한 경우 Canary 무발생은 `미수집`이다.
 
@@ -136,9 +138,9 @@ Stable 주소나 임베딩 주소가 비어 있으면 해당 작업을 대기 �
 사람이 독립 검수한 정답 파일을 `.local/monitoring-review/eval`에 두고 아래 명령을 쓴다.
 
 ~~~bash
-./scripts/monitoring-review compose run --rm classify evaluate /eval/reviewed.json
-./scripts/monitoring-review compose run --rm classify replay 원본-event-UUID
-./scripts/monitoring-review compose run --rm embed retry-embedding 원본-event-UUID
+./src/monitoring/monitoring-review compose run --rm classify evaluate /eval/reviewed.json
+./src/monitoring/monitoring-review compose run --rm classify replay 원본-event-UUID
+./src/monitoring/monitoring-review compose run --rm embed retry-embedding 원본-event-UUID
 ~~~
 
 평가 JSON의 구조는 다음과 같다. 검수 근거에는 검수 작업이나 승인한 기록의 참조를 적는다.
@@ -229,10 +231,10 @@ Flink 자동 작업 복구는 실행 중인 JobManager가 담당한다. 로컬 �
 Kafka 위치가 남아 있는 기존 DB에서는 정제 결과와 티켓을 중복 생성하지 않는다.
 
 ~~~bash
-./scripts/monitoring-review compose exec -T postgres psql -X -v ON_ERROR_STOP=1 -U voc -d voc < src/collector/test_ticket_projection.sql
+./src/monitoring/monitoring-review compose exec -T postgres psql -X -v ON_ERROR_STOP=1 -U voc -d voc < src/collector/test_ticket_projection.sql
 curl -fsS http://127.0.0.1:13000/api/search
 curl -fsS 'http://127.0.0.1:19090/api/v1/query?query=up'
-./scripts/monitoring-review compose run --rm --no-deps -e VOC_RUN_MONITORING_TESTS=1 --entrypoint python metrics -m unittest collector.test_evaluation
+./src/monitoring/monitoring-review compose run --rm --no-deps -e VOC_RUN_MONITORING_TESTS=1 --entrypoint python metrics -m unittest collector.test_evaluation
 ~~~
 
 Django 티켓 테스트는 임시 DB에서 회신 미연결·미확인·재시도·성공 및 실제 표시 확인을 검사한다.

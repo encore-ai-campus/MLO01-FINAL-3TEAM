@@ -33,7 +33,7 @@ services:
     restart: unless-stopped
     command: ["--config.file=/etc/prometheus/prometheus.yml","--storage.tsdb.retention.time=6h"]
     volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./src/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - monitor_prometheus:/prometheus
     depends_on: [metrics]
     ports: ["127.0.0.1:${VOC_PROMETHEUS_PORT:-19090}:9090"]
@@ -57,8 +57,8 @@ services:
       GF_PLUGINS_PREINSTALL_DISABLED: "true"
     secrets: [monitor_reader_password, grafana_admin_password]
     volumes:
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - ./src/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./src/monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
       - monitor_grafana:/var/lib/grafana
     depends_on:
       monitor-db: {condition: service_completed_successfully}

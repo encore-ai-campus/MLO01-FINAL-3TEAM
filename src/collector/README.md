@@ -59,7 +59,7 @@ init-db-topics의 종료 코드 0은 테이블 및 토픽 준비 완료를 뜻�
 
 Silver는 **메시지 한 건당 한 행**이다. 전체 표준 JSON은 Kafka에서 전달하고, PostgreSQL에는 19개 필드와 DB 적재 시각 `standardized_at`을 둔다. Silver에서 JSONB를 사용하는 필드는 `source_metadata`다. 원본은 Bronze의 `raw_payload`에서 조회한다. 부모 ID는 있지만 원글을 아직 확인하지 못한 Discord 답글은 `source_conversation_id = NULL`로 저장한다. 나중에 같은 회사·연결·채널에서 부모가 들어오면 후속 답글까지 연결한다.
 
-`customer_inquiry` 한 건이 업무 티켓 하나가 된다. 같은 Gmail 스레드에서 온 후속 문의에도 새 번호를 발급한다. `voc.model_text_history`에 정제 제목과 본문을 저장한다. 분류 워커와 임베딩 워커가 같은 티켓을 병렬로 처리한다. 두 분류가 성공하면 임베딩 완료 전에도 상담사가 원문을 볼 수 있다. 세 번째 분류 호출 후 실패가 남으면 `분류 실패`를 표시한다. [모니터링 실행 가이드](../../monitoring/README.md)
+`customer_inquiry` 한 건이 업무 티켓 하나가 된다. 같은 Gmail 스레드에서 온 후속 문의에도 새 번호를 발급한다. `voc.model_text_history`에 정제 제목과 본문을 저장한다. 분류 워커와 임베딩 워커가 같은 티켓을 병렬로 처리한다. 두 분류가 성공하면 임베딩 완료 전에도 상담사가 원문을 볼 수 있다. 세 번째 분류 호출 후 실패가 남으면 `분류 실패`를 표시한다. [모니터링 실행 가이드](../monitoring/README.md)
 
 | 업무 테이블의 컬럼 | 티켓 생성 때 저장하는 값 |
 | --- | --- |

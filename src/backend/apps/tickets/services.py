@@ -4,8 +4,6 @@ from uuid import UUID, uuid4
 from django.core import signing
 from django.db import connection, transaction
 
-from django.db import connection, transaction
-
 from apps.accounts.services import TICKET_HANDLE, current_actor, require_work_permission
 from config.database import read_snapshot
 from config.http import DeskError
