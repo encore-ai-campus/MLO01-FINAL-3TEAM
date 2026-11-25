@@ -8,6 +8,7 @@ from django.db import DatabaseError, connection
 from apps.preferences.navigation import visible_sidebar
 from config.http import DeskError
 from . import repository
+from .repository import DASHBOARD_READ
 
 logger = logging.getLogger(__name__)
 hasher = PasswordHasher()
@@ -16,7 +17,6 @@ dummy_hash = hasher.hash(token_urlsafe(32))
 TICKET_HANDLE = "ticket.handle"
 CHAT_HANDLE = "chat.handle"
 TEAM_REPLY_EDIT = "quick_reply.team.edit"
-DASHBOARD_READ = "analytics.read"
 WORK_PERMISSIONS = (
     (TICKET_HANDLE, "티켓 상담"),
     (CHAT_HANDLE, "채팅 상담"),
@@ -69,7 +69,7 @@ def settings_employee(cursor, actor, staff_uuid, *, lock=False):
 
 def require_work_permission(cursor, actor, code):
     if code == DASHBOARD_READ:
-        allowed = repository.dashboard_allowed(cursor, actor, code)
+        allowed = actor["can_read_dashboard"]
     else:
         allowed = repository.work_permissions(cursor, actor["company_uuid"], actor["staff_user_uuid"], (code,))
     if not allowed:

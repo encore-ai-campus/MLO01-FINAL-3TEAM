@@ -228,19 +228,24 @@ class TicketTests(unittest.TestCase):
         self.login(company=2)
         self.assertEqual(self.client.get(f"{contacts}/{ident}").status_code, 404)
 
-    def test_followup_sidebar_uses_the_signed_in_role(self):
+    def test_followup_sidebar_reflects_a_dashboard_grant_in_the_current_session(self):
         self.login()
         url = reverse("followup:page")
         staff = self.employees[0]
-        self.cur.execute("SELECT role FROM staff_user WHERE staff_user_uuid=%s", (staff,))
-        original_role = self.cur.fetchone()[0]
-        self.addCleanup(self.cur.execute, "UPDATE staff_user SET role=%s WHERE staff_user_uuid=%s", (original_role, staff))
-        for role in ("agent", "admin"):
-            with self.subTest(role=role):
-                self.cur.execute("UPDATE staff_user SET role=%s WHERE staff_user_uuid=%s", (role, staff))
-                page = self.client.get(url)
-                self.assertEqual(page.status_code, 200)
-                self.assertEqual('href="/analytics/"' in page.content.decode(), role == "admin")
+        self.cur.execute("SELECT permission_uuid FROM permission WHERE code='analytics.read'")
+        permission = self.cur.fetchone()[0]
+        remove = "DELETE FROM staff_permission WHERE staff_user_uuid=%s AND permission_uuid=%s"
+        self.addCleanup(self.cur.execute, remove, (staff, permission))
+
+        before = self.client.get(url)
+        self.assertEqual(before.status_code, 200)
+        self.assertNotIn('href="/analytics/"', before.content.decode())
+        self.cur.execute("INSERT INTO staff_permission(staff_user_uuid,permission_uuid) VALUES (%s,%s)", (staff, permission))
+        self.assertContainsHTML(self.client.get(url), 'href="/analytics/"')
+        self.cur.execute(remove, (staff, permission))
+        revoked = self.client.get(url)
+        self.assertEqual(revoked.status_code, 200)
+        self.assertNotIn('href="/analytics/"', revoked.content.decode())
 
     def test_followup_page_and_api_mutations_use_django(self):
         page_url = reverse("followup:page")

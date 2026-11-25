@@ -199,26 +199,24 @@ class SettingsTests(TestCase):
         self.cursor.execute("DELETE FROM staff_user WHERE staff_user_uuid=%s", (self.agent,))
         self.assertContains(self.client.get("/settings/replies/", {"scope": "team"}), "배송 안내")
 
-    def test_analytics_menu_follows_role_even_with_grant_and_saved_preference(self):
+    def test_analytics_menu_follows_work_permission_and_saved_preference(self):
         agent = self.session(self.agent)
-        for staff in (self.admin, self.agent):
-            self.assertEqual(self.change_rights(staff, "chat.handle", "analytics.read").status_code, 302)
-
-        for staff, client, is_admin in ((self.admin, self.client, True), (self.agent, agent, False)):
-            for saved in (None, ["tickets", "analytics"], []):
-                with self.subTest(staff=staff, sidebar=saved):
-                    preferences = {} if saved is None else {"sidebar": saved}
-                    self.cursor.execute("UPDATE staff_user SET display_preferences=%s WHERE staff_user_uuid=%s",
-                                        (json.dumps(preferences), staff))
-                    visible = is_admin and (saved is None or "analytics" in saved)
-                    display = client.get("/settings/display/")
-                    self.assertEqual(display.status_code, 200)
-                    html = display.content.decode()
-                    self.assertEqual('href="/analytics/"' in html, visible)
-                    self.assertEqual('value="analytics"' in html, is_admin)
-                    home = client.get("/home/")
-                    self.assertEqual(home.status_code, 200)
-                    self.assertEqual('href="/analytics/"' in home.content.decode(), visible)
+        for staff, client in ((self.admin, self.client), (self.agent, agent)):
+            for granted in (True, False):
+                codes = ["analytics.read"] if granted else []
+                self.assertEqual(self.change_rights(staff, *codes).status_code, 302)
+                for saved in (None, ["tickets", "analytics"], []):
+                    with self.subTest(staff=staff, granted=granted, sidebar=saved):
+                        preferences = {} if saved is None else {"sidebar": saved}
+                        self.cursor.execute("UPDATE staff_user SET display_preferences=%s WHERE staff_user_uuid=%s",
+                                            (json.dumps(preferences), staff))
+                        visible = granted and (saved is None or "analytics" in saved)
+                        display = client.get("/settings/display/")
+                        self.assertEqual(display.status_code, 200)
+                        self.assertEqual('value="analytics"' in display.content.decode(), granted)
+                        home = client.get("/home/")
+                        self.assertEqual(home.status_code, 200)
+                        self.assertEqual('href="/analytics/"' in home.content.decode(), visible)
 
     def test_display_preferences_are_saved_per_employee(self):
         agent = self.session(self.agent)

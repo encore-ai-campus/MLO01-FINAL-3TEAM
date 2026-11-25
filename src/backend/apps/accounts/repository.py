@@ -7,6 +7,7 @@ from django.db import connection, transaction
 from config.database import fetch_rows
 
 SESSION_SECONDS = 8 * 60 * 60
+DASHBOARD_READ = "analytics.read"
 
 
 def token_digest(token):
@@ -55,12 +56,18 @@ def find_staff(cursor, token):
                EXISTS (
                    SELECT FROM staff_permission sp JOIN permission p USING(permission_uuid)
                    WHERE sp.staff_user_uuid=s.staff_user_uuid AND p.code='ticket.read'
-               ) AS can_read
+               ) AS can_read,
+               -- Before settings setup the permission does not exist and admins have dashboard access.
+               CASE WHEN dashboard.permission_uuid IS NULL THEN coalesce(to_jsonb(s)->>'role' = 'admin', false)
+                    ELSE dashboard_grant.staff_user_uuid IS NOT NULL END AS can_read_dashboard
         FROM staff_session ses JOIN staff_user s USING(staff_user_uuid)
         JOIN company c ON c.company_uuid=s.company_uuid
+        LEFT JOIN permission dashboard ON dashboard.code=%s
+        LEFT JOIN staff_permission dashboard_grant ON dashboard_grant.permission_uuid=dashboard.permission_uuid
+            AND dashboard_grant.staff_user_uuid=s.staff_user_uuid
         WHERE ses.token_hash=%s AND ses.expires_at > now()
           AND lower(c.email_domain)=lower(split_part(s.email,'@',2))
-    """, (token_digest(token),))
+    """, (DASHBOARD_READ, token_digest(token)))
     actor = next(iter(fetch_rows(cursor)), None)
     if actor:
         actor["display_preferences"] = json.loads(actor["display_preferences"] or "{}")
@@ -113,19 +120,6 @@ def set_work_permissions(cursor, company_uuid, staff_uuid, managed_codes, grante
         ON CONFLICT DO NOTHING
     """, (company_uuid, staff_uuid, list(granted_codes)))
     return True
-
-
-def dashboard_allowed(cursor, actor, code):
-    cursor.execute("""
-        SELECT coalesce((
-            SELECT EXISTS (
-                SELECT FROM staff_permission sp JOIN staff_user s USING(staff_user_uuid)
-                WHERE sp.permission_uuid=p.permission_uuid AND s.staff_user_uuid=%s AND s.company_uuid=%s
-            )
-            FROM permission p WHERE p.code=%s
-        ), %s)
-    """, (actor["staff_user_uuid"], actor["company_uuid"], code, actor.get("role") == "admin"))
-    return cursor.fetchone()[0]
 
 
 def revoke(token):
