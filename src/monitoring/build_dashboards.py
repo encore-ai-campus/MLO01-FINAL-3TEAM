@@ -157,18 +157,21 @@ def dashboard(name, panels, *, template=None, title=None, **options):
 def collector_positions():
     observed = ('last_over_time(voc_collector_status_observed_seconds[$__range]) '
                 '>= (${__from} / 1000) <= (${__to} / 1000)')
-    ready = f'max by(channel) (last_over_time(voc_collector_ready[$__range]) and ({observed}))'
+    fallback = ('label_replace(vector(-1), "channel", "gmail", "", "") '
+                'or label_replace(vector(-1), "channel", "discord", "", "")')
+    ready = (f'max by(channel) (last_over_time(voc_collector_ready[$__range]) and ({observed})) '
+             f'or on(channel) ({fallback})')
     # Cursor samples have value 1, so the multiplication keeps their labels and uses readiness as the value.
     config = omit_prometheus_fields(prom(
         16, "채널별 수집 위치", 0, 27, 24, 6,
         f'(voc_collector_position * on(channel) group_left() ({ready})) or on(channel) ({ready})',
-        description="선택한 기간에 상태가 기록된 채널의 수집 상태와 연결별 마지막 위치를 표시합니다.",
+        description="Gmail과 Discord의 저장된 위치를 표시합니다. 선택한 기간에 기록이 없으면 수집 상태는 미수집입니다.",
     ))
     config["transformations"][0]["options"]["renameByName"].update({"phase": "수집 단계", "Value": "수집 상태"})
     config["fieldConfig"]["overrides"] = [{
         "matcher": {"id": "byType", "options": "number"},
         "properties": [{"id": "mappings", "value": [{"type": "value", "options": {
-            "0": {"text": "준비 상태 아님"}, "1": {"text": "수집 중"},
+            "-1": {"text": "미수집"}, "0": {"text": "준비 상태 아님"}, "1": {"text": "수집 중"},
         }}]}],
     }]
     return config
