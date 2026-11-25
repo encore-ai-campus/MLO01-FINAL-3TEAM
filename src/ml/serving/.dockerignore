@@ -1,0 +1,5 @@
+**
+!requirements.txt
+!server.py
+!voc_models/
+!voc_models/*.py

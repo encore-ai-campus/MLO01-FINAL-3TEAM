@@ -12,3 +12,21 @@ class AssignmentPolicyForm(forms.Form):
         ("immediate", "소진 즉시 보충"),
         ("after_all", "전체 소진 후 재배정"),
     ))
+
+
+class CategoryRouteForm(forms.Form):
+    category_uuid = forms.UUIDField()
+    team_uuid = forms.UUIDField(required=False)
+
+
+class CategoryChangeForm(forms.Form):
+    category_uuid = forms.UUIDField()
+    reason = forms.CharField(max_length=1000, required=False)
+
+
+class CategoryResultForm(forms.Form):
+    company_uuid = forms.UUIDField()
+    event_id = forms.UUIDField()
+    preprocess_version = forms.IntegerField(min_value=1, max_value=2147483647)
+    body_version = forms.IntegerField(min_value=1, max_value=2147483647)
+    category_uuid = forms.UUIDField(required=False)

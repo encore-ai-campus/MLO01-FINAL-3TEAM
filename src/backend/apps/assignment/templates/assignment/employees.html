@@ -1,0 +1,5 @@
+{% extends "preferences/employees.html" %}
+{% block settings_content %}
+  <p><a class="desk-button" href="{% url 'assignment:category-routes' %}">카테고리별 담당 부서</a></p>
+  {{ block.super }}
+{% endblock %}

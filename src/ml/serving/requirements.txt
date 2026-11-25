@@ -1,0 +1,5 @@
+fastapi==0.115.12
+pydantic==2.11.5
+uvicorn==0.34.3
+prometheus-client==0.22.1
+transformers==4.57.3

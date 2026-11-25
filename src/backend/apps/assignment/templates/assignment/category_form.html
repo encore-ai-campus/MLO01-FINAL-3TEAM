@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}카테고리 지정·부서 재배정{% endblock %}
+{% block content %}
+<section class="desk-card">
+  <div class="desk-heading">
+    <h1>티켓 #{{ ticket.ticket_number }} 카테고리 지정·부서 재배정</h1>
+    <a class="desk-button" href="{% url 'tickets:detail' ticket.ticket_uuid %}">티켓으로 돌아가기</a>
+  </div>
+  {% if ticket.category_review_reason == "classification_abstained" %}<p>자동 분류가 보류되어 수동 검토가 필요합니다.</p>{% endif %}
+  {% if ticket.category_review_reason == "no_team_mapping" %}<p>카테고리의 담당 부서가 등록되지 않았습니다.</p>{% endif %}
+  {% if categories %}
+  <form method="post">
+    {% csrf_token %}
+    <p>
+      <label for="category-uuid">카테고리</label>
+      <select id="category-uuid" name="category_uuid" required>
+        <option value="">선택</option>
+        {% for category in categories %}<option value="{{ category.category_uuid }}"{% if category.category_uuid == ticket.category_uuid %} selected{% endif %}>{{ category.name }}</option>{% endfor %}
+      </select>
+    </p>
+    <p><label for="category-reason">변경 사유</label> <textarea id="category-reason" name="reason" maxlength="1000"></textarea></p>
+    <button class="desk-button desk-button-solid" type="submit">저장</button>
+  </form>
+  {% else %}<p>이 티켓의 도메인에 등록된 카테고리가 없습니다.</p>{% endif %}
+</section>
+{% endblock %}

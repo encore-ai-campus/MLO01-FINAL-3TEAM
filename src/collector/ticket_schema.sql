@@ -83,6 +83,22 @@ CREATE INDEX IF NOT EXISTS ticket_assignee_order ON public.ticket(company_uuid,a
 CREATE INDEX IF NOT EXISTS ticket_customer_history ON public.ticket(company_uuid,customer_uuid,created_at);
 ALTER TABLE public.ticket ADD COLUMN IF NOT EXISTS csv_import_kind text;
 ALTER TABLE public.ticket ALTER COLUMN source_event_id DROP NOT NULL;
+ALTER TABLE public.ticket ADD COLUMN IF NOT EXISTS category_manually_set boolean NOT NULL DEFAULT false;
+ALTER TABLE public.ticket ADD COLUMN IF NOT EXISTS category_review_reason text
+    CHECK (category_review_reason IN ('classification_abstained','no_team_mapping'));
+ALTER TABLE public.ticket ADD COLUMN IF NOT EXISTS category_applied_body_version integer;
+ALTER TABLE public.ticket ADD COLUMN IF NOT EXISTS category_applied_preprocess_version integer;
+CREATE TABLE IF NOT EXISTS public.ticket_category_team_route (
+    company_uuid uuid NOT NULL REFERENCES public.company ON DELETE CASCADE,
+    domain_uuid uuid NOT NULL,
+    category_uuid uuid NOT NULL,
+    team_uuid uuid NOT NULL,
+    PRIMARY KEY (company_uuid, category_uuid),
+    FOREIGN KEY (domain_uuid, category_uuid) REFERENCES public.category(domain_uuid, category_uuid) ON DELETE CASCADE,
+    FOREIGN KEY (company_uuid, team_uuid) REFERENCES public.team(company_uuid, team_uuid) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS ticket_team_assignment_queue ON public.ticket(company_uuid,assigned_team_uuid,created_at,ticket_number)
+    WHERE status='미처리' AND assignee_uuid IS NULL;
 DO $$ BEGIN
     IF NOT EXISTS (SELECT FROM pg_constraint WHERE conrelid='public.ticket'::regclass
                    AND conname='ticket_origin_check') THEN
@@ -188,7 +204,8 @@ CREATE TABLE IF NOT EXISTS public.event_type (
 );
 INSERT INTO public.event_type(event_type_uuid, code)
 VALUES (gen_random_uuid(), 'ticket_transfer'), (gen_random_uuid(), 'ticket_review_requested'),
-       (gen_random_uuid(), 'ticket_reply_completed')
+       (gen_random_uuid(), 'ticket_reply_completed'), (gen_random_uuid(), 'ticket_category_changed'),
+       (gen_random_uuid(), 'assigned')
 ON CONFLICT (code) DO NOTHING;
 CREATE TABLE IF NOT EXISTS public.ticket_event (
     ticket_event_uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -199,6 +216,7 @@ CREATE TABLE IF NOT EXISTS public.ticket_event (
     created_at timestamptz NOT NULL DEFAULT now(), transfer_reason text
 );
 ALTER TABLE public.ticket_event ADD COLUMN IF NOT EXISTS collab_request_uuid uuid REFERENCES public.collab_request;
+ALTER TABLE public.ticket_event ADD COLUMN IF NOT EXISTS details jsonb NOT NULL DEFAULT '{}';
 CREATE INDEX IF NOT EXISTS ticket_transfer_recipient_order
     ON public.ticket_event(recipient_uuid, created_at DESC, ticket_event_uuid);
 CREATE INDEX IF NOT EXISTS ticket_event_ticket_order

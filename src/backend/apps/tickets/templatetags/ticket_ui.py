@@ -18,6 +18,7 @@ BADGES = {
     "미처리": "amber", "보류": "blue", "답변완료": "green",
     "긍정": "green", "중립": "amber", "부정": "red", "매우 부정": "strong-red",
     "미배정": "neutral", "분류 대기": "neutral", "분석 중": "neutral", "분석 실패": "red",
+    "분류 보류": "amber", "담당 부서 미등록": "amber",
 }
 
 
@@ -25,6 +26,12 @@ BADGES = {
 def analysis_label(ticket, field):
     state = ticket.get(field + "_status")
     if state == "succeeded":
+        if field == "category":
+            reason = ticket.get("category_review_reason")
+            if reason == "classification_abstained":
+                return "분류 보류"
+            if reason == "no_team_mapping":
+                return "담당 부서 미등록"
         return ticket.get(field) or ("미분류" if field == "category" else "결과 없음")
     return {"running": "분석 중", "failed": "분석 실패"}.get(state, "분류 대기")
 
