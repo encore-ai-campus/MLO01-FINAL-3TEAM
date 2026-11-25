@@ -141,8 +141,9 @@ services:
     init: true
     environment:
       DATABASE_URL: postgresql://voc@postgres/voc
-      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,[::1]}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,[::1],ticket-desk}
       TASK3_REPLY_CONNECTIONS:
+      VOC_ASSIGNMENT_WORKER_TOKEN:
     secrets: [postgres_password, django_secret_key]
     ports: ["127.0.0.1:18082:8000"]
     depends_on: *initialized

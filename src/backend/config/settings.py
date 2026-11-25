@@ -20,6 +20,7 @@ SECRET_KEY = secret("DJANGO_SECRET_KEY", "django_secret_key")
 if not SECRET_KEY:
     raise ImproperlyConfigured("Set DJANGO_SECRET_KEY or mount /run/secrets/django_secret_key")
 DEBUG = False
+VOC_ASSIGNMENT_WORKER_TOKEN = secret("VOC_ASSIGNMENT_WORKER_TOKEN", "voc_assignment_worker_token")
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]").split(",")
 ROOT_URLCONF = "config.urls"
 ASGI_APPLICATION = "config.asgi.application"
@@ -28,7 +29,7 @@ if not DATABASES["default"]["PASSWORD"]:
     DATABASES["default"]["PASSWORD"] = secret("PGPASSWORD", "postgres_password")
 
 INSTALLED_APPS = ["django.contrib.staticfiles", "apps.accounts", "apps.tickets", "apps.workspace",
-                  "apps.collaboration", "apps.analytics", "apps.preferences", "apps.followup"]
+                  "apps.collaboration", "apps.analytics", "apps.preferences", "apps.followup", "apps.assignment"]
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",

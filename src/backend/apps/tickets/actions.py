@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from django.db import connection, transaction
 
 from apps.accounts.services import TICKET_HANDLE, current_actor, require_work_permission
+from apps.assignment.services import refill_after_completion
 from config.database import fetch_rows, read_snapshot
 from config.http import DeskError
 
@@ -144,5 +145,6 @@ def store_message(token, ticket_uuid, message_type, body, request_key):
             repo.add_event(cursor, ticket_uuid, actor, "ticket_reply_completed",
                            from_status=ticket_status, to_status="답변완료")
             ticket_status = "답변완료"
+            transaction.on_commit(lambda: refill_after_completion(ticket_uuid), robust=True)
         cursor.execute("UPDATE ticket SET status=%s,updated_at=now() WHERE ticket_uuid=%s", (ticket_status, ticket_uuid))
     return {"message": message, "ticket_status": ticket_status}

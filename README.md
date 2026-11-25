@@ -135,6 +135,18 @@ JSON 메시지 요청에는 `message_type` (`reply` 또는 `memo`), `body`, 동�
 
 연락 시각은 ISO 8601 값을 사용한다. 연락 기록은 등록자와 지정 담당자가 조회할 수 있으며, 티켓·채팅 조회 권한을 각각 적용한다. 채팅 원본 링크는 1:1 상담과 메시지를 반환하는 `GET /api/chats/{chat_uuid}`로 연결된다. 종료된 Gmail 스레드의 후속 문의 알림 조건은 팀 합의가 필요하며, 현재는 원본 티켓이 답변완료 상태면 해당 고객 알림을 제외한다.
 
+### 모델 추론 및 티켓 배정
+
+M5의 `linux/arm64` CPU용 이미지, Stable·Canary 모델 설정과 `/v1/predict` 호출 규격은 [모델 서버 실행 가이드](src/ml/serving/README.md)에 있습니다. 추론 서버는 티켓 DB에 접근하지 않습니다.
+
+기존 설치에서는 `init-db-topics`로 `ticket_schema.sql`을 다시 적용하고 `ticket-desk`를 갱신합니다. 관리자가 `/settings/assignment/category-routes/`에서 회사의 카테고리별 담당 부서를 등록합니다. 직원별 자동 배정은 기존 `/settings/assignment/`의 활성화 여부, 배정 건수, 보충 시점을 사용합니다. 상담 담당자는 티켓 상세의 카테고리 변경 화면에서 분류를 수정할 수 있습니다.
+
+분류 워커는 카테고리 응답의 업무 코드를 먼저 `category_uuid`로 변환합니다. 카테고리 결과는 `POST /api/internal/ticket-assignments/category-result`에 `company_uuid`, `event_id`, `preprocess_version`, `body_version`, `category_uuid`를 보내 적용합니다. 판단을 보류하면 `category_uuid`에 JSON `null`을 보냅니다. 분류 결과 저장과 배정을 한 트랜잭션으로 처리하므로 카테고리 열을 별도로 갱신하는 처리는 이 호출로 교체합니다. 감성 결과는 워커가 기존 계약대로 저장합니다.
+
+정상 응답의 `outcome`은 `applied` 또는 `review_required`입니다. 같은 작업 버전과 카테고리를 재전송하면 `already_applied`를 반환합니다. 이전 버전이나 수동 수정된 카테고리에는 각각 `stale_result`, `manual_preserved`를 반환합니다. 같은 작업 버전에 이미 적용한 값과 다른 카테고리가 들어오면 `409`를 반환합니다. 워커가 `running`이나 `failed` 상태를 따로 기록할 때는 현재 작업 버전과 `category_manually_set=false` 조건을 지킵니다.
+
+`ticket-desk`와 분류 워커에 같은 `VOC_ASSIGNMENT_WORKER_TOKEN`을 주입하고, 워커는 `Authorization: Bearer <token>` 헤더로 호출합니다. Compose 내부 주소는 `http://ticket-desk:8000`입니다. 별도 서비스 이름을 쓰는 환경은 그 이름을 `DJANGO_ALLOWED_HOSTS`에 포함합니다.
+
 ### 테스트
 
 앞서 만든 가상환경에서 아래 명령을 실행한다. `DATABASE_URL`을 데이터베이스를 생성할 수 있는 **테스트 전용** 접속 문자열로 먼저 설정한다. 티켓 테스트는 임시 데이터베이스를 생성해 삭제하고, 로그인 조회 테스트는 임시 스키마를 만들어 정리한다.

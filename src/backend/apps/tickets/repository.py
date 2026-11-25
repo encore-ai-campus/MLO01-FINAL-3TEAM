@@ -10,7 +10,7 @@ SORTS = {
 TICKET_COLUMNS = """
     t.ticket_uuid, t.ticket_number, c.external_customer_id AS customer_id, t.title,
     tm.name AS team_name, COALESCE(st.name, st.email) AS assignee_name, t.status,
-    cat.name AS category, t.category_status, t.sentiment, t.sentiment_status,
+    cat.name AS category, t.category_status, t.category_review_reason, t.sentiment, t.sentiment_status,
     t.created_at, t.updated_at, ch.type AS channel
 """
 TICKET_FROM = """
