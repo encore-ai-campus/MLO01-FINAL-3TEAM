@@ -3,6 +3,7 @@ import random
 from django.conf import settings
 from django.db import connection, transaction
 
+from apps.tickets.action_repository import has_unsettled_reply
 from config.database import fetch_rows
 from config.http import DeskError
 
@@ -121,27 +122,54 @@ def apply_category_result(*, company_uuid, event_id, preprocess_version, body_ve
         return assignment_result(repo.read_ticket(cursor, company_uuid, ticket_uuid), outcome)
 
 
-def change_category(token, ticket_uuid, category_uuid, reason):
+def change_analysis(token, ticket_uuid, *, category_uuid=None, sentiment=None, team_uuid=None, reason=""):
     from apps.tickets.actions import require_assignee, write_ticket
 
     with write_ticket(token, ticket_uuid) as (cursor, actor, locked_ticket):
         require_assignee(actor, locked_ticket)
         company_uuid = actor["company_uuid"]
         ticket = repo.read_ticket(cursor, company_uuid, ticket_uuid)
-        categories = repo.category_choices(cursor, ticket["domain_uuid"])
-        if category_uuid not in {category["category_uuid"] for category in categories}:
-            raise DeskError(422, "CATEGORY_OUTSIDE_TICKET_DOMAIN", "티켓 도메인에 속한 카테고리를 선택해 주세요.")
-        if (ticket["category_manually_set"] and ticket["category_uuid"] == category_uuid
-                and ticket["category_review_reason"] is None):
-            return assignment_result(ticket, "already_applied")
+        team_changed = team_uuid is not None and team_uuid != ticket["assigned_team_uuid"]
+        if team_changed:
+            if team_uuid not in {team["team_uuid"] for team in repo.team_choices(cursor, company_uuid)}:
+                raise DeskError(422, "INVALID_TEAM", "소속 회사의 부서를 선택해 주세요.")
+            if has_unsettled_reply(cursor, ticket_uuid):
+                raise DeskError(409, "DELIVERY_UNCERTAIN", "답변 발송 결과를 확인한 뒤 담당 부서를 바꿔 주세요.")
 
-        repo.save_manual_category(cursor, ticket_uuid, category_uuid)
+        category_changed = category_uuid is not None and (
+            ticket["category_uuid"] != category_uuid or not ticket["category_manually_set"]
+            or ticket["category_review_reason"] is not None
+        )
+        if category_changed:
+            categories = repo.category_choices(cursor, ticket["domain_uuid"])
+            if category_uuid not in {category["category_uuid"] for category in categories}:
+                raise DeskError(422, "CATEGORY_OUTSIDE_TICKET_DOMAIN", "티켓 도메인에 속한 카테고리를 선택해 주세요.")
+            repo.save_manual_category(cursor, ticket_uuid, category_uuid)
+
+        sentiment_changed = bool(sentiment) and sentiment != ticket["sentiment"]
+        if sentiment_changed:
+            repo.save_manual_sentiment(cursor, ticket_uuid, sentiment)
+        if team_changed:
+            repo.reassign_team(cursor, ticket_uuid, team_uuid)
+        if not (category_changed or sentiment_changed or team_changed):
+            return assignment_result(ticket, "already_applied")
         result = repo.read_ticket(cursor, company_uuid, ticket_uuid)
-        repo.record_event(cursor, ticket_uuid, "ticket_category_changed", actor=actor["staff_user_uuid"],
-                          reason=reason, details={
-                              "category_before": ticket["category_uuid"], "category_after": category_uuid,
-                              "team_before": ticket["assigned_team_uuid"], "team_after": result["assigned_team_uuid"],
-                              "assignee_before": ticket["assignee_uuid"], "assignee_after": result["assignee_uuid"],
-                              "review_reason": result["category_review_reason"],
-                          })
+        actor_uuid = actor["staff_user_uuid"]
+        assignment_changes = {
+            "team_before": ticket["assigned_team_uuid"], "team_after": result["assigned_team_uuid"],
+            "assignee_before": ticket["assignee_uuid"], "assignee_after": result["assignee_uuid"],
+        }
+        if category_changed:
+            repo.record_event(cursor, ticket_uuid, "ticket_category_changed", actor=actor_uuid, reason=reason, details={
+                **assignment_changes, "category_before": ticket["category_uuid"], "category_after": category_uuid,
+                "review_reason": result["category_review_reason"],
+            })
+        if sentiment_changed:
+            repo.record_manual_event(cursor, ticket_uuid, "ticket_sentiment_changed",
+                                     actor=actor_uuid, reason=reason, details={
+                                         "sentiment_before": ticket["sentiment"], "sentiment_after": sentiment,
+                                     })
+        if team_changed:
+            repo.record_manual_event(cursor, ticket_uuid, "ticket_team_reassigned",
+                                     actor=actor_uuid, reason=reason, details=assignment_changes)
         return assignment_result(result, "applied")

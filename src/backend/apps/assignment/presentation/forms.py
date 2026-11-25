@@ -1,5 +1,7 @@
 from django import forms
 
+from apps.tickets.presentation.forms import SENTIMENTS
+
 
 class AssignmentPolicyForm(forms.Form):
     enabled = forms.BooleanField(label="자동 배정 사용", required=False)
@@ -22,6 +24,12 @@ class CategoryRouteForm(forms.Form):
 class CategoryChangeForm(forms.Form):
     category_uuid = forms.UUIDField()
     reason = forms.CharField(max_length=1000, required=False)
+
+
+class AnalysisChangeForm(CategoryChangeForm):
+    category_uuid = forms.UUIDField(required=False)
+    sentiment = forms.ChoiceField(choices=[(value, value) for value in SENTIMENTS], required=False)
+    team_uuid = forms.UUIDField(required=False)
 
 
 class CategoryResultForm(forms.Form):

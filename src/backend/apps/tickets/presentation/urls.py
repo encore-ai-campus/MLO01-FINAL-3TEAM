@@ -6,6 +6,7 @@ app_name = "tickets"
 urlpatterns = [
     path("tickets/", views.ticket_list, name="list"),
     path("tickets/<uuid:ticket_uuid>/", views.detail, name="detail"),
+    path("tickets/<uuid:ticket_uuid>/complete/", views.complete_ticket, name="complete"),
     path("api/tickets/options", views.options),
     path("api/tickets", views.ticket_list, {"as_json": True}),
     path("api/tickets/<uuid:ticket_uuid>/memos", views.add_memo, name="add-memo"),

@@ -141,6 +141,23 @@ class WorkerTests(unittest.TestCase):
         worker.finish(self.cn, resumed, "긍정")
         self.assertEqual(self.ticket()["sentiment"], "긍정")
 
+    def test_manual_sentiment_remains_protected_if_it_matches_the_last_model_projection(self):
+        claimed = self.two_claims()
+        worker.finish(self.cn, claimed["category"], "delivery")
+        worker.finish(self.cn, claimed["sentiment"], "긍정")
+        ticket = self.ticket()
+        self.cn.execute("INSERT INTO event_type(code) VALUES ('ticket_sentiment_changed')")
+        self.cn.execute("""
+            INSERT INTO ticket_event(ticket_uuid,event_type_uuid)
+            SELECT %s,event_type_uuid FROM event_type WHERE code='ticket_sentiment_changed'
+        """, (ticket["ticket_uuid"],))
+        self.cn.execute("UPDATE voc.silver_messages SET body_version=2 WHERE event_id=%s", (self.event,))
+        with patch.object(worker, "predict", side_effect=lambda job: "부정" if job["analysis_kind"] == "sentiment" else "delivery"):
+            while worker.process_one(self.cn, self.config):
+                pass
+        self.assertEqual(self.ticket()["sentiment"], "긍정")
+        self.assertEqual(self.ticket()["sentiment_status"], "succeeded")
+
     def test_unmapped_category_fails_after_retries_and_abstention_is_a_valid_success(self):
         job = self.two_claims()["category"]
         for number in range(worker.MAX_ATTEMPTS):

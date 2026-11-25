@@ -39,7 +39,12 @@
 .detail-message[data-sender="staff"] { justify-items: end; align-self: flex-end; }
 .detail-bubble { width: fit-content; max-width: 100%; padding: 8px 11px; border-radius: 8px; background: var(--desk-soft); }
 .detail-message[data-sender="staff"] .detail-bubble { background: #e7f3e8; }
-.detail-message[data-message-type="memo"] .detail-bubble { background: #fff1be; }
+.detail-memo-panel[open] { background: #edf4ff; color: #234c82; }
+.detail-memo-panel:not([open]) .detail-memo-hide,
+.detail-memo-panel[open] .detail-memo-show { display: none; }
+.detail-memo-list { display: grid; gap: 10px; margin: 10px 0 0; padding: 0; list-style: none; }
+.detail-memo-list li + li { border-top: 1px solid var(--desk-line); padding-top: 10px; }
+.detail-memo-list p { color: var(--heading); }
 .ticket-conversation header { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
 .ticket-conversation header { color: var(--desk-muted); font-size: 12px; }
 .ticket-conversation header a { text-decoration: underline; }
@@ -60,7 +65,20 @@
 .ticket-detail-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(245px, 31%); gap: 14px; }
 .ticket-detail-body:has(.ticket-side-panel:not([open])) { grid-template-columns: minmax(0, 1fr) auto; }
 .ticket-side-panel { margin-top: 14px; }
-.ticket-side-panel > summary { cursor: pointer; font-weight: 600; padding: 8px 10px; }
+.ticket-side-panel summary { cursor: pointer; }
+.ticket-side-panel > summary { font-weight: 600; padding: 8px 10px; }
+.ticket-side-panel > :not(summary),
+.ticket-side-panel details > :not(summary) { margin-inline-start: 12px; }
+.ticket-side-panel > .detail-analysis-button { display: flex; margin-top: 10px; }
+.detail-complete-form { margin-top: 14px; }
+.detail-complete-button {
+  width: 100%;
+  min-height: 42px;
+  border-color: #166534;
+  background: #166534;
+  color: #fff;
+}
+.detail-complete-button:hover { border-color: #14532d; background: #14532d; }
 .ticket-side-panel ul { padding-inline-start: 17px; }
 .ticket-side-panel li + li { margin-top: 6px; }
 @media (max-width: 780px) {

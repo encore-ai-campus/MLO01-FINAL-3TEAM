@@ -203,3 +203,36 @@ class AssignmentTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(self.insert("SELECT assignee_uuid FROM ticket WHERE ticket_uuid=%s", waiting),
                          self.staff[0])
+
+    def test_analysis_form_saves_only_selected_values_and_unassigns_on_team_change(self):
+        event, ticket = self.ticket()
+        self.assertEqual(self.result(event, self.categories[0])["assignee_uuid"], self.staff[0])
+        form = f"/tickets/{ticket}/category/"
+        detail_url = f"/tickets/{ticket}/?scope=mine"
+        page = self.client.get(form, {"scope": "mine"})
+        self.assertEqual(page.status_code, 200, page.content)
+        for field in ("sentiment", "category_uuid", "team_uuid"):
+            self.assertIn(f'name="{field}"', page.text)
+
+        def stored():
+            self.cursor.execute("""
+                SELECT sentiment,sentiment_status,category_uuid::text,assigned_team_uuid::text,assignee_uuid::text
+                FROM ticket WHERE ticket_uuid=%s
+            """, (ticket,))
+            return self.cursor.fetchone()
+
+        self.assertEqual(self.client.post(form + "?scope=mine", {"sentiment": "중립"}).url, detail_url)
+        self.assertEqual(stored(), ("중립", "succeeded", self.categories[0], self.teams[0], self.staff[0]))
+        invalid = self.client.post(form, {"team_uuid": str(uuid4()), "sentiment": "부정"})
+        self.assertEqual(invalid.status_code, 422)
+        self.assertEqual(stored()[0], "중립")
+        changed = self.client.post(form, {"team_uuid": self.teams[1], "category_uuid": self.categories[2]})
+        self.assertEqual(changed.status_code, 302, changed.content)
+        self.assertEqual(stored(), ("중립", "succeeded", self.categories[2], self.teams[1], None))
+        self.assertEqual(self.client.post(form, {"sentiment": "긍정"}).status_code, 403)
+        self.cursor.execute("""
+            SELECT code FROM event_type JOIN ticket_event USING(event_type_uuid)
+            WHERE ticket_uuid=%s AND actor_uuid=%s ORDER BY code
+        """, (ticket, self.staff[0]))
+        self.assertEqual([row[0] for row in self.cursor.fetchall()],
+                         ["ticket_category_changed", "ticket_sentiment_changed", "ticket_team_reassigned"])

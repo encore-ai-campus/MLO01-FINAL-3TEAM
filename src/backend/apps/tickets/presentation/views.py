@@ -50,6 +50,7 @@ def detail(request, ticket_uuid, as_json=False):
     return render(request, "tickets/detail.html", {
         **result, "actor": desk.actor, "scope": request.GET.get("scope", "all"), "active": "detail",
         "is_assignee": result["ticket"]["assignee_uuid"] == desk.actor["staff_user_uuid"],
+        "show_memos": request.GET.get("memos") == "1",
         "request_key": uuid4(),
     })
 
@@ -71,7 +72,8 @@ def ticket_action(request, ticket_uuid, action, as_json=False):
     data = action_forms.fields(request)
     token = session_token(request)
     if action == "messages":
-        result = actions.store_message(token, ticket_uuid, *action_forms.message_payload(data))
+        message = action_forms.message_payload(data)
+        result = actions.store_message(token, ticket_uuid, *message)
     elif action == "transfer":
         result = actions.transfer(token, ticket_uuid, action_forms.identifier(data.get("recipient_uuid")),
                                   action_forms.text(data.get("reason"), "이관 사유"),
@@ -83,7 +85,16 @@ def ticket_action(request, ticket_uuid, action, as_json=False):
     if as_json:
         return JsonResponse(result, encoder=DeskJSONEncoder, status=200 if action == "messages" else 201)
     url = reverse("tickets:detail", args=(ticket_uuid,))
-    return redirect(f"{url}?{request.GET.urlencode()}" if request.GET else url)
+    params = request.GET.copy()
+    if action == "messages" and message[0] == "memo":
+        params["memos"] = "1"
+    return redirect(f"{url}?{params.urlencode()}" if params else url)
+
+
+@require_POST
+def complete_ticket(request, ticket_uuid):
+    actions.complete_ticket(session_token(request), ticket_uuid)
+    return redirect(reverse("tickets:detail", args=(ticket_uuid,), query=request.GET))
 
 
 @require_POST

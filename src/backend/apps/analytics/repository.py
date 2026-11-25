@@ -125,7 +125,7 @@ def event_history(cursor, filters):
             SELECT e.*, CASE WHEN kind.code = 'ticket_transfer' THEN 'transferred' ELSE kind.code END AS code
             FROM ticket_event AS e JOIN event_type AS kind USING (event_type_uuid)
             JOIN tickets USING (ticket_uuid)
-            WHERE kind.code IN ('assigned', 'transferred', 'ticket_transfer', 'answer_completed')
+            WHERE kind.code IN ('assigned', 'transferred', 'ticket_transfer', 'answer_completed', 'ticket_manually_completed')
               AND e.created_at < %(now)s
         ),
         last_assignment AS (
@@ -137,7 +137,7 @@ def event_history(cursor, filters):
             SELECT DISTINCT ON (e.ticket_uuid) e.ticket_uuid, e.actor_uuid, e.created_at
             FROM ledger AS e
             JOIN staff_user AS actor ON actor.staff_user_uuid = e.actor_uuid AND actor.company_uuid = %(company)s
-            WHERE e.code = 'answer_completed' AND e.to_status::text IN ('답변완료', 'answered')
+            WHERE e.code IN ('answer_completed', 'ticket_manually_completed') AND e.to_status::text IN ('답변완료', 'answered')
               AND COALESCE(e.from_status::text, '') NOT IN ('답변완료', 'answered')
             ORDER BY e.ticket_uuid, e.created_at, e.ticket_event_uuid
         ),

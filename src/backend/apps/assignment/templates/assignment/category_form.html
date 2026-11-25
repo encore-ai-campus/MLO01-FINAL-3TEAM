@@ -1,26 +1,48 @@
-{% extends "base.html" %}
-{% block title %}카테고리 수정{% endblock %}
+{% extends "base.html" %}{% load static ticket_ui %}
+{% block title %}분석·배정 수정{% endblock %}
+{% block styles %}<link rel="stylesheet" href="{% static 'assignment/ticket-analysis.css' %}">{% endblock %}
 {% block content %}
-<section class="desk-card">
-  <div class="desk-heading">
-    <h1>티켓 #{{ ticket.ticket_number }} 카테고리 수정</h1>
-    <a class="desk-button" href="{% url 'tickets:detail' ticket.ticket_uuid %}">티켓으로 돌아가기</a>
-  </div>
-  {% if ticket.category_review_reason == "classification_abstained" %}<p>자동 분류가 보류되어 수동 검토가 필요합니다.</p>{% endif %}
-  {% if ticket.category_review_reason == "no_team_mapping" %}<p>카테고리의 담당 부서가 등록되지 않았습니다.</p>{% endif %}
-  {% if categories %}
-  <form method="post">
+<section class="desk-card ticket-analysis">
+  <header class="desk-heading">
+    <div>
+      <p>#{{ ticket.ticket_number }}</p>
+      <h1>분석·배정 수정</h1>
+    </div>
+    <a class="desk-button" href="{% url 'tickets:detail' ticket.ticket_uuid %}{% querystring %}">티켓으로 돌아가기</a>
+  </header>
+  <form method="post" class="ticket-analysis-form">
     {% csrf_token %}
-    <p>
-      <label for="category-uuid">카테고리</label>
-      <select id="category-uuid" name="category_uuid" required>
-        <option value="">선택</option>
-        {% for category in categories %}<option value="{{ category.category_uuid }}"{% if category.category_uuid == ticket.category_uuid %} selected{% endif %}>{{ category.name }}</option>{% endfor %}
+    <div class="ticket-analysis-labels">
+      <label for="analysis-sentiment">감성 분석
+        <select id="analysis-sentiment" name="sentiment">
+          <option value="">{{ ticket|analysis_label:"sentiment" }} (현재)</option>
+          {% for value, label in sentiments %}
+            {% if value != ticket.sentiment %}<option value="{{ value }}">{{ label }}</option>{% endif %}
+          {% endfor %}
+        </select>
+      </label>
+      <label for="category-uuid">카테고리 분석
+        <select id="category-uuid" name="category_uuid">
+          <option value="">{{ ticket|analysis_label:"category" }} (현재)</option>
+          {% for category in categories %}
+            {% if category.category_uuid != ticket.category_uuid %}<option value="{{ category.category_uuid }}">{{ category.name }}</option>{% endif %}
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <label for="analysis-team">담당 부서
+      <select id="analysis-team" name="team_uuid" aria-describedby="analysis-team-help">
+        <option value="">{{ current_team }} (현재)</option>
+        {% for team in teams %}
+          {% if team.team_uuid != ticket.assigned_team_uuid %}<option value="{{ team.team_uuid }}">{{ team.name }}</option>{% endif %}
+        {% endfor %}
       </select>
-    </p>
-    <p><label for="category-reason">변경 사유</label> <textarea id="category-reason" name="reason" maxlength="1000"></textarea></p>
-    <button class="desk-button desk-button-solid" type="submit">저장</button>
+    </label>
+    <p id="analysis-team-help">담당 부서를 변경하면 기존 상담사 배정이 해제됩니다.</p>
+    <label for="category-reason">변경 사유 (선택)
+      <textarea id="category-reason" name="reason" maxlength="1000" rows="3"></textarea>
+    </label>
+    <div><button class="desk-button desk-button-solid" type="submit">변경 사항 저장</button></div>
   </form>
-  {% else %}<p>이 티켓의 도메인에 등록된 카테고리가 없습니다.</p>{% endif %}
 </section>
 {% endblock %}

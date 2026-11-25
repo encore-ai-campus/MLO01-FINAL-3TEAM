@@ -32,6 +32,20 @@ def write_ticket(token, ticket_uuid):
         yield cursor, actor, ticket
 
 
+def complete_ticket(token, ticket_uuid):
+    with write_ticket(token, ticket_uuid) as (cursor, actor, ticket):
+        require_assignee(actor, ticket)
+        if ticket["status"] == "답변완료":
+            return
+        cursor.execute("""
+            INSERT INTO event_type(code) VALUES ('ticket_manually_completed') ON CONFLICT (code) DO NOTHING
+        """)
+        repo.add_event(cursor, ticket_uuid, actor, "ticket_manually_completed",
+                       from_status=ticket["status"], to_status="답변완료")
+        cursor.execute("UPDATE ticket SET status='답변완료',updated_at=now() WHERE ticket_uuid=%s", (ticket_uuid,))
+        transaction.on_commit(lambda: refill_after_completion(ticket_uuid), robust=True)
+
+
 def transfer(token, ticket_uuid, recipient, reason, attached_reply):
     with write_ticket(token, ticket_uuid) as (cursor, actor, ticket):
         require_assignee(actor, ticket)
@@ -71,10 +85,7 @@ def accept_transfer(token, ticket_uuid, request_uuid):
             return
         if status != "pending" or requester != ticket["assignee_uuid"]:
             raise DeskError(409, "TRANSFER_NOT_AVAILABLE", "담당자가 변경됐거나 이미 처리된 요청입니다.")
-        cursor.execute("""
-            SELECT 1 FROM ticket_message WHERE ticket_uuid=%s AND delivery_status IN ('sending','unknown')
-        """, (ticket_uuid,))
-        if cursor.fetchone() is not None:
+        if repo.has_unsettled_reply(cursor, ticket_uuid):
             raise DeskError(409, "DELIVERY_UNCERTAIN", "기존 답변의 발송 결과를 확인한 뒤 이관을 수락해 주세요.")
         cursor.execute("""
             UPDATE ticket SET assignee_uuid=%s,assigned_team_uuid=%s,updated_at=now() WHERE ticket_uuid=%s
@@ -148,10 +159,7 @@ def store_message(token, ticket_uuid, message_type, body, request_key):
                 source = repo.reply_source(cursor, ticket_uuid)
                 if source is None:
                     raise DeskError(409, "REPLY_ROUTE_UNAVAILABLE", "고객 회신 경로를 확인해 주세요.")
-                cursor.execute("""
-                    SELECT FROM ticket_message WHERE ticket_uuid=%s AND delivery_status IN ('sending','unknown')
-                """, (ticket_uuid,))
-                if cursor.fetchone() is not None:
+                if repo.has_unsettled_reply(cursor, ticket_uuid):
                     raise DeskError(409, "DELIVERY_UNCERTAIN", "기존 답변의 발송 결과를 확인해 주세요.")
                 status = "sending"
         cursor.execute(f"""

@@ -112,18 +112,18 @@ class AnalyticsPageTests(TestCase):
                 request_type text, status text
             );
         """)
-        kinds = {code: str(uuid4()) for code in ("assigned", "ticket_transfer", "answer_completed")}
+        kinds = {code: str(uuid4()) for code in ("assigned", "ticket_transfer", "answer_completed", "ticket_manually_completed")}
         for code, uid in kinds.items():
             self.cur.execute("INSERT INTO event_type VALUES (%s,%s)", (uid, code))
         for ticket, code, time in (
             (self.solved, "assigned", "2026-11-24T08:01:00+09"),
             (self.solved, "assigned", "2026-11-24T08:02:00+09"),
-            (self.solved, "answer_completed", "2026-11-24T10:00:00+09"),
-            (self.solved, "answer_completed", "2026-11-24T10:05:00+09"),
+            (self.solved, "ticket_manually_completed", "2026-11-24T10:00:00+09"),
+            (self.solved, "ticket_manually_completed", "2026-11-24T10:05:00+09"),
             (self.held, "ticket_transfer", "2026-11-22T09:01:00+09"),
             (self.past, "answer_completed", "2026-11-17T23:59:59+09"),
         ):
-            complete = code == "answer_completed"
+            complete = code in ("answer_completed", "ticket_manually_completed")
             self.cur.execute("INSERT INTO ticket_event VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
                              (str(uuid4()), ticket, kinds[code], self.agent, None if complete else self.agent,
                               "미처리" if complete else None, "답변완료" if complete else None, time))
