@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: voc-classification
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/encore-ai-campus/MLO01-FINAL-3TEAM.git
+    targetRevision: develop
+    path: src/infra/helm/voc-classification
+    helm:
+      releaseName: voc-classification
+      valueFiles: [values-local.yaml]
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: voc-ml
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

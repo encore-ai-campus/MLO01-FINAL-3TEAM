@@ -1,0 +1,32 @@
+models:
+  stable:
+    version: stub-v1
+    backend: "" # Optional image override, e.g. voc_models.classifier:load.
+    image: {repository: voc-classifier, tag: stub-1, digest: ""}
+  canary:
+    version: stub-v2
+    backend: "" # Optional image override, e.g. voc_models.classifier:load.
+    image: {repository: voc-classifier, tag: stub-1, digest: ""}
+
+routing:
+  sentiment:
+    canaryPercent: 0
+
+worker:
+  enabled: false
+  companyUUID: ""
+  schemaMode: migrate
+  databaseSecret:
+    name: voc-classification-db
+    key: DATABASE_URL
+  image: {repository: voc-classification-worker, tag: dev-1, digest: ""}
+
+imagePullPolicy: IfNotPresent
+imagePullSecrets: []
+resources:
+  model:
+    requests: {cpu: 25m, memory: 32Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+  worker:
+    requests: {cpu: 25m, memory: 32Mi}
+    limits: {cpu: 500m, memory: 192Mi}

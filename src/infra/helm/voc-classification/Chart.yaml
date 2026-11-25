@@ -1,0 +1,5 @@
+apiVersion: v2
+name: voc-classification
+description: Versioned inference services and PostgreSQL classification worker for the VoC desk
+type: application
+version: 0.1.0

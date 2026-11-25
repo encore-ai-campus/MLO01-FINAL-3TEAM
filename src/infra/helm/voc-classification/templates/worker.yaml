@@ -1,0 +1,72 @@
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "voc.workerName" . }}
+  labels:
+    {{- include "voc.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels:
+      {{- include "voc.labels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "voc.labels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "voc.podSecurity" . | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: prepare-schema
+          image: {{ include "voc.image" .Values.worker.image | quote }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          args: [{{ .Values.worker.schemaMode | quote }}]
+          env:
+            {{- include "voc.databaseEnv" . | nindent 12 }}
+          securityContext:
+            {{- include "voc.security" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources.worker | nindent 12 }}
+      containers:
+        - name: worker
+          image: {{ include "voc.image" .Values.worker.image | quote }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          args: ["run"]
+          securityContext:
+            {{- include "voc.security" . | nindent 12 }}
+          env:
+            {{- include "voc.databaseEnv" . | nindent 12 }}
+            - name: DEMO_COMPANY_UUID
+              value: {{ required "worker.companyUUID is required when worker.enabled=true" .Values.worker.companyUUID | quote }}
+            - name: STABLE_URL
+              value: http://{{ include "voc.modelName" (dict "root" . "version" .Values.models.stable.version) }}:8080
+            - name: CANARY_URL
+              value: http://{{ include "voc.modelName" (dict "root" . "version" .Values.models.canary.version) }}:8080
+            - name: STABLE_MODEL_VERSION
+              value: {{ .Values.models.stable.version | quote }}
+            - name: CANARY_MODEL_VERSION
+              value: {{ .Values.models.canary.version | quote }}
+            - name: SENTIMENT_CANARY_PERCENT
+              value: {{ .Values.routing.sentiment.canaryPercent | quote }}
+          readinessProbe:
+            exec: {command: ["test", "-f", "/tmp/worker-ready"]}
+            periodSeconds: 3
+          resources:
+            {{- toYaml .Values.resources.worker | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+{{- end }}

@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: canary-git, namespace: voc-ml}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 32Mi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: canary-git, namespace: voc-ml}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: canary-git}}
+  template:
+    metadata: {labels: {app: canary-git}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        - name: initialize
+          image: voc-canary-git:demo-1
+          imagePullPolicy: IfNotPresent
+          command: [sh, -ec]
+          args:
+            - |
+              git init -q --bare -b feature/local-model-canary /repos/charts.git
+              git --git-dir=/repos/charts.git config http.receivepack false
+              touch /repos/charts.git/git-daemon-export-ok
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: repos, mountPath: /repos}]
+      containers:
+        - name: web
+          env: [{name: GIT_PROJECT_ROOT, value: /repos}]
+          image: voc-canary-git:demo-1
+          imagePullPolicy: IfNotPresent
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: repos, mountPath: /repos, readOnly: true}]
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe: {tcpSocket: {port: http}}
+          resources: {requests: {cpu: 5m, memory: 8Mi}, limits: {cpu: 200m, memory: 64Mi}}
+        - name: publisher
+          image: voc-canary-git:demo-1
+          imagePullPolicy: IfNotPresent
+          command: [sleep, infinity]
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: repos, mountPath: /repos}, {name: tmp, mountPath: /tmp}]
+          resources: {requests: {cpu: 5m, memory: 8Mi}, limits: {cpu: 200m, memory: 64Mi}}
+      volumes:
+        - name: repos
+          persistentVolumeClaim: {claimName: canary-git}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: canary-git, namespace: voc-ml}
+spec:
+  type: ClusterIP
+  selector: {app: canary-git}
+  ports: [{name: http, port: 8080, targetPort: http}]

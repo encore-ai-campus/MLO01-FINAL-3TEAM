@@ -1,0 +1,19 @@
+#!/bin/sh
+# Input is a tar stream containing only the chart rooted at CHART.
+set -eu
+chart=src/infra/helm/voc-classification
+repo=/repos/charts.git
+branch=feature/local-model-canary
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+git clone --quiet "$repo" "$work/tree" >&2
+cd "$work/tree"
+git rm -q -r --ignore-unmatch -- "$chart"
+tar -xf -
+git add -- "$chart"
+if ! git diff --cached --quiet; then
+    git -c user.name="Local Canary Demo" -c user.email="canary@localhost" \
+        commit -q -m "$1"
+    git push -q origin "HEAD:refs/heads/$branch"
+fi
+git rev-parse HEAD

@@ -1,0 +1,208 @@
+{
+  "uid": "voc-canary-demo",
+  "title": "VoC 카나리 · 시험 모델",
+  "schemaVersion": 40,
+  "description": "합성 데이터와 고정 응답 모델의 카나리 시연 지표입니다.",
+  "tags": [
+    "voc",
+    "canary",
+    "stub"
+  ],
+  "timezone": "browser",
+  "editable": false,
+  "refresh": "5s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "버전·항목별 처리량",
+      "description": "모델 HTTP 요청을 초당 건수로 표시합니다.",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voc-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "voc-prometheus"
+          },
+          "expr": "sum by (model_version, analysis_kind) (rate(voc_inference_requests_total{job=\"voc-classifier\"}[$__rate_interval]))",
+          "legendFormat": "{{model_version}} · {{analysis_kind}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "선택 기간 오류 건수",
+      "description": "선택한 기간에 늘어난 오류·입력 거절 응답 수의 추정치입니다. Prometheus가 5초 간격의 표본에서 계산합니다. 요청별 재시도와 최종 상태는 DB 작업 이력에서 확인합니다.",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voc-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "voc-prometheus"
+          },
+          "expr": "sum by (model_version, analysis_kind) (increase(voc_inference_requests_total{job=\"voc-classifier\",outcome!=\"success\"}[$__range])) or (0 * sum by (model_version, analysis_kind) (increase(voc_inference_requests_total{job=\"voc-classifier\"}[$__range])))",
+          "legendFormat": "{{model_version}} · {{analysis_kind}}",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "버전·항목별 p95 처리 시간",
+      "description": "HTTP 추론 핸들러에서 측정한 응답시간 히스토그램의 95백분위 추정치입니다. 큐 대기 시간은 워커 작업 이력에서 확인합니다.",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voc-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "voc-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, model_version, analysis_kind) (rate(voc_inference_duration_seconds_bucket{job=\"voc-classifier\"}[$__rate_interval])))",
+          "legendFormat": "{{model_version}} · {{analysis_kind}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "버전·항목별 요청 건수",
+      "description": "현재 모델 프로세스의 누적 호출수입니다. 모델 호출 재시도도 포함됩니다.",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voc-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "voc-prometheus"
+          },
+          "expr": "sum by (model_version, analysis_kind) (voc_inference_requests_total{job=\"voc-classifier\"})",
+          "legendFormat": "{{model_version}} · {{analysis_kind}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    }
+  ]
+}

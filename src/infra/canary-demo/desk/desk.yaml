@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canary-desk
+  namespace: voc-ml
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: canary-desk}
+  template:
+    metadata:
+      labels: {app: canary-desk}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: django
+          image: __DESK_IMAGE__
+          imagePullPolicy: Never
+          ports: [{name: http, containerPort: 8000}]
+          env:
+            - name: DATABASE_URL
+              valueFrom: {secretKeyRef: {name: voc-classification-db, key: DATABASE_URL}}
+            - name: DJANGO_SECRET_KEY
+              valueFrom: {secretKeyRef: {name: canary-desk, key: django-key}}
+            - {name: VOC_POC_RANDOM_ASSIGNMENT, value: '1'}
+            - name: DEMO_STAFF_PASSWORD
+              valueFrom: {secretKeyRef: {name: canary-desk, key: staff-password}}
+          readinessProbe:
+            httpGet:
+              path: /login/
+              port: http
+              httpHeaders: [{name: Host, value: localhost}]
+            periodSeconds: 3
+          resources:
+            requests: {cpu: 50m, memory: 112Mi}
+            limits: {memory: 384Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true
+        - name: assign-classified
+          image: __DESK_IMAGE__
+          imagePullPolicy: Never
+          command: ["python", "manage.py", "assign_classified_tickets", "--company", "22222222-2222-4222-8222-222222222222", "--model-version", "klue-v1"]
+          env:
+            - {name: VOC_POC_RANDOM_ASSIGNMENT, value: '1'}
+            - name: DATABASE_URL
+              valueFrom: {secretKeyRef: {name: voc-classification-db, key: DATABASE_URL}}
+            - name: DJANGO_SECRET_KEY
+              valueFrom: {secretKeyRef: {name: canary-desk, key: django-key}}
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: 250m, memory: 192Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: canary-desk
+  namespace: voc-ml
+spec:
+  type: ClusterIP
+  selector: {app: canary-desk}
+  ports: [{name: http, port: 8000, targetPort: http}]
