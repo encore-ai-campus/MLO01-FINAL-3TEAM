@@ -216,9 +216,9 @@ class SettingsTests(TestCase):
                     html = display.content.decode()
                     self.assertEqual('href="/analytics/"' in html, visible)
                     self.assertEqual('value="analytics"' in html, is_admin)
-                    followup = client.get("/follow-up/")
-                    self.assertEqual(followup.status_code, 200)
-                    self.assertEqual("analytics" in followup.context["bootstrap"]["sidebar"], visible)
+                    home = client.get("/home/")
+                    self.assertEqual(home.status_code, 200)
+                    self.assertEqual('href="/analytics/"' in home.content.decode(), visible)
 
     def test_display_preferences_are_saved_per_employee(self):
         agent = self.session(self.agent)

@@ -53,5 +53,3 @@ LANGUAGE_CODE = "ko"
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_DIRS = [BASE_DIR / "static"]
-if (BASE_DIR / ".followup-assets").is_dir():
-    STATICFILES_DIRS.append(BASE_DIR / ".followup-assets")
