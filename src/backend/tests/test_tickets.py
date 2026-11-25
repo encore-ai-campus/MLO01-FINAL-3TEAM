@@ -385,8 +385,11 @@ class TicketTests(unittest.TestCase):
         self.assertTrue(response.cookies["voc_desk_session"]["httponly"])
         listing = browser.get(response["Location"])
         self.assertContainsHTML(listing, "배송 요청 2")
-        detail = browser.get(f"/tickets/{self.tickets[1]}/")
+        detail_path = f"/tickets/{self.tickets[1]}/"
+        self.assertContainsHTML(listing, detail_path + "?scope=mine")
+        detail = browser.get(detail_path + "?scope=mine")
         self.assertContainsHTML(detail, "배송 요청 1")
+        self.assertContainsHTML(detail, 'class="detail-meta"')
         self.grant_conduct()
         detail_url = f"/tickets/{self.tickets[1]}/"
         memo = {"message_type": "memo", "body": "브라우저 메모", "request_key": str(uuid4())}
