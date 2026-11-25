@@ -15,7 +15,7 @@
       <p>담당 {{ ticket.team_name|default:'미배정' }} · {{ ticket.assignee_name|default:'미지정' }} /
         접수 <time datetime="{{ ticket.created_at|timestamp }}">{{ ticket.created_at|detail_time }}</time></p>
     </div>
-    {% if can_conduct %}<a class="desk-button" href="{% url 'assignment:ticket-category' ticket.ticket_uuid %}">카테고리 지정·부서 재배정</a>{% endif %}
+    {% if can_conduct %}<a class="desk-button" href="{% url 'assignment:ticket-category' ticket.ticket_uuid %}">카테고리 수정</a>{% endif %}
     <p class="detail-customer-id">고객 ID {{ ticket.customer_id }}</p>
   </header>
   <div class="ticket-detail-body">

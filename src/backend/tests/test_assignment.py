@@ -138,15 +138,31 @@ class AssignmentTests(unittest.TestCase):
         self.assertIsNone(self.result(wait_event, self.categories[0])["assignee_uuid"])
 
         url = f"/api/tickets/{ticket}/category"
-        for category, team, assignee in zip(self.categories, self.teams, self.staff):
-            response = self.client.post(url, {"category_uuid": category, "reason": "카테고리 확인"},
-                                        content_type="application/json")
-            self.assertEqual(response.status_code, 200, response.content)
-            self.assertEqual(response.json()["assigned_team_uuid"], team)
-            self.assertEqual(response.json()["assignee_uuid"], assignee)
+        payload = {"category_uuid": self.categories[1], "reason": "카테고리 확인"}
+        response = self.client.post(url, payload, content_type="application/json")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["category_uuid"], self.categories[1])
+        self.assertEqual(response.json()["assigned_team_uuid"], self.teams[0])
+        self.assertEqual(response.json()["assignee_uuid"], self.staff[0])
+        retry = self.client.post(url, payload, content_type="application/json")
+        self.assertEqual(retry.json()["outcome"], "already_applied")
+        self.assertEqual(self.insert("""
+            SELECT count(*) FROM ticket_event JOIN event_type USING (event_type_uuid)
+            WHERE ticket_uuid=%s AND code='ticket_category_changed' AND actor_uuid=%s
+        """, ticket, self.staff[0]), 1)
+
+        detail_url = f"/tickets/{ticket}/"
+        response = self.client.post(detail_url + "category/", {"category_uuid": self.categories[2]})
+        self.assertEqual((response.status_code, response.url), (302, detail_url))
+        self.cursor.execute("""
+            SELECT category_uuid::text,assigned_team_uuid::text,assignee_uuid::text,category_review_reason
+            FROM ticket WHERE ticket_uuid=%s
+        """, (ticket,))
+        self.assertEqual(self.cursor.fetchone(), (self.categories[2], self.teams[0], self.staff[0], None))
+        invalid = self.client.post(url, {"category_uuid": str(uuid4())}, content_type="application/json")
+        self.assertEqual(invalid.status_code, 422)
         self.assertEqual(self.result(event, self.categories[0])["outcome"], "manual_preserved")
-        self.assertEqual(self.insert("SELECT assignee_uuid FROM ticket WHERE ticket_uuid=%s", wait_ticket),
-                         self.staff[0])
+        self.assertIsNone(self.insert("SELECT assignee_uuid FROM ticket WHERE ticket_uuid=%s", wait_ticket))
 
     def test_abstention_missing_route_stale_and_completion_refill(self):
         event, ticket = self.ticket()
@@ -154,6 +170,12 @@ class AssignmentTests(unittest.TestCase):
         self.assertEqual(self.result(event, self.categories[0])["outcome"], "stale_result")
         self.assertEqual(self.result(event, None, 2)["review_reason"], "classification_abstained")
         self.assertIsNone(self.insert("SELECT assigned_team_uuid FROM ticket WHERE ticket_uuid=%s", ticket))
+        manual = self.client.post(f"/api/tickets/{ticket}/category", {"category_uuid": self.categories[0]},
+                                  content_type="application/json")
+        self.assertEqual(manual.status_code, 200, manual.content)
+        self.assertIsNone(manual.json()["assigned_team_uuid"])
+        self.assertIsNone(manual.json()["assignee_uuid"])
+        self.assertIsNone(manual.json()["review_reason"])
         other_event, _ = self.ticket()
         self.assertEqual(self.result(other_event, self.categories[2])["review_reason"], "no_team_mapping")
 
