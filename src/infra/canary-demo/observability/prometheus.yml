@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 5s
+  scrape_timeout: 3s
+
+scrape_configs:
+  - job_name: voc-classifier
+    static_configs:
+      - targets:
+          - voc-classification-stub-v1:8080
+          - voc-classification-stub-v2:8080

@@ -1,0 +1,104 @@
+name: Model canary
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/model-canary.yml"
+      - "src/contracts/**"
+      - "src/ml/serving/**"
+      - "src/infra/helm/voc-classification/**"
+      - "src/infra/canary-demo/**"
+      - "src/infra/argocd/voc-classification*.yaml"
+  workflow_dispatch:
+    inputs:
+      publish_images:
+        description: "Publish the verified fixture and worker images to GHCR"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: {python-version: "3.12"}
+      - name: Test serving and fixture APIs
+        run: |
+          python -m pip install -r src/ml/serving/requirements-test.txt
+          python -m unittest discover -s src/ml/serving -p 'test_*.py' -v
+          python -m unittest discover -s src/infra/canary-demo/fixture -p 'test_*.py' -v
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+        with: {version: v4.3.2}
+      - name: Validate Helm chart and both routing limits
+        env:
+          CHART: src/infra/helm/voc-classification
+        run: |
+          helm lint --strict "$CHART" -f "$CHART/values-local.yaml"
+          helm template voc-live-classification "$CHART" -f "$CHART/values-klue.json" >/dev/null
+          for percent in 0 10 50 100; do
+            helm template voc-classification "$CHART" --namespace voc-ml \
+              -f "$CHART/values-local.yaml" --set routing.sentiment.canaryPercent="$percent" >/dev/null
+          done
+          if helm template voc-classification "$CHART" --set routing.sentiment.canaryPercent=101 >/dev/null 2>&1; then
+            echo "Helm accepted an invalid percentage" >&2
+            exit 1
+          fi
+      - uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4
+        with: {version: v1.35.5}
+      - name: Validate local demo setup and dashboard
+        working-directory: src/infra/canary-demo
+        run: |
+          bash -n up.sh
+          sh -n git-mirror/publish-chart
+          python -m compileall -q .
+          python -m json.tool observability/canary.json >/dev/null
+          kubectl kustomize observability >/dev/null
+      - name: Build fixture image
+        run: |
+          docker build -t voc-classifier:stub-1 src/infra/canary-demo/fixture
+
+  publish:
+    needs: verify
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_images }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - {image: voc-classifier, context: src/infra/canary-demo/fixture}
+          - {image: voc-classification-worker, context: src/workers/classification}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: {persist-credentials: false}
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set image name
+        id: image
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: echo "repository=ghcr.io/${GITHUB_REPOSITORY,,}/$IMAGE" >> "$GITHUB_OUTPUT"
+      - name: Publish multi-platform image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.image.outputs.repository }}:${{ github.sha }}
+      - name: Record image digest
+        env:
+          IMAGE: ${{ steps.image.outputs.repository }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: printf '%s@%s\n' "$IMAGE" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"

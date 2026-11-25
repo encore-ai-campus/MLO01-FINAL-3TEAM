@@ -1,0 +1,10 @@
+{
+  "models": {
+    "stable": {"version": "klue-v1", "image": {"repository": "voc-klue-local", "tag": "eaf3b9c-v1-fdeda6b62ce0"}},
+    "canary": {"version": "klue-v2", "image": {"repository": "voc-klue-local", "tag": "eaf3b9c-v2-71dfc1056687"}}
+  },
+  "imagePullPolicy": "Never",
+  "resources": {"model": {"requests": {"cpu": "500m", "memory": "768Mi"}, "limits": {"cpu": "2", "memory": "2Gi"}}},
+  "worker": {"image": {"repository": "voc-classification-worker", "tag": "klue-poc-1"}, "enabled": true, "companyUUID": "22222222-2222-4222-8222-222222222222"},
+  "routing": {"sentiment": {"canaryPercent": 0}}
+}

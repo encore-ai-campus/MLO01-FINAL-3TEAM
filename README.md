@@ -63,7 +63,7 @@ VALUES (:'company_id'::uuid,lower(:'email'),:'staff_name',:'password_hash');
 | `src/backend/templates`, `src/backend/static` | 공통 레이아웃·탐색·정적 파일 |
 | `src/collector`, `src/infra/channel_probe` | Discord·Gmail 수집, Flink 정제, PostgreSQL 적재 및 채널 점검 |
 
-`src/workers/`와 `src/ml/`은 후속 비동기 추론·학습 구현 위치다. 데이터 규격과 기존 적재 코드는 [VoC 데이터 계약](src/contracts/README.md)에 정리했다.
+`src/workers/classification/`은 Silver에서 파생된 분류 작업을 처리하고, `src/ml/serving/`은 실제 모델 추론 API를 제공한다. 고정 응답 모델은 카나리 시연의 fixture에서 실행한다. [VoC 데이터 계약](src/contracts/README.md) · [Mac에서 Kubernetes 카나리 시연하기](src/infra/canary-demo/README.md)
 
 업무 앱의 `presentation/`에서 요청과 폼을 검증하고, `services.py`에서 권한과 업무 규칙을, `repository.py`에서 데이터 조회를 담당한다. 앱별 `templates/`와 `static/`이 페이지와 브라우저 상호작용을 제공한다. 스키마는 기존 Compose 초기화 서비스가 관리한다.
 

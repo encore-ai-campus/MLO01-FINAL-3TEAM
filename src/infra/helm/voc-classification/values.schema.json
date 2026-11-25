@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["models", "worker", "routing", "resources", "imagePullPolicy"],
+  "properties": {
+    "models": {
+      "type": "object", "required": ["stable", "canary"], "additionalProperties": false,
+      "properties": {"stable": {"$ref": "#/definitions/model"}, "canary": {"$ref": "#/definitions/model"}}
+    },
+    "routing": {
+      "type": "object", "required": ["sentiment"], "additionalProperties": false,
+      "properties": {
+        "sentiment": {
+          "type": "object", "required": ["canaryPercent"], "additionalProperties": false,
+          "properties": {"canaryPercent": {"type": "integer", "minimum": 0, "maximum": 100}}
+        }
+      }
+    },
+    "worker": {
+      "type": "object", "additionalProperties": false,
+      "required": ["enabled", "companyUUID", "databaseSecret", "image"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "schemaMode": {"enum": ["migrate", "verify-schema"]},
+        "companyUUID": {"type": "string", "pattern": "^(|[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})$"},
+        "databaseSecret": {
+          "type": "object", "required": ["name", "key"], "additionalProperties": false,
+          "properties": {"name": {"type": "string", "minLength": 1}, "key": {"type": "string", "minLength": 1}}
+        },
+        "image": {"$ref": "#/definitions/image"}
+      },
+      "if": {"properties": {"enabled": {"const": true}}},
+      "then": {"properties": {"companyUUID": {"minLength": 36}}}
+    },
+    "imagePullPolicy": {"enum": ["IfNotPresent", "Always", "Never"]},
+    "imagePullSecrets": {"type": "array", "items": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string", "minLength": 1}}}},
+    "resources": {"type": "object", "required": ["model", "worker"], "properties": {"worker": {"type": "object"}, "model": {"type": "object"}}}
+  },
+  "definitions": {
+    "model": {
+      "type": "object", "required": ["version", "image"], "additionalProperties": false,
+      "properties": {
+        "backend": {"type": "string", "pattern": "^(|voc_models([.][A-Za-z][A-Za-z0-9_]*)+:[A-Za-z][A-Za-z0-9_]*)$"},
+        "version": {"type": "string", "maxLength": 32, "not": {"const": "worker"}, "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"},
+        "image": {"$ref": "#/definitions/image"}
+      }
+    },
+    "image": {
+      "type": "object", "required": ["repository", "tag"], "additionalProperties": false,
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "tag": {"type": "string", "minLength": 1},
+        "digest": {"type": "string", "pattern": "^(|sha256:[a-f0-9]{64})$"}
+      }
+    }
+  }
+}

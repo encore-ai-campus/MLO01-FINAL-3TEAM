@@ -1,0 +1,99 @@
+{{- if eq .Values.models.stable.version .Values.models.canary.version }}
+{{- fail "models.stable.version and models.canary.version must identify distinct model releases" }}
+{{- end }}
+{{- range $slot := list "stable" "canary" }}
+{{- $model := index $.Values.models $slot }}
+{{- $name := include "voc.modelName" (dict "root" $ "version" $model.version) }}
+{{- if eq $name (include "voc.workerName" $) }}
+{{- fail (printf "models.%s.version conflicts with the worker Deployment name" $slot) }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  labels:
+    {{- include "voc.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: model
+    voc.model/version: {{ $model.version | quote }}
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels:
+      {{- include "voc.labels" $ | nindent 6 }}
+      app.kubernetes.io/component: model
+      voc.model/version: {{ $model.version | quote }}
+  template:
+    metadata:
+      labels:
+        {{- include "voc.labels" $ | nindent 8 }}
+        app.kubernetes.io/component: model
+        voc.model/version: {{ $model.version | quote }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8080"
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "voc.podSecurity" $ | nindent 8 }}
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: model
+          image: {{ include "voc.image" $model.image | quote }}
+          imagePullPolicy: {{ $.Values.imagePullPolicy }}
+          securityContext:
+            {{- include "voc.security" $ | nindent 12 }}
+          ports:
+            - {name: http, containerPort: 8080}
+          env:
+            - name: MODEL_VERSION
+              value: {{ $model.version | quote }}
+            {{- with $model.backend }}
+            - name: MODEL_BACKEND
+              value: {{ . | quote }}
+            {{- end }}
+          startupProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /livez, port: http}
+            periodSeconds: 15
+          resources:
+            {{- toYaml $.Values.resources.model | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  labels:
+    {{- include "voc.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: model
+    voc.model/version: {{ $model.version | quote }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "voc.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: model
+    voc.model/version: {{ $model.version | quote }}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+{{ end -}}
