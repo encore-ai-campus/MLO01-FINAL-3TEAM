@@ -1,6 +1,10 @@
 from django import forms
 
-HOME_CARDS = ("tickets", "requests", "performance")
+HOME_CARD_LABELS = {
+    "tickets": ("내게 할당된 티켓", "오늘 배정된 티켓과 처리가 남은 티켓"),
+    "requests": ("받은 요청", "나에게 들어온 검토 요청"),
+    "performance": ("내 실적", "오늘과 전날의 처리 건수"),
+}
 SIDEBAR_ITEMS = (
     ("home", "업무 홈"), ("tickets", "티켓 목록"), ("inbox", "받은 요청"),
     ("followup", "팔로업"), ("analytics", "분석 대시보드"),
@@ -9,23 +13,22 @@ REPLY_SCOPES = (("personal", "내 신속답변"), ("team", "팀 신속답변"))
 PROVIDERS = (("slack", "Slack"), ("discord", "Discord"))
 
 
-class SidebarForm(forms.Form):
-    sidebar = forms.MultipleChoiceField(
-        label="좌측 패널 표시 항목", choices=SIDEBAR_ITEMS, required=False, widget=forms.CheckboxSelectMultiple,
-    )
-
-
 class HomeCardsForm(forms.Form):
-    cards = forms.JSONField()
+    cards = forms.JSONField(widget=forms.HiddenInput)
 
     def clean_cards(self):
         cards = self.cleaned_data["cards"]
-        if (not isinstance(cards, list) or len(cards) != len(HOME_CARDS)
+        if (not isinstance(cards, list) or len(cards) != len(HOME_CARD_LABELS)
                 or any(not isinstance(card, dict) or card.keys() != {"id", "visible"}
-                       or card["id"] not in HOME_CARDS or type(card["visible"]) is not bool for card in cards)
-                or len({card["id"] for card in cards}) != len(HOME_CARDS)):
+                       or not isinstance(card["id"], str) or card["id"] not in HOME_CARD_LABELS
+                       or type(card["visible"]) is not bool for card in cards)
+                or len({card["id"] for card in cards}) != len(HOME_CARD_LABELS)):
             raise forms.ValidationError("업무 홈 카드의 표시 항목과 순서를 확인해 주세요.")
         return cards
+
+
+class DisplayForm(HomeCardsForm):
+    sidebar = forms.MultipleChoiceField(label="좌측 패널 표시 항목", choices=SIDEBAR_ITEMS, required=False)
 
 
 class ReplySearchForm(forms.Form):

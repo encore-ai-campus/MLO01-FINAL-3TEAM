@@ -201,15 +201,25 @@ class SettingsTests(TestCase):
 
     def test_display_preferences_are_saved_per_employee(self):
         agent = self.session(self.agent)
-        self.assertEqual(agent.post("/settings/display/", {"sidebar": ["home", "analytics"]}).status_code, 302)
+        page = agent.get("/settings/display/")
+        self.assertContains(page, "카드 표시 및 순서")
+        self.assertContains(page, "좌측 패널 표시 설정")
         cards = [{"id": "requests", "visible": False}, {"id": "tickets", "visible": True},
                  {"id": "performance", "visible": True}]
-        self.assertEqual(agent.post("/settings/display/cards/", {"cards": json.dumps(cards)}).json(), {"cards": cards})
+        response = agent.post("/settings/display/", {"sidebar": ["home", "analytics"], "cards": json.dumps(cards)})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(agent.post("/settings/display/", {"sidebar": ["tickets"], "cards": "[]"}).status_code, 400)
         self.assertEqual(agent.post("/settings/display/cards/", {"cards": "[]"}).status_code, 400)
         reopened = self.session(self.agent).get("/home/")
         self.assertNotContains(reopened, 'class="desk-nav-item" href="/tickets/"')
         self.assertContains(reopened, '"id": "requests", "visible": false')
         self.assertContains(self.client.get("/home/"), 'class="desk-nav-item" href="/tickets/"')
+        self.assertContains(agent.get("/settings/display/"), 'data-card="requests"')
+        self.assertContains(agent.get("/home/"), 'href="/settings/display/?from=home"')
+        saved_from_home = agent.post("/settings/display/?from=home", {
+            "sidebar": ["home", "analytics"], "cards": json.dumps(cards),
+        })
+        self.assertEqual(saved_from_home["Location"], "/home/")
 
     def test_messenger_settings_keep_provider_routes_and_scope_employee_and_team(self):
         self.assertEqual(self.session(self.agent).get("/settings/messenger/").status_code, 403)

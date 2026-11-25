@@ -1,3 +1,5 @@
+import json
+
 from django.db import connection, transaction
 from django.http import JsonResponse
 from django.shortcuts import redirect, render
@@ -5,13 +7,13 @@ from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
 from apps.accounts.presentation.views import session_token
-from apps.accounts.repository import company_staff, work_permissions
-from apps.accounts.services import TEAM_REPLY_EDIT, current_actor, require_settings_admin, require_work_permission
+from apps.accounts.repository import company_staff, dashboard_allowed, work_permissions
+from apps.accounts.services import DASHBOARD_READ, TEAM_REPLY_EDIT, current_actor, require_settings_admin, require_work_permission
 from config.http import DeskError
 
 from .. import repository
 from .forms import (
-    PROVIDERS, SIDEBAR_ITEMS, HomeCardsForm, MessengerForm, QuickReplyForm, ReplySearchForm, SidebarForm,
+    HOME_CARD_LABELS, PROVIDERS, SIDEBAR_ITEMS, DisplayForm, HomeCardsForm, MessengerForm, QuickReplyForm, ReplySearchForm,
 )
 
 
@@ -24,16 +26,33 @@ def index(request):
 @require_http_methods(["GET", "POST"])
 def display(request):
     saving = request.method == "POST"
+    settings_url = reverse("preferences:index") + "#personal"
+    return_url = reverse("workspace:home") if request.GET.get("from") == "home" else settings_url
     with connection.cursor() as cursor:
         actor = current_actor(session_token(request), cursor)
-        sidebar = actor["display_preferences"].get("sidebar", [key for key, _ in SIDEBAR_ITEMS])
-        form = SidebarForm(request.POST if saving else None, initial={"sidebar": sidebar})
+        defaults = [{"id": key, "visible": True} for key in HOME_CARD_LABELS]
+        saved = actor["display_preferences"]
+        cards = saved.get("cards", defaults)
+        sidebar = saved.get("sidebar", [key for key, _ in SIDEBAR_ITEMS])
+        show_analytics = dashboard_allowed(cursor, actor, DASHBOARD_READ)
+        form = DisplayForm(request.POST if saving else None, initial={"cards": cards, "sidebar": sidebar})
         if saving and form.is_valid():
-            repository.save_display(cursor, actor, "sidebar", form.cleaned_data["sidebar"])
-            return redirect("preferences:display")
-    return render(request, "preferences/form.html", {
-        "actor": actor, "active": "settings", "title": "개인 화면 설정", "form": form,
-        "back_url": "preferences:index", "home_link": True,
+            if not show_analytics and ("analytics" in sidebar) != ("analytics" in form.cleaned_data["sidebar"]):
+                selected = [key for key in form.cleaned_data["sidebar"] if key != "analytics"]
+                if "analytics" in sidebar:
+                    selected.append("analytics")
+                form.cleaned_data["sidebar"] = selected
+            repository.save_display(cursor, actor, form.cleaned_data)
+            return redirect(return_url)
+    entered = getattr(form, "cleaned_data", {})
+    cards = entered.get("cards", cards)
+    sidebar_selection = entered.get("sidebar", sidebar)
+    card_rows = [(card, *HOME_CARD_LABELS[card["id"]]) for card in cards]
+    return render(request, "preferences/display.html", {
+        "actor": actor, "active": "settings", "form": form, "cards_json": json.dumps(cards), "card_rows": card_rows,
+        "card_order": list(HOME_CARD_LABELS), "use_local_cards": "cards" not in saved and not saving,
+        "sidebar": sidebar_selection, "sidebar_items": SIDEBAR_ITEMS, "show_analytics": show_analytics,
+        "settings_url": settings_url, "return_url": return_url,
     }, status=400 if saving else 200)
 
 
@@ -44,7 +63,7 @@ def home_cards(request):
         form = HomeCardsForm(request.POST)
         if not form.is_valid():
             raise DeskError(400, "INVALID_HOME_CARDS", "업무 홈 카드 설정을 확인해 주세요.")
-        repository.save_display(cursor, actor, "cards", form.cleaned_data["cards"])
+        repository.save_display(cursor, actor, form.cleaned_data)
     return JsonResponse({"cards": form.cleaned_data["cards"]})
 
 
