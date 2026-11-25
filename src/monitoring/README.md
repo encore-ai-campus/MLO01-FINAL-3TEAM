@@ -1,6 +1,6 @@
 # VoC 모니터링
 
-Grafana는 파이프라인, AI 추론, 카나리 배포 화면을 제공한다. 파이프라인의 단계 상자를 누르면 같은 기간의 기록을 확인할 수 있다. 카나리 배포는 `준비 중`으로 표시한다.
+Grafana는 파이프라인, AI 추론, 카나리 배포 화면을 제공한다. 카나리 배포 화면은 팀 Prometheus에서 `job="voc-live-model"`의 준비 상태, 감성 호출 비율과 모델 연산 P95를 조회한다.
 
 ## 기존 수집 프로젝트에서 실행
 
@@ -59,7 +59,17 @@ Kafka 지연은 커밋 오프셋과 보관 중인 로그 범위로 계산한다.
 
 ## AI 추론 데이터 연결
 
-AI 추론 화면은 외부의 모델 측정 기록을 기다리는 동안 `미수집`을 표시한다. 다음 읽기 뷰의 구조는 [schema.sql](schema.sql)에 있다.
+AI 추론 화면은 분류 워커의 작업과 시도 이력을 `request_id`로 연결한다. 실제 응답 모델과 적용된 감성·카테고리를 티켓 번호별로 표시한다. 합성 검증 문의는 재생으로 집계한다. 분류 테이블을 나중에 설치했다면 `monitor-db`를 다시 실행해 읽기 뷰를 연결한다. [모니터링 스키마](schema.sql)
+
+실채널 PoC에서는 `voc-live-ml` 안의 Prometheus Agent가 두 ClusterIP 서비스의 `/metrics`를 15초마다 읽고 팀 Prometheus의 `/api/v1/write`로 전송한다. 에이전트의 Helm 차트는 [chart](../infra/canary-demo/klue/monitoring/chart)에 있다. `remoteWriteUrl`에는 클러스터에서 접근 가능한 내부 수신 주소를 지정한다. 수신 측 Prometheus는 `--web.enable-remote-write-receiver`를 사용한다. 모델의 수집 결과는 팀 Prometheus에서 `up{job="voc-live-model"}`로 확인한다.
+
+로컬 k3d에서 팀 Compose로 전송할 때는 [수신기 Compose](compose.model-metrics.yaml)를 함께 사용한다. Docker 네트워크에서 수신기에 할당할 빈 IP를 `VOC_MONITOR_BRIDGE_IP`, 송신 노드의 IP 또는 CIDR을 `VOC_MONITOR_NODE_CIDR`로 지정한다. 기본 k3d 네트워크 이름은 `k3d-voc-canary-demo`다. 저장소 루트에서 실행한다.
+
+```sh
+docker compose -f compose.yaml -f src/monitoring/compose.monitoring.yaml -f src/monitoring/compose.model-metrics.yaml up -d prometheus model-metrics-receiver
+helm upgrade --install voc-model-agent src/infra/canary-demo/klue/monitoring/chart -n voc-live-ml \
+  --set-string remoteWriteUrl="http://${VOC_MONITOR_BRIDGE_IP}:9201/api/v1/write"
+```
 
 | 읽기 뷰 | 외부 기록에 필요한 값 |
 | --- | --- |

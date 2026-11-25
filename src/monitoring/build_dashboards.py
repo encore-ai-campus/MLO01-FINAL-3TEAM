@@ -306,6 +306,12 @@ filter_variable = {
 def inference_query(rollout=None):
     api = "classification" if rollout else "embedding"
     route = f"AND rollout='{rollout}' AND model_name IS NOT NULL AND model_version IS NOT NULL" if rollout else ""
+    timings = (
+        'round(percentile_cont(0.95) WITHIN GROUP(ORDER BY extract(epoch FROM (ended_at-started_at))*1000)::numeric,1) AS "워커 처리 P95 (ms)"'
+        if rollout else
+        'round(percentile_cont(0.95) WITHIN GROUP(ORDER BY response_ms)::numeric,1) AS "응답 P95 (ms)", '
+        'round(percentile_cont(0.95) WITHIN GROUP(ORDER BY model_ms)::numeric,1) AS "모델 연산 P95 (ms)"'
+    )
     return f"""
 WITH samples AS (
   SELECT * FROM voc_monitor.inference WHERE api='{api}' {route} AND traffic='operational'
@@ -313,15 +319,14 @@ WITH samples AS (
 )
 SELECT nullif(count(*),0) AS "호출",
        round(count(*) FILTER(WHERE error IS NOT NULL)*100.0/nullif(count(*),0),2) AS "오류율 (%)",
-       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY response_ms)::numeric,1) AS "응답 P95 (ms)",
-       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY model_ms)::numeric,1) AS "모델 연산 P95 (ms)"
+       {timings}
 FROM samples
 """
 
 
 INFERENCE = [
     text(1, "모델 호출과 품질",
-         "현재 모델 계측을 기다리고 있습니다. 응답시간은 호출자가, 연산시간은 모델 API가 측정합니다.",
+         "분류 워커의 요청 이력을 표시합니다. 운영 문의와 재생 요청은 별도로 집계합니다. 모델 연산 지연은 카나리 배포 화면에서 확인할 수 있습니다.",
          y=0, h=3),
     panel(2, "Stable 분류", 0, 3, 8, 6, inference_query("stable")),
     panel(3, "Canary 분류", 8, 3, 8, 6, inference_query("canary")),
@@ -396,8 +401,37 @@ FROM (VALUES ('감성'),('카테고리')) v(label) CROSS JOIN measurement
 WHERE NOT EXISTS(SELECT FROM combinations)
 ORDER BY 1 DESC,2,3,4
 """, description="답변한 상담사가 처음 본 예측과 실제 답변완료 당시 최종값을 비교합니다."),
-    panel(8, "분류 API 연결 설정", 0, 31, 12, 4, """SELECT '미수집' AS "상태" """),
+    omit_prometheus_fields(prom(8, "실채널 모델 준비 상태 (1 = 준비)", 0, 31, 12, 4,
+                                'voc_model_ready{job="voc-live-model"}')),
     panel(9, "임베딩 API 연결 설정", 12, 31, 12, 4, """SELECT '미수집' AS "상태" """),
+    panel(10, "최근 티켓에 반영된 예측", 0, 35, 24, 9, f"""
+SELECT ended_at AS "처리 시각",ticket_number AS "티켓 번호",
+       CASE analysis_kind WHEN 'sentiment' THEN '감성' ELSE '카테고리' END AS "작업",
+       prediction AS "예측 결과",rollout AS "경로",model_version AS "응답 모델",
+       CASE traffic WHEN 'operational' THEN '운영' ELSE '재생' END AS "요청 출처"
+FROM voc_monitor.inference WHERE applied AND {period('ended_at')}
+ORDER BY ended_at DESC,ticket_number LIMIT 80
+"""),
+]
+
+LIVE = '{job="voc-live-model"}'
+SENTIMENT = '{job="voc-live-model",analysis_kind="sentiment"}'
+DEPLOYMENT = [
+    omit_prometheus_fields(prom(1, "모델 지표 수집 (1 = 정상)", 0, 0, 12, 5, 'up' + LIVE)),
+    omit_prometheus_fields(prom(2, "모델 준비 상태 (1 = 준비)", 12, 0, 12, 5, 'voc_model_ready' + LIVE)),
+    omit_prometheus_fields(prom(3, "최근 5분 감성 호출 비율", 0, 5, 12, 6,
+        f'sum by (rollout, model_version) (rate(voc_model_predictions_total{SENTIMENT}[5m])) '
+        f'/ scalar(sum(rate(voc_model_predictions_total{SENTIMENT}[5m])))', unit="percentunit",
+        description="직접 API 테스트를 포함한 실제 호출 비율입니다. 요청이 없는 구간은 비율이 없습니다.")),
+    omit_prometheus_fields(prom(4, "최근 5분 모델 연산 P95", 12, 5, 12, 6,
+        f'histogram_quantile(0.95, sum by (le, rollout, model_version, analysis_kind) '
+        f'(rate(voc_model_prediction_seconds_bucket{LIVE}[5m])))', unit="s")),
+    omit_prometheus_fields(prom(5, "최근 5분 모델 오류 (추정 건수)", 0, 11, 12, 6,
+        'sum by (rollout,model_version) (increase(voc_model_predictions_total'
+        '{job="voc-live-model",outcome=~"error|unsupported|not_ready"}[5m])) '
+        'or on (rollout,model_version) (0 * max by (rollout,model_version) (up{job="voc-live-model"} == 1))')),
+    omit_prometheus_fields(prom(6, "모델 프로세스 누적 호출", 12, 11, 12, 6,
+        f'sum by (rollout,model_version,analysis_kind) (voc_model_predictions_total{LIVE})')),
 ]
 
 if __name__ == "__main__":
@@ -405,7 +439,7 @@ if __name__ == "__main__":
         dashboard("pipeline", PIPELINES),
         dashboard("pipeline-stage", [STAGE_DETAIL], template=[filter_variable], title="문의 처리 단계 상세"),
         dashboard("inference", INFERENCE),
-        dashboard("deployment", [text(1, "", "## 준비 중", y=0, h=8)], refresh=""),
+        dashboard("deployment", DEPLOYMENT),
     ]
     for document in payloads:
         (ROOT / (document["uid"].removeprefix("voc-") + ".json")).write_text(

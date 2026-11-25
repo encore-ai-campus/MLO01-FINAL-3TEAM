@@ -1,0 +1,51 @@
+services:
+  prometheus:
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=6h", "--web.enable-remote-write-receiver"]
+  model-metrics-receiver:
+    image: nginx:1.27-alpine
+    user: "101:101"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    entrypoint: [nginx, -g, "daemon off;"]
+    configs:
+      - {source: model_remote_write, target: /etc/nginx/nginx.conf}
+    depends_on: [prometheus]
+    networks:
+      default: {}
+      model:
+        ipv4_address: ${VOC_MONITOR_BRIDGE_IP:?set an unused address in the k3d network}
+
+networks:
+  model:
+    external: true
+    name: ${VOC_MODEL_DOCKER_NETWORK:-k3d-voc-canary-demo}
+
+configs:
+  model_remote_write:
+    content: |
+      pid /tmp/nginx.pid;
+      error_log /dev/stderr warn;
+      events { worker_connections 64; }
+      http {
+        access_log off;
+        client_body_temp_path /tmp/client;
+        proxy_temp_path /tmp/proxy;
+        fastcgi_temp_path /tmp/fastcgi;
+        scgi_temp_path /tmp/scgi;
+        uwsgi_temp_path /tmp/uwsgi;
+        server {
+          listen ${VOC_MONITOR_BRIDGE_IP:?}:9201;
+          allow ${VOC_MONITOR_NODE_CIDR:?set the authorized k3d node IP or CIDR};
+          deny all;
+          location = /api/v1/write {
+            limit_except POST { deny all; }
+            resolver 127.0.0.11 valid=10s ipv6=off;
+            set $$receiver prometheus:9090;
+            proxy_pass http://$$receiver;
+          }
+          location / { return 404; }
+        }
+      }
