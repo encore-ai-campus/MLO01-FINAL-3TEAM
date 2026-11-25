@@ -35,17 +35,22 @@ LEFT JOIN voc.standardize_outbox o ON o.event_id=b.event_id AND o.target_schema_
 LEFT JOIN voc.silver_messages s ON s.event_id=b.event_id AND s.schema_version=4
 LEFT JOIN voc.ticket_projection_issue p ON p.event_id=b.event_id;
 
+CREATE OR REPLACE VIEW voc_monitor.queue_backlog AS
+SELECT 'classification'::text AS stage,count(*) FILTER (WHERE published_at IS NULL) AS pending,
+       extract(epoch FROM (statement_timestamp()-min(queued_at) FILTER (WHERE published_at IS NULL))) AS oldest_seconds
+FROM voc.ticket_analysis_outbox;
+
 CREATE OR REPLACE VIEW voc_monitor.inventory AS
 SELECT (SELECT count(*) FROM voc.bronze_messages) AS bronze,
        (SELECT count(*) FROM public.ticket WHERE source_event_id IS NOT NULL) AS tickets,
-       (SELECT CASE WHEN count(*)>0 THEN count(*) FILTER (WHERE published_at IS NULL) END
-        FROM voc.ticket_analysis_outbox) AS queued;
+       (SELECT pending FROM voc_monitor.queue_backlog WHERE stage='classification') AS queued;
 
--- The interval includes Kafka delivery/consumption and DB storage. It is not Flink-only latency.
+-- A Kafka publish is observable before Silver stores the same request version.
 CREATE OR REPLACE VIEW voc_monitor.standardization AS
-SELECT s.event_id,o.queued_at,o.published_at,s.standardized_at
-FROM voc.silver_messages s JOIN voc.standardize_outbox o
-  ON (s.event_id,s.schema_version,s.body_version)=(o.event_id,o.target_schema_version,o.body_version);
+SELECT o.event_id,o.queued_at,o.published_at,s.standardized_at
+FROM voc.standardize_outbox o LEFT JOIN voc.silver_messages s
+  ON (s.event_id,s.schema_version,s.body_version)=(o.event_id,o.target_schema_version,o.body_version)
+WHERE o.target_schema_version=4;
 
 CREATE OR REPLACE VIEW voc_monitor.diagnostics AS
 SELECT 'capture'::text AS stage,b.received_at AS observed_at,'원문에 기록된 수집 시각'::text AS activity,
@@ -83,11 +88,6 @@ SELECT 'compute',o.queued_at,CASE o.analysis_kind WHEN 'sentiment' THEN '감성 
                                                 ELSE '카테고리 분류 대기 등록' END,
        o.event_id::text,NULL,NULL,NULL,NULL
 FROM voc.ticket_analysis_outbox o;
-
-CREATE OR REPLACE VIEW voc_monitor.queue_backlog AS
-SELECT 'classification'::text AS stage,count(*) FILTER (WHERE published_at IS NULL) AS pending,
-       extract(epoch FROM (statement_timestamp()-min(queued_at) FILTER (WHERE published_at IS NULL))) AS oldest_seconds
-FROM voc.ticket_analysis_outbox HAVING count(*)>0;
 
 -- These views describe the data a future inference/quality producer needs to supply.
 CREATE OR REPLACE VIEW voc_monitor.inference AS

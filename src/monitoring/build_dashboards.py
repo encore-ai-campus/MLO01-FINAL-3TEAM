@@ -185,19 +185,20 @@ def collector_positions():
 PIPELINES = [
     pipeline_canvas(),
     panel(8, "단계별 처리 시간", 0, 8, 12, 7, f"""
-WITH samples AS (
-  SELECT CASE WHEN published_at>=queued_at THEN extract(epoch FROM published_at-queued_at) END AS queued_seconds,
-         CASE WHEN standardized_at>=published_at THEN extract(epoch FROM standardized_at-published_at) END AS stored_seconds
-  FROM voc_monitor.standardization WHERE {period('standardized_at')}
+WITH samples(stage, seconds) AS (
+    SELECT 'publish',extract(epoch FROM published_at-queued_at)
+    FROM voc_monitor.standardization WHERE {period('published_at')} AND published_at>=queued_at
+    UNION ALL
+    SELECT 'silver',extract(epoch FROM standardized_at-published_at)
+    FROM voc_monitor.standardization WHERE {period('standardized_at')} AND standardized_at>=published_at
 )
-SELECT label AS "측정 구간",nullif(count(seconds),0) AS "완료 표본",
+SELECT label AS "측정 구간",count(seconds) AS "완료 표본",
        round(percentile_cont(0.95) WITHIN GROUP(ORDER BY seconds)::numeric,2) AS "P95 (초)"
-FROM (VALUES ('요청 대기 → Kafka 전달'),('Kafka 전달 → Silver 저장')) v(label)
-LEFT JOIN samples ON true
-LEFT JOIN LATERAL (SELECT CASE label WHEN '요청 대기 → Kafka 전달' THEN queued_seconds ELSE stored_seconds END AS seconds)
-    duration ON true
-GROUP BY label
-""", description="현재 정제 요청과 최초 Silver 저장 기록의 시각을 비교합니다. Kafka 전달 기록은 발행 트랜잭션의 시각입니다."),
+FROM (VALUES ('publish','요청 대기 → Kafka 전달'),('silver','Kafka 전달 → Silver 저장')) AS stages(stage,label)
+LEFT JOIN samples USING(stage)
+GROUP BY stages.stage,label
+ORDER BY stages.stage
+""", empty="-", description="각 구간의 완료 시각을 기준으로 집계합니다. Kafka 전달 기록은 발행 트랜잭션의 시각입니다."),
     panel(9, "전체 처리 시간과 30초 목표", 12, 8, 12, 7, """
 SELECT label AS "지표", '미수집' AS "측정값"
 FROM (VALUES ('전체 시간 P95 (초)'),('30초 이내 완료 (건)'),('목표 미달 (건)'),('대상 (건)'),('30초 내 완료율 (%)')) v(label)
@@ -218,10 +219,11 @@ FROM (
     ('티켓 생성 보류',projection_issues)) AS v(label,value)
 """, description="수집 원문을 업무 티켓과 대조합니다. Flink 정제 처리 대기는 발행 이후 현재 Silver 저장을 확인하지 못한 건입니다."),
     panel(11, "AI 모델 분석 대기", 12, 15, 12, 6, """
-SELECT label AS "단계", q.pending AS "대기 작업", q.oldest_seconds::integer AS "가장 오래된 대기 (초)"
+SELECT label AS "단계", q.pending AS "대기 작업",
+       CASE WHEN q.pending=0 THEN '-' ELSE q.oldest_seconds::integer::text END AS "가장 오래된 대기 (초)"
 FROM (VALUES ('classification','분류 요청'),('embedding','임베딩')) AS s(stage,label)
 LEFT JOIN voc_monitor.queue_backlog q USING(stage)
-""", description="기존 아웃박스의 감성·카테고리 대기 작업을 셉니다. 한 티켓이 두 작업을 가질 수 있습니다."),
+""", description="발행 전인 감성·카테고리 작업을 셉니다. 한 티켓에서 두 작업이 생길 수 있습니다. 임베딩 대기 기록은 아직 연결되지 않았습니다."),
     prom(14, "Flink 마지막 성공 체크포인트", 0, 21, 6, 6, "voc_flink_last_checkpoint_seconds * 1000",
          kind="stat", unit="dateTimeAsLocal"),
     prom(15, "Flink 마지막 체크포인트 복원", 6, 21, 6, 6, "voc_flink_last_restore_seconds * 1000",

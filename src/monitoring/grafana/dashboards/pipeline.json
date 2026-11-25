@@ -662,11 +662,11 @@
             "mode": "fixed",
             "fixedColor": "blue"
           },
-          "noValue": "미수집"
+          "noValue": "-"
         },
         "overrides": []
       },
-      "description": "현재 정제 요청과 최초 Silver 저장 기록의 시각을 비교합니다. Kafka 전달 기록은 발행 트랜잭션의 시각입니다.",
+      "description": "각 구간의 완료 시각을 기준으로 집계합니다. Kafka 전달 기록은 발행 트랜잭션의 시각입니다.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "voc-postgres"
@@ -675,7 +675,7 @@
         {
           "refId": "A",
           "rawQuery": true,
-          "rawSql": "\nWITH samples AS (\n  SELECT CASE WHEN published_at>=queued_at THEN extract(epoch FROM published_at-queued_at) END AS queued_seconds,\n         CASE WHEN standardized_at>=published_at THEN extract(epoch FROM standardized_at-published_at) END AS stored_seconds\n  FROM voc_monitor.standardization WHERE standardized_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n)\nSELECT label AS \"측정 구간\",nullif(count(seconds),0) AS \"완료 표본\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY seconds)::numeric,2) AS \"P95 (초)\"\nFROM (VALUES ('요청 대기 → Kafka 전달'),('Kafka 전달 → Silver 저장')) v(label)\nLEFT JOIN samples ON true\nLEFT JOIN LATERAL (SELECT CASE label WHEN '요청 대기 → Kafka 전달' THEN queued_seconds ELSE stored_seconds END AS seconds)\n    duration ON true\nGROUP BY label\n",
+          "rawSql": "\nWITH samples(stage, seconds) AS (\n    SELECT 'publish',extract(epoch FROM published_at-queued_at)\n    FROM voc_monitor.standardization WHERE published_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz AND published_at>=queued_at\n    UNION ALL\n    SELECT 'silver',extract(epoch FROM standardized_at-published_at)\n    FROM voc_monitor.standardization WHERE standardized_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz AND standardized_at>=published_at\n)\nSELECT label AS \"측정 구간\",count(seconds) AS \"완료 표본\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY seconds)::numeric,2) AS \"P95 (초)\"\nFROM (VALUES ('publish','요청 대기 → Kafka 전달'),('silver','Kafka 전달 → Silver 저장')) AS stages(stage,label)\nLEFT JOIN samples USING(stage)\nGROUP BY stages.stage,label\nORDER BY stages.stage\n",
           "format": "table",
           "editorMode": "code"
         }
@@ -783,7 +783,7 @@
         },
         "overrides": []
       },
-      "description": "기존 아웃박스의 감성·카테고리 대기 작업을 셉니다. 한 티켓이 두 작업을 가질 수 있습니다.",
+      "description": "발행 전인 감성·카테고리 작업을 셉니다. 한 티켓에서 두 작업이 생길 수 있습니다. 임베딩 대기 기록은 아직 연결되지 않았습니다.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "voc-postgres"
@@ -792,7 +792,7 @@
         {
           "refId": "A",
           "rawQuery": true,
-          "rawSql": "\nSELECT label AS \"단계\", q.pending AS \"대기 작업\", q.oldest_seconds::integer AS \"가장 오래된 대기 (초)\"\nFROM (VALUES ('classification','분류 요청'),('embedding','임베딩')) AS s(stage,label)\nLEFT JOIN voc_monitor.queue_backlog q USING(stage)\n",
+          "rawSql": "\nSELECT label AS \"단계\", q.pending AS \"대기 작업\",\n       CASE WHEN q.pending=0 THEN '-' ELSE q.oldest_seconds::integer::text END AS \"가장 오래된 대기 (초)\"\nFROM (VALUES ('classification','분류 요청'),('embedding','임베딩')) AS s(stage,label)\nLEFT JOIN voc_monitor.queue_backlog q USING(stage)\n",
           "format": "table",
           "editorMode": "code"
         }
