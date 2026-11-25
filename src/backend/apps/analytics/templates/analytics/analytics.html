@@ -12,7 +12,7 @@
   {% if not agent %}<div class="analytics-toolbar">
     <nav aria-label="분석 보기">
       <a class="desk-button" {% if tab == "summary" %}aria-current="page"{% endif %} href="{% url 'workspace:analytics' %}?tab=summary&amp;period={{ period }}&amp;scope={{ scope }}">조직·팀 실적</a>
-      <a class="desk-button" {% if tab == "agents" %}aria-current="page"{% endif %} href="{% url 'workspace:analytics' %}?tab=agents&amp;period={{ period }}&amp;scope={{ scope }}">상담사별 실적</a>
+      {% if can_view_agents %}<a class="desk-button" {% if tab == "agents" %}aria-current="page"{% endif %} href="{% url 'workspace:analytics' %}?tab=agents&amp;period={{ period }}&amp;scope={{ scope }}">상담사별 실적</a>{% endif %}
     </nav>
     <form class="analytics-filters" method="get" id="analytics-filters">
       <input type="hidden" name="tab" value="{{ tab }}">

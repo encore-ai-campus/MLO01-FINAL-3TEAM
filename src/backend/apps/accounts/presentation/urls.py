@@ -9,4 +9,6 @@ urlpatterns = [
     path("api/auth/resume", views.resume, name="resume"),
     path("api/auth/me", views.me),
     path("api/auth/logout", views.api_logout),
+    path("settings/permissions/", views.permissions, name="permissions"),
+    path("settings/permissions/<uuid:staff_uuid>/", views.employee_permissions, name="employee-permissions"),
 ]

@@ -56,6 +56,7 @@ VALUES (:'company_id'::uuid,lower(:'email'),:'staff_name',:'password_hash');
 | 위치 | 역할 |
 | --- | --- |
 | `src/backend/apps/accounts` | 로그인·로그아웃·직원 세션 |
+| `src/backend/apps/preferences`, `assignment` | 신속답변·개인 화면·메신저·자동 배정 설정 |
 | `src/backend/apps/tickets` | 티켓 목록·내 티켓·필터·상세·고객 대화 |
 | `src/backend/apps/workspace`, `collaboration`, `analytics` | 업무 홈·받은 요청·VoC 분석의 시연 화면 |
 | `src/backend/templates`, `src/backend/static` | 공통 레이아웃·탐색·정적 파일 |
@@ -83,6 +84,20 @@ python -m uvicorn config.asgi:application --app-dir src/backend --host 127.0.0.1
 
 웹 화면은 동일 출처에서 Django CSRF 토큰을 포함한 폼을 전송한다. JSON 클라이언트는 먼저 `GET /login/`으로 받은 CSRF 쿠키를 보관하고, 로그인·로그아웃 POST에 현재 쿠키값을 `X-CSRFToken` 헤더로 보낸다. 로그인 성공 시 CSRF 토큰이 교체된다. 세션은 8시간 동안 유효하며 로그아웃하면 폐기된다.
 
+### Task 9 설정
+
+`/settings/`에서 신속답변과 개인 화면 설정을 연다. 회사 관리자는 직원별 업무 권한, 메신저 수신 채널과 자동 배정 정책을 관리한다. `init-db-topics`가 `settings_schema.sql`을 적용한다. 이미 PostgreSQL과 Kafka가 실행 중인 환경에서는 아래 명령으로 스키마를 적용하고 Django를 갱신한다.
+
+```bash
+docker compose build init-db-topics ticket-desk
+docker compose run --rm --no-deps init-db-topics
+docker compose up -d --no-deps --no-build ticket-desk
+```
+
+DB 운영자가 회사와 직원 이메일을 확인해 첫 관리자에게 `staff_user.role = 'admin'`을 지정한다. 대시보드 접근은 설정 화면에서 직원에게 부여한다.
+
+Task 10은 배정 트랜잭션에서 `apps.assignment.services.get_policy(cursor, company_uuid, staff_uuid)`를 호출해 `enabled`, `batch_size`, `refill_mode`를 읽을 수 있다. 설정을 저장하기 전에는 자동 배정 꺼짐, 1건, 전체 소진 후 재배정이 기본값이다.
+
 | 엔드포인트 | 용도 |
 | --- | --- |
 | `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/logout` | 로그인·본인 확인·로그아웃 |
@@ -96,6 +111,7 @@ python -m uvicorn config.asgi:application --app-dir src/backend --host 127.0.0.1
 ```bash
 export VOC_TICKET_TEST_ADMIN_DSN="$DATABASE_URL"
 export VOC_TEST_DATABASE_URL="$DATABASE_URL"
+export VOC_TASK9_TEST_DSN="$DATABASE_URL"
 python src/backend/manage.py test tests apps.workspace
 ```
 

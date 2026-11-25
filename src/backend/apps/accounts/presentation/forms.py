@@ -1,6 +1,10 @@
 import re
 
+from django import forms
+
 from config.http import DeskError
+
+from ..services import WORK_PERMISSIONS
 
 DOMAIN_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
 EMAIL_PATTERN = re.compile(rf"[a-z0-9]{{5,15}}@{DOMAIN_LABEL}(?:\.{DOMAIN_LABEL})+", re.ASCII | re.IGNORECASE)
@@ -15,3 +19,9 @@ def credentials(data):
     if not password:
         raise DeskError(422, "PASSWORD_REQUIRED", "비밀번호를 입력해 주세요.")
     return email.lower(), password
+
+
+class WorkPermissionsForm(forms.Form):
+    permissions = forms.MultipleChoiceField(
+        label="업무 권한", choices=WORK_PERMISSIONS, required=False, widget=forms.CheckboxSelectMultiple,
+    )
