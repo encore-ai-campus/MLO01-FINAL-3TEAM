@@ -5,7 +5,7 @@
 {% block content %}
 <section class="ticket-detail" aria-labelledby="ticket-detail-title">
   <header class="detail-header">
-    <a class="desk-button ticket-detail-back" href="{% url 'tickets:list' %}{% querystring %}"><span aria-hidden="true">‹</span> 티켓 목록</a>
+    <a class="desk-button ticket-detail-back" href="{% url 'tickets:list' %}{% querystring memos=None %}"><span aria-hidden="true">‹</span> 티켓 목록</a>
     <h1 id="ticket-detail-title">#{{ ticket.ticket_number }} {{ ticket.title }}</h1>
     <div class="detail-meta">
       <span data-ticket-status="{{ ticket.status }}">{{ ticket.status }}</span>
@@ -15,7 +15,6 @@
       <p>담당 {{ ticket.team_name|default:'미배정' }} · {{ ticket.assignee_name|default:'미지정' }} /
         접수 <time datetime="{{ ticket.created_at|timestamp }}">{{ ticket.created_at|detail_time }}</time></p>
     </div>
-    {% if can_conduct and is_assignee %}<a class="desk-button" href="{% url 'assignment:ticket-category' ticket.ticket_uuid %}">카테고리 수정</a>{% endif %}
     <p class="detail-customer-id">고객 ID {{ ticket.customer_id }}</p>
   </header>
   <div class="ticket-detail-body">
@@ -26,8 +25,6 @@
           <ol class="detail-messages">{% for message in messages %}
             <li class="detail-message" data-sender="{{ message.sender_type }}" data-message-type="{{ message.message_type }}">
               <header>{% if message.author_name %}<strong>{{ message.author_name }}</strong> · {% endif %}{{ message|message_label }}
-                {% if message.ticket_uuid == ticket.ticket_uuid %}<span>#{{ message.ticket_number }} · 선택한 티켓</span>
-                {% else %}<a href="{% url 'tickets:detail' message.ticket_uuid %}{% querystring %}">#{{ message.ticket_number }}</a>{% endif %}
                 <time datetime="{{ message.created_at|timestamp }}">{{ message.created_at|detail_time }}</time>
                 {% if message.delivery_status %}<span>{{ message.delivery_status|delivery_label }}</span>{% endif %}
               </header>
@@ -41,20 +38,42 @@
     <aside aria-label="티켓 보조 패널">
       <details class="ticket-side-panel" open>
         <summary>티켓 보조 패널</summary>
-        {% if can_conduct %}{% include "tickets/includes/collaboration.html" %}{% endif %}
+        {% if can_conduct and is_assignee %}
+          <a class="desk-button detail-analysis-button" href="{% url 'assignment:ticket-category' ticket.ticket_uuid %}{% querystring %}">분석·배정 수정</a>
+        {% endif %}
+        {% if can_conduct %}
+          <details class="ticket-conversation detail-memo-panel" id="detail-memos"{% if show_memos %} open{% endif %}>
+            <summary><span class="detail-memo-show">내부 메모 보기</span><span class="detail-memo-hide">내부 메모 숨기기</span> ({{ memos|length }})</summary>
+            {% if memos %}<ol class="detail-memo-list">{% for memo in memos %}
+              <li>
+                <header>{% if memo.author_name %}<strong>{{ memo.author_name }}</strong>{% endif %}
+                  <time datetime="{{ memo.created_at|timestamp }}">{{ memo.created_at|detail_time }}</time>
+                </header>
+                <p>{{ memo.body }}</p>
+              </li>
+            {% endfor %}</ol>{% else %}<p>저장된 내부 메모가 없습니다.</p>{% endif %}
+          </details>
+          {% include "tickets/includes/collaboration.html" %}
+        {% endif %}
         <details class="ticket-conversation">
           <summary>동일 고객 티켓</summary>
           <ul>{% for item in customer_tickets %}
-            <li><a href="{% url 'tickets:detail' item.ticket_uuid %}{% querystring %}">#{{ item.ticket_number }} · {{ item.title }}</a>
+            <li><a href="{% url 'tickets:detail' item.ticket_uuid %}{% querystring memos=None %}">#{{ item.ticket_number }} · {{ item.title }}</a>
               <span>{{ item|analysis_label:'category' }} · {{ item.updated_at|detail_time }}</span></li>
           {% endfor %}</ul>
         </details>
         {% if duplicate_candidates %}
           <section class="ticket-conversation" aria-labelledby="candidates-title"><h2 id="candidates-title">다른 채널의 중복 문의 후보</h2>
             <ul>{% for candidate in duplicate_candidates %}
-              <li><a class="ticket-detail-link" href="{% url 'tickets:detail' candidate.ticket_uuid %}{% querystring %}">#{{ candidate.ticket_number }} · {{ candidate.channel|channel_label }} · {{ candidate.title }}</a></li>
+              <li><a class="ticket-detail-link" href="{% url 'tickets:detail' candidate.ticket_uuid %}{% querystring memos=None %}">#{{ candidate.ticket_number }} · {{ candidate.channel|channel_label }} · {{ candidate.title }}</a></li>
             {% endfor %}</ul>
           </section>
+        {% endif %}
+        {% if can_conduct and is_assignee and ticket.status != '답변완료' %}
+          <form class="detail-complete-form" method="post" action="{% url 'tickets:complete' ticket.ticket_uuid %}{% querystring %}">
+            {% csrf_token %}
+            <button class="desk-button detail-complete-button" type="submit">처리 완료</button>
+          </form>
         {% endif %}
       </details>
     </aside>

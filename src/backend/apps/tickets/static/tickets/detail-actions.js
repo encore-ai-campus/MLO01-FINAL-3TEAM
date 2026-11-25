@@ -1,7 +1,6 @@
 const suggestion = document.querySelector("#ticket-quick-reply");
 const responseBody = document.querySelector("#ticket-reply-body");
 const composer = responseBody?.form;
-
 if (composer) {
   const modes = composer.querySelectorAll('input[type="radio"][name="message_type"]');
   const drafts = { reply: "", memo: "" };

@@ -113,6 +113,12 @@ def current_ticket(cn, job):
 def project(cn, job, ticket, value, status):
     if ticket is None:
         return False
+    # current_ticket already holds the row lock. Read the manual event after acquiring it.
+    if job["analysis_kind"] == "sentiment" and cn.execute("""
+        SELECT 1 FROM public.ticket_event e JOIN public.event_type t USING(event_type_uuid)
+        WHERE e.ticket_uuid=%s AND t.code='ticket_sentiment_changed'
+    """, (ticket["ticket_uuid"],)).fetchone():
+        return False
     marker = cn.execute("""
         SELECT value,status,request_id FROM voc.classification_projection WHERE ticket_uuid=%s AND analysis_kind=%s
     """, (ticket["ticket_uuid"], job["analysis_kind"])).fetchone()

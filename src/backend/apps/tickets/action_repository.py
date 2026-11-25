@@ -35,6 +35,13 @@ def lock_ticket(cursor, actor, ticket_uuid):
     return next(iter(fetch_rows(cursor)), None)
 
 
+def has_unsettled_reply(cursor, ticket_uuid):
+    cursor.execute("""
+        SELECT 1 FROM ticket_message WHERE ticket_uuid=%s AND delivery_status IN ('sending','unknown')
+    """, (ticket_uuid,))
+    return cursor.fetchone() is not None
+
+
 def reply_source(cursor, ticket_uuid):
     cursor.execute("""
         SELECT t.company_uuid, s.channel AS source_kind, s.connection_id, s.source_message_id,

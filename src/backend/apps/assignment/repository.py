@@ -6,7 +6,7 @@ from config.database import fetch_rows
 
 TICKET_FIELDS = """
     t.ticket_uuid, t.company_uuid, t.domain_uuid, t.ticket_number, t.status,
-    t.category_uuid, t.assigned_team_uuid, t.assignee_uuid, t.category_status,
+    t.category_uuid, t.assigned_team_uuid, t.assignee_uuid, t.category_status, t.sentiment, t.sentiment_status,
     t.category_manually_set, t.category_review_reason,
     t.category_applied_body_version, t.category_applied_preprocess_version
 """
@@ -75,6 +75,25 @@ def save_manual_category(cursor, ticket_uuid, category_uuid):
     """, (category_uuid, ticket_uuid))
 
 
+def save_manual_sentiment(cursor, ticket_uuid, sentiment):
+    cursor.execute("""
+        UPDATE ticket SET sentiment=%s,sentiment_status='succeeded',updated_at=now() WHERE ticket_uuid=%s
+    """, (sentiment, ticket_uuid))
+
+
+def reassign_team(cursor, ticket_uuid, team_uuid):
+    cursor.execute("""
+        UPDATE ticket SET assigned_team_uuid=%s,assignee_uuid=NULL,updated_at=now(),
+            category_review_reason=NULLIF(category_review_reason,'no_team_mapping')
+        WHERE ticket_uuid=%s
+    """, (team_uuid, ticket_uuid))
+
+
+def record_manual_event(cursor, ticket_uuid, code, *, actor, reason, details):
+    cursor.execute("INSERT INTO event_type(code) VALUES (%s) ON CONFLICT (code) DO NOTHING", (code,))
+    record_event(cursor, ticket_uuid, code, actor=actor, reason=reason, details=details)
+
+
 def record_event(cursor, ticket_uuid, code, *, actor=None, recipient=None, reason=None, details=None):
     cursor.execute("""
         INSERT INTO ticket_event(ticket_uuid,event_type_uuid,actor_uuid,recipient_uuid,transfer_reason,details)
@@ -131,11 +150,14 @@ def routing_options(cursor, company_uuid):
         LEFT JOIN team t ON (t.company_uuid,t.team_uuid)=(r.company_uuid,r.team_uuid)
         WHERE org.company_uuid=%s ORDER BY c.name,c.category_uuid
     """, (company_uuid,))
-    categories = fetch_rows(cursor)
+    return fetch_rows(cursor), team_choices(cursor, company_uuid)
+
+
+def team_choices(cursor, company_uuid):
     cursor.execute("""
         SELECT team_uuid,name FROM team WHERE company_uuid=%s ORDER BY name,team_uuid
     """, (company_uuid,))
-    return categories, fetch_rows(cursor)
+    return fetch_rows(cursor)
 
 
 def save_route(cursor, company_uuid, category_uuid, team_uuid):

@@ -474,7 +474,8 @@ class TicketTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200, response.text)
             return response.json()
         data = detail(a)
-        self.assertEqual([m["ticket_uuid"] for m in data["messages"]], [a,b])
+        self.assertEqual([m["ticket_uuid"] for m in data["messages"]], [a])
+        self.assertEqual([row["ticket_uuid"] for row in data["customer_tickets"]], [b])
         self.assertEqual([c["ticket_uuid"] for c in data["duplicate_candidates"]], [discord])
         self.assertEqual([c["ticket_uuid"] for c in detail(discord)["duplicate_candidates"]], [a])
         self.assertEqual(detail(b)["duplicate_candidates"], [])
@@ -511,7 +512,7 @@ class TicketTests(unittest.TestCase):
         detail_path = f"/tickets/{self.tickets[1]}/"
         self.assertContainsHTML(listing, detail_path + "?scope=mine")
         detail = browser.get(detail_path + "?scope=mine")
-        self.assertContainsHTML(detail, "배송 요청 1")
+        self.assertContainsHTML(detail, "배송 요청 2")
         self.assertContainsHTML(detail, 'class="detail-meta"')
         self.grant_conduct()
         detail_url = f"/tickets/{self.tickets[1]}/"
@@ -521,7 +522,8 @@ class TicketTests(unittest.TestCase):
         memo["csrfmiddlewaretoken"] = browser.cookies["csrftoken"].value
         saved = browser.post(detail_url + "messages/?scope=mine", memo, follow=True)
         self.assertContainsHTML(saved, "브라우저 메모")
-        self.assertEqual(saved.redirect_chain, [(detail_url + "?scope=mine", 302)])
+        self.assertEqual(saved.redirect_chain, [(detail_url + "?scope=mine&memos=1", 302)])
+        self.assertContainsHTML(saved, 'id="detail-memos" open')
         self.assertEqual(browser.get(f"/tickets/{self.tickets[-1]}/").status_code, 404)
         self.assertEqual(browser.post("/logout/").status_code, 403)
         self.assertEqual(browser.post("/logout/", {"csrfmiddlewaretoken":browser.cookies["csrftoken"].value}).status_code, 302)
@@ -555,7 +557,7 @@ class TicketTests(unittest.TestCase):
         detail = self.client.get(href)
         self.assertContainsHTML(detail, "내부 메모 작성")
         self.assertNotIn("고객에게 답변", detail.text)
-        self.assertNotIn("카테고리 수정", detail.text)
+        self.assertNotIn("분석·배정 수정", detail.text)
         with patch("apps.tickets.delivery.send_reply") as send:
             denied = self.client.post(endpoint, {**payload, "message_type": "reply"},
                                       content_type="application/json")
@@ -567,9 +569,14 @@ class TicketTests(unittest.TestCase):
         self.assertEqual(first.json(), again.json())
         self.assertEqual(first.json()["ticket_status"], "미처리")
         self.assertContainsHTML(self.client.get(path), "내부 확인 🙂")
+        data = self.client.get(f"/api/tickets/{ticket}").json()
+        self.assertEqual([memo["body"] for memo in data["memos"]], ["내부 확인 🙂"])
+        self.assertNotIn("내부 확인 🙂", [message["body"] for message in data["messages"]])
+        self.assertEqual(self.client.get(f"/api/tickets/{self.tickets[1]}").json()["memos"], [])
         self.cur.execute("DELETE FROM staff_permission WHERE staff_user_uuid=%s AND permission_uuid "
                          "IN (SELECT permission_uuid FROM permission WHERE code='ticket.handle')", (self.employees[0],))
         self.assertNotIn("내부 확인 🙂", self.client.get(path).text)
+        self.assertEqual(self.client.get(f"/api/tickets/{ticket}").json()["memos"], [])
         self.assertEqual(self.client.get("/api/tickets").json()["total"], 3)
         self.cur.execute("DELETE FROM ticket_message WHERE request_key=%s", (payload["request_key"],))
 
@@ -590,6 +597,42 @@ class TicketTests(unittest.TestCase):
         self.assertEqual(untouched["ticket"]["status"], "미처리")
         self.cur.execute("DELETE FROM ticket_message WHERE ticket_uuid=%s AND message_type='reply'", (discord,))
         self.cur.execute("UPDATE ticket SET status='미처리' WHERE ticket_uuid=%s", (discord,))
+
+    def test_assignee_can_mark_ticket_complete_without_sending_a_reply(self):
+        self.login()
+        self.grant_conduct()
+        ticket = self.tickets[0]
+        path = reverse("tickets:detail", args=[ticket])
+        complete = reverse("tickets:complete", args=[ticket])
+        self.assertNotIn("처리 완료</button>", self.client.get(path).text)
+        self.assertEqual(self.client.post(complete).status_code, 403)
+        self.assign_unassigned_ticket(ticket)
+        self.addCleanup(self.cur.execute, "UPDATE ticket SET status='미처리' WHERE ticket_uuid=%s", (ticket,))
+        self.addCleanup(self.cur.execute, """
+            DELETE FROM ticket_event USING event_type WHERE ticket_event.event_type_uuid=event_type.event_type_uuid
+              AND ticket_uuid=%s AND code='ticket_manually_completed'
+        """, (ticket,))
+        self.assertContainsHTML(self.client.get(path), "처리 완료</button>")
+        self.assertEqual(self.client.get(complete).status_code, 405)
+        csrf_client = Client(enforce_csrf_checks=True)
+        csrf_client.cookies.update(self.client.cookies)
+        self.assertEqual(csrf_client.post(complete).status_code, 403)
+
+        with patch("apps.tickets.delivery.send_reply") as send:
+            first = self.client.post(complete + "?scope=mine")
+            self.assertEqual((first.status_code, first.url), (302, path + "?scope=mine"))
+            self.assertEqual(self.client.post(complete).status_code, 302)
+            send.assert_not_called()
+        detail = self.client.get(path)
+        self.assertContainsHTML(detail, 'data-ticket-status="답변완료"')
+        self.assertNotIn("처리 완료</button>", detail.text)
+        self.cur.execute("""
+            SELECT code,actor_uuid::text,from_status,to_status FROM ticket_event JOIN event_type USING(event_type_uuid)
+            WHERE ticket_uuid=%s AND code='ticket_manually_completed'
+        """, (ticket,))
+        self.assertEqual(self.cur.fetchall(), [("ticket_manually_completed", self.employees[0], "미처리", "답변완료")])
+        self.cur.execute("SELECT count(*) FROM ticket_message WHERE ticket_uuid=%s AND message_type='reply'", (ticket,))
+        self.assertEqual(self.cur.fetchone()[0], 0)
 
     def test_gmail_failure_preserves_status_and_uses_original_headers(self):
         from apps.tickets.delivery import DeliveryError
@@ -726,8 +769,8 @@ class TicketTests(unittest.TestCase):
         self.assertContainsHTML(drawer, "수락 대기")
         detail_url = f"/tickets/{ticket}/"
         category_url = detail_url + "category/"
-        self.assertContainsHTML(self.client.get(detail_url), "카테고리 수정")
-        self.assertNotIn("카테고리 수정", receiver.get(detail_url).text)
+        self.assertContainsHTML(self.client.get(detail_url), "분석·배정 수정")
+        self.assertNotIn("분석·배정 수정", receiver.get(detail_url).text)
         self.assertEqual(receiver.get(category_url).status_code, 403)
         reply_payload = {"message_type": "reply", "body": "담당 상담사 답변", "request_key": str(uuid4())}
         with patch("apps.tickets.delivery.send_reply") as send:
@@ -749,7 +792,7 @@ class TicketTests(unittest.TestCase):
         self.assertIn(ticket, [item["ticket_uuid"] for item in receiver.get("/api/tickets?scope=mine").json()["items"]])
         self.assertNotIn(ticket, [item["ticket_uuid"] for item in self.client.get("/api/tickets?scope=mine").json()["items"]])
         self.assertContainsHTML(receiver.get(detail_url), "고객에게 답변")
-        self.assertContainsHTML(receiver.get(detail_url), "카테고리 수정")
+        self.assertContainsHTML(receiver.get(detail_url), "분석·배정 수정")
         self.assertEqual(receiver.get(category_url).status_code, 200)
         self.assertEqual(self.client.post(category_url, {"category_uuid": str(uuid4())}).status_code, 403)
         with patch("apps.tickets.delivery.send_reply") as send:

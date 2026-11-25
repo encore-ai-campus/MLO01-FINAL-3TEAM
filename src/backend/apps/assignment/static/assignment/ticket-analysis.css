@@ -1,0 +1,21 @@
+.ticket-analysis .desk-heading { gap: 12px; flex-wrap: wrap; }
+.ticket-analysis .desk-heading p, #analysis-team-help { color: var(--desk-muted); font-size: 13px; }
+.ticket-analysis-form { display: grid; gap: 15px; max-width: 610px; margin-top: 20px; }
+.ticket-analysis-labels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ticket-analysis-form label { display: grid; gap: 6px; font-weight: 600; }
+.ticket-analysis-form select, .ticket-analysis-form textarea {
+  min-width: 0;
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 9px;
+  border: 1px solid var(--desk-line);
+  border-radius: 7px;
+  background: var(--paper);
+  color: inherit;
+  font: inherit;
+}
+.ticket-analysis-form textarea { resize: vertical; }
+#analysis-team-help { margin-top: -8px; }
+@media (max-width: 560px) {
+  .ticket-analysis-labels { grid-template-columns: minmax(0, 1fr); }
+}

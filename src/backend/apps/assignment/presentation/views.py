@@ -4,6 +4,7 @@ from django.conf import settings
 from django.db import connection, transaction
 from django.http import JsonResponse
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.utils.crypto import constant_time_compare
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -16,8 +17,8 @@ from config.database import read_snapshot
 from config.http import DeskError, validate_form
 
 from .. import repository as repo
-from ..services import apply_category_result, change_category, get_policy, save_policy
-from .forms import AssignmentPolicyForm, CategoryChangeForm, CategoryResultForm, CategoryRouteForm
+from ..services import apply_category_result, change_analysis, get_policy, save_policy
+from .forms import AnalysisChangeForm, AssignmentPolicyForm, CategoryChangeForm, CategoryResultForm, CategoryRouteForm
 
 
 @require_GET
@@ -74,10 +75,12 @@ def category_routes(request):
 def category(request, ticket_uuid, as_json=False):
     token = session_token(request)
     if request.method == "POST":
-        result = change_category(token, ticket_uuid, **validate_form(CategoryChangeForm, request))
+        form = CategoryChangeForm if as_json else AnalysisChangeForm
+        result = change_analysis(token, ticket_uuid, **validate_form(form, request))
         if as_json:
             return JsonResponse(result)
-        return redirect("tickets:detail", ticket_uuid=ticket_uuid)
+        url = reverse("tickets:detail", args=(ticket_uuid,))
+        return redirect(f"{url}?{request.GET.urlencode()}" if request.GET else url)
     with read_snapshot() as cursor:
         actor = current_actor(token, cursor)
         require_conduct(actor, cursor)
@@ -86,10 +89,15 @@ def category(request, ticket_uuid, as_json=False):
             raise DeskError(404, "TICKET_NOT_FOUND", "티켓을 찾을 수 없습니다.")
         require_assignee(actor, ticket)
         categories = repo.category_choices(cursor, ticket["domain_uuid"])
-    if as_json:
-        return JsonResponse({"current_category_uuid": ticket["category_uuid"], "categories": categories})
+        if as_json:
+            return JsonResponse({"current_category_uuid": ticket["category_uuid"], "categories": categories})
+        teams = repo.team_choices(cursor, actor["company_uuid"])
+    ticket["category"] = next((category["name"] for category in categories
+                               if category["category_uuid"] == ticket["category_uuid"]), None)
+    current_team = next((team["name"] for team in teams if team["team_uuid"] == ticket["assigned_team_uuid"]), "미배정")
     return render(request, "assignment/category_form.html", {
         "actor": actor, "active": "tickets", "ticket": ticket, "categories": categories,
+        "sentiments": AnalysisChangeForm.base_fields["sentiment"].choices, "teams": teams, "current_team": current_team,
     })
 
 
