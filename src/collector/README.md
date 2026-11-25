@@ -35,9 +35,9 @@ init-db-topics의 종료 코드 0은 테이블 및 토픽 준비 완료를 뜻�
 | 원본 발행 | publish | SQLite capture_outbox에서 미발행 원본을 가져와 voc.raw.discord 또는 voc.raw.gmail에 발행한다. Kafka ACK 뒤 published_at을 기록하고 대기열 본문을 비운다. 메시지 식별자는 중복 판정을 위해 남긴다. |
 | Bronze | db-worker, PostgreSQL | voc.bronze_messages.raw_payload에 원본 JSONB를 보존한다. 최초 적재와 voc.standardize_outbox의 발행 대기 기록을 한 트랜잭션으로 저장하고 Kafka 위치를 커밋한다. |
 | 표준화 요청 | db-worker | Bronze 원본, 최초 수신 시각, 확인된 역할과 본문 버전을 `voc.standardize.request.v4`에 발행한다. Kafka ACK 후 해당 이벤트·스키마 버전의 발행 시각을 기록한다. |
-| 정제 | Flink JobManager, TaskManager | 정상 메시지는 19개 키의 JSON으로 `voc.standardized.v4`에 발행한다. 오류는 `voc.standardize.review.v4`로 보낸다. Kafka 트랜잭션은 체크포인트가 성공하면 완료한다. |
+| 정제 | Flink JobManager, TaskManager | 정상 메시지는 19개 키의 JSON으로 `voc.standardized.v4`에 발행한다. 빈 본문, 잘못된 시각, 해석할 수 없는 MIME 등은 `voc.standardize.review.v4`로 보낸다. |
 | Silver | db-worker, PostgreSQL | `voc.silver_messages`에 표준 필드를 컬럼별로 저장한다. `event_id`로 Bronze 원본을 찾고 `voc.review_events`에서 검토 사유를 확인한다. |
-| 업무 티켓 | PostgreSQL | 확인된 고객 문의와 업무 채널이 연결되면 Silver 트랜잭션에서 고객, 티켓, 최초 문의 메시지, 모델 입력과 감성·카테고리·임베딩 대기 요청을 함께 저장한다. 수신 후에 업무 채널을 등록해도 기존 문의를 찾아 적재한다. |
+| 업무 티켓 | PostgreSQL | 확인된 고객 문의와 업무 채널이 연결되면 Silver 트랜잭션에서 고객, 티켓, 최초 문의 메시지, 모델 입력과 감성·카테고리 분석 대기 요청을 함께 저장한다. 수신 후에 업무 채널을 등록해도 기존 문의를 찾아 적재한다. |
 
 **메시지 식별.** 회사·채널 유형·연결 계정 또는 서버·원천 메시지 ID로 같은 event_id를 계산한다. 다른 고객이 같은 글을 써도 서로 다른 원천 메시지 ID를 가지므로 별개로 저장한다. 전달은 재시도할 수 있으며, Bronze와 Silver의 유일 키로 같은 이벤트의 중복 행을 막는다.
 
@@ -59,7 +59,7 @@ init-db-topics의 종료 코드 0은 테이블 및 토픽 준비 완료를 뜻�
 
 Silver는 **메시지 한 건당 한 행**이다. 전체 표준 JSON은 Kafka에서 전달하고, PostgreSQL에는 19개 필드와 DB 적재 시각 `standardized_at`을 둔다. Silver에서 JSONB를 사용하는 필드는 `source_metadata`다. 원본은 Bronze의 `raw_payload`에서 조회한다. 부모 ID는 있지만 원글을 아직 확인하지 못한 Discord 답글은 `source_conversation_id = NULL`로 저장한다. 나중에 같은 회사·연결·채널에서 부모가 들어오면 후속 답글까지 연결한다.
 
-`customer_inquiry` 한 건이 업무 티켓 하나가 된다. 같은 Gmail 스레드에서 온 후속 문의에도 새 번호를 발급한다. `voc.model_text_history`에 정제 제목과 본문을 저장한다. 분류 워커와 임베딩 워커가 같은 티켓을 병렬로 처리한다. 두 분류가 성공하면 임베딩 완료 전에도 상담사가 원문을 볼 수 있다. 세 번째 분류 호출 후 실패가 남으면 `분류 실패`를 표시한다. [모니터링 실행 가이드](../monitoring/README.md)
+`customer_inquiry` 한 건이 업무 티켓 하나가 된다. 같은 Gmail 스레드에서 온 후속 문의에도 새 번호를 발급한다. `voc.model_text_history`에는 `body_text`를 그대로 `model_text`로 저장하고, `voc.ticket_analysis_outbox`에는 본문 버전별로 감성과 카테고리 요청을 한 건씩 남긴다. 화면은 분석 결과가 준비되기 전부터 원문을 제공한다.
 
 | 업무 테이블의 컬럼 | 티켓 생성 때 저장하는 값 |
 | --- | --- |
@@ -154,7 +154,7 @@ WHERE event_id=:'inquiry' AND target_schema_version=4 AND EXISTS (
 
 ~~~sql
 SELECT s.message_kind,t.ticket_number,t.status,i.reason
-FROM voc.silver_messages s LEFT JOIN public.ticket t ON t.source_event_id=s.event_id
+FROM voc.silver_messages s LEFT JOIN public.visible_ticket t ON t.source_event_id=s.event_id
 LEFT JOIN voc.ticket_projection_issue i ON i.event_id=s.event_id
 WHERE s.schema_version=4 AND s.event_id=:'inquiry';
 ~~~

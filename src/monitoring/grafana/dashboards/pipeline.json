@@ -34,7 +34,7 @@
         },
         "overrides": []
       },
-      "description": "클릭할 수 있는 단계에서 Kafka 전달, 실패, 재시도 기록을 확인합니다.",
+      "description": "단계를 눌러 DB에 저장된 수집·Kafka 전달·검토 기록을 확인합니다.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "voc-postgres"
@@ -43,7 +43,7 @@
         {
           "refId": "A",
           "rawQuery": true,
-          "rawSql": "\nWITH events AS (\n    SELECT stage,count(*) FILTER(WHERE started_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz) AS entered,\n           count(*) FILTER(WHERE succeeded_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz) AS completed\n    FROM monitor.stage WHERE started_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz OR succeeded_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n    GROUP BY stage\n), counts AS (\n    SELECT s.stage,e.entered,e.completed,\n        e.entered IS NOT NULL OR CASE\n            WHEN s.stage IN ('compute','ready') THEN EXISTS(SELECT FROM monitor.availability WHERE step='classification' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz) AND EXISTS(SELECT FROM monitor.availability WHERE step='embedding' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz)\n            ELSE EXISTS (SELECT FROM monitor.availability a WHERE a.step=s.stage\n                         AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz)\n        END AS observed\n    FROM unnest(ARRAY['capture','bronze','flink','ticket','compute','ready']) s(stage) LEFT JOIN events e USING(stage)\n)\nSELECT max(CASE WHEN stage='capture' THEN CASE WHEN observed THEN '유입 ' || coalesce(entered,0)::text || '건  ·  완료 ' || coalesce(completed,0)::text || '건' ELSE '미수집' END END) AS \"capture\", max(CASE WHEN stage='bronze' THEN CASE WHEN observed THEN '유입 ' || coalesce(entered,0)::text || '건  ·  완료 ' || coalesce(completed,0)::text || '건' ELSE '미수집' END END) AS \"bronze\", max(CASE WHEN stage='flink' THEN CASE WHEN observed THEN '유입 ' || coalesce(entered,0)::text || '건  ·  완료 ' || coalesce(completed,0)::text || '건' ELSE '미수집' END END) AS \"flink\", max(CASE WHEN stage='ticket' THEN CASE WHEN observed THEN '유입 ' || coalesce(entered,0)::text || '건  ·  완료 ' || coalesce(completed,0)::text || '건' ELSE '미수집' END END) AS \"ticket\", max(CASE WHEN stage='compute' THEN CASE WHEN observed THEN '유입 ' || coalesce(entered,0)::text || '건  ·  완료 ' || coalesce(completed,0)::text || '건' ELSE '미수집' END END) AS \"compute\", max(CASE WHEN stage='ready' THEN CASE WHEN observed THEN '유입 ' || coalesce(entered,0)::text || '건  ·  완료 ' || coalesce(completed,0)::text || '건' ELSE '미수집' END END) AS \"ready\"\nFROM counts\n",
+          "rawSql": "\nWITH capture AS (\n    SELECT count(*) AS count FROM voc_monitor.diagnostics WHERE stage='capture' AND observed_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n), silver AS (\n    SELECT count(*) AS count FROM voc_monitor.diagnostics\n    WHERE stage='flink' AND activity='Silver DB 저장' AND observed_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n)\nSELECT CASE WHEN i.bronze>0 THEN '기록된 수집 ' || c.count || '건' ELSE '미수집' END AS capture,\n       CASE WHEN i.bronze>0 THEN '현재 원문 ' || i.bronze || '건' ELSE '미수집' END AS bronze,\n       CASE WHEN s.count>0 THEN 'Silver 저장 ' || s.count || '건' ELSE '미수집' END AS flink,\n       CASE WHEN i.bronze>0 THEN '현재 원문 연결 ' || i.tickets || '건' ELSE '미수집' END AS ticket,\n       CASE WHEN i.queued IS NOT NULL THEN '현재 분류 대기 ' || i.queued || '건' ELSE '미수집' END AS compute,\n       '미수집' AS ready\nFROM voc_monitor.inventory i CROSS JOIN capture c CROSS JOIN silver s\n",
           "format": "table",
           "editorMode": "code"
         }
@@ -666,7 +666,7 @@
         },
         "overrides": []
       },
-      "description": "같은 문의에서 최초 유입과 최초 완료의 차이를 측정합니다.",
+      "description": "현재 정제 요청과 최초 Silver 저장 기록의 시각을 비교합니다. Kafka 전달 기록은 발행 트랜잭션의 시각입니다.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "voc-postgres"
@@ -675,7 +675,7 @@
         {
           "refId": "A",
           "rawQuery": true,
-          "rawSql": "\nSELECT CASE stage WHEN 'capture' THEN '수집' WHEN 'bronze' THEN '원문 저장' WHEN 'flink' THEN 'Flink 정제' WHEN 'ticket' THEN '티켓 저장' WHEN 'compute' THEN '분류·임베딩' WHEN 'ready' THEN '결과 저장' END AS \"단계\",\n       count(*) AS \"완료 표본\",\n       round(percentile_cont(0.95) WITHIN GROUP (\n           ORDER BY extract(epoch FROM (succeeded_at-started_at)))::numeric, 2) AS \"P95 (초)\"\nFROM monitor.stage\nWHERE succeeded_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz AND started_at<=succeeded_at\nGROUP BY stage ORDER BY array_position(ARRAY['capture','bronze','flink','ticket','compute','ready'],stage)\n",
+          "rawSql": "\nWITH samples AS (\n  SELECT CASE WHEN published_at>=queued_at THEN extract(epoch FROM published_at-queued_at) END AS queued_seconds,\n         CASE WHEN standardized_at>=published_at THEN extract(epoch FROM standardized_at-published_at) END AS stored_seconds\n  FROM voc_monitor.standardization WHERE standardized_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n)\nSELECT label AS \"측정 구간\",nullif(count(seconds),0) AS \"완료 표본\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY seconds)::numeric,2) AS \"P95 (초)\"\nFROM (VALUES ('요청 대기 → Kafka 전달'),('Kafka 전달 → Silver 저장')) v(label)\nLEFT JOIN samples ON true\nLEFT JOIN LATERAL (SELECT CASE label WHEN '요청 대기 → Kafka 전달' THEN queued_seconds ELSE stored_seconds END AS seconds)\n    duration ON true\nGROUP BY label\n",
           "format": "table",
           "editorMode": "code"
         }
@@ -705,7 +705,7 @@
         },
         "overrides": []
       },
-      "description": "원본 공급자 등록부터 결과 저장까지 잽니다. 등록 시각을 모르는 문의는 제외합니다.",
+      "description": "문의 등록 시각과 최종 결과 저장 시각을 연결하는 기록이 필요합니다.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "voc-postgres"
@@ -714,7 +714,7 @@
         {
           "refId": "A",
           "rawQuery": true,
-          "rawSql": "\nWITH completed AS (\n  SELECT extract(epoch FROM ready_at-registered_at) AS seconds FROM monitor.normal_inquiry\n  WHERE ready_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz AND ready_at>=registered_at\n), cohort AS (\n  SELECT *, ready_at >= registered_at AND ready_at<=least(registered_at+interval '30 seconds',$__timeTo()::timestamptz) AS hit\n  FROM monitor.normal_inquiry WHERE registered_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n   AND (registered_at<=$__timeTo()::timestamptz-interval '30 seconds' OR ready_at BETWEEN registered_at AND $__timeTo()::timestamptz)\n)\nSELECT label AS \"지표\",value AS \"측정값\"\nFROM (\n  SELECT (SELECT round(percentile_cont(0.95) WITHIN GROUP(ORDER BY seconds)::numeric,2) FROM completed) AS p95,\n         CASE WHEN count(*)>0 OR EXISTS(SELECT FROM monitor.availability WHERE step='bronze' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz) THEN count(*) FILTER(WHERE hit) END AS hits,\n         CASE WHEN count(*)>0 OR EXISTS(SELECT FROM monitor.availability WHERE step='bronze' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz) THEN count(*) FILTER(WHERE NOT coalesce(hit,false)) END AS misses,\n         CASE WHEN count(*)>0 OR EXISTS(SELECT FROM monitor.availability WHERE step='bronze' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz) THEN count(*) END AS total,\n         round(count(*) FILTER(WHERE hit)*100.0/nullif(count(*),0),1) AS completion\n  FROM cohort\n) metrics CROSS JOIN LATERAL (VALUES ('전체 시간 P95 (초)',p95),('30초 이내 완료 (건)',hits),\n  ('목표 미달 (건)',misses),('대상 (건)',total),('30초 내 완료율 (%)',completion)) AS v(label,value)\n",
+          "rawSql": "\nSELECT label AS \"지표\", '미수집' AS \"측정값\"\nFROM (VALUES ('전체 시간 P95 (초)'),('30초 이내 완료 (건)'),('목표 미달 (건)'),('대상 (건)'),('30초 내 완료율 (%)')) v(label)\n",
           "format": "table",
           "editorMode": "code"
         }
@@ -744,7 +744,7 @@
         },
         "overrides": []
       },
-      "description": "현재 전체 원문과 티켓을 비교합니다. 대기·실패 기록은 누락 의심에서 제외합니다.",
+      "description": "수집 원문을 업무 티켓과 대조합니다. Flink 정제 처리 대기는 발행 이후 현재 Silver 저장을 확인하지 못한 건입니다.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "voc-postgres"
@@ -753,7 +753,7 @@
         {
           "refId": "A",
           "rawQuery": true,
-          "rawSql": "\nSELECT label AS \"대조 상태\",CASE WHEN observed THEN value END AS \"건수\"\nFROM (\n    SELECT count(*)>0 OR EXISTS(SELECT FROM monitor.availability WHERE step='bronze' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz) AS observed,\n       count(*) FILTER(WHERE reconciliation='source_without_ticket') AS missing_ticket,\n       count(*) FILTER(WHERE reconciliation='ticket_without_source') AS missing_source,\n       coalesce(sum(extra_tickets),0) AS duplicates,\n       count(*) FILTER(WHERE reconciliation='pending') AS pending,\n       count(*) FILTER(WHERE reconciliation='unconfirmed_delivery') AS unconfirmed,\n       count(*) FILTER(WHERE reconciliation='failed') AS failed\n    FROM monitor.source_reconciliation\n) metrics CROSS JOIN LATERAL (VALUES ('티켓 없는 원문',missing_ticket),('원문 없는 티켓',missing_source),\n    ('중복 발행 티켓',duplicates),('정제 처리 요청 대기',pending),('Flink 정제 처리 대기',unconfirmed),\n    ('실패 기록 있음',failed)) AS v(label,value)\n",
+          "rawSql": "\nSELECT label AS \"대조 상태\",CASE WHEN observed THEN value END AS \"건수\"\nFROM (\n    SELECT count(*)>0 AS observed,\n       count(*) FILTER(WHERE reconciliation='source_without_ticket') AS missing_ticket,\n       count(*) FILTER(WHERE reconciliation='ticket_without_source') AS missing_source,\n       coalesce(sum(extra_tickets),0) AS duplicates,\n       count(*) FILTER(WHERE reconciliation='pending') AS pending,\n       count(*) FILTER(WHERE reconciliation='unconfirmed_delivery') AS unconfirmed,\n       count(*) FILTER(WHERE reconciliation='projection_issue') AS projection_issues\n    FROM voc_monitor.source_reconciliation\n) metrics CROSS JOIN LATERAL (VALUES ('티켓 없는 문의 원문',missing_ticket),('원문 없는 수집 티켓',missing_source),\n    ('중복 발행 티켓',duplicates),('정제 처리 요청 대기',pending),('Flink 정제 처리 대기',unconfirmed),\n    ('티켓 생성 보류',projection_issues)) AS v(label,value)\n",
           "format": "table",
           "editorMode": "code"
         }
@@ -783,6 +783,7 @@
         },
         "overrides": []
       },
+      "description": "기존 아웃박스의 감성·카테고리 대기 작업을 셉니다. 한 티켓이 두 작업을 가질 수 있습니다.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "voc-postgres"
@@ -791,7 +792,7 @@
         {
           "refId": "A",
           "rawQuery": true,
-          "rawSql": "\nSELECT label AS \"단계\", CASE WHEN q.pending>0\n    OR (stage='classification' AND EXISTS(SELECT FROM monitor.availability WHERE step='classification' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz)) OR (stage='embedding' AND EXISTS(SELECT FROM monitor.availability WHERE step='embedding' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz))\n    THEN coalesce(q.pending,0) END AS \"대기 건수\", q.oldest_seconds::integer AS \"가장 오래된 대기 (초)\"\nFROM (VALUES ('classification','분류'),('embedding','임베딩')) AS s(stage,label)\nLEFT JOIN monitor.queue_backlog q USING(stage)\n",
+          "rawSql": "\nSELECT label AS \"단계\", q.pending AS \"대기 작업\", q.oldest_seconds::integer AS \"가장 오래된 대기 (초)\"\nFROM (VALUES ('classification','분류 요청'),('embedding','임베딩')) AS s(stage,label)\nLEFT JOIN voc_monitor.queue_backlog q USING(stage)\n",
           "format": "table",
           "editorMode": "code"
         }
@@ -985,7 +986,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Value"
+              "options": "Value #B"
             },
             "properties": [
               {
@@ -998,7 +999,7 @@
                         "text": "미수집"
                       },
                       "0": {
-                        "text": "중단"
+                        "text": "준비 상태 아님"
                       },
                       "1": {
                         "text": "수집 중"
@@ -1011,33 +1012,25 @@
           }
         ]
       },
-      "description": "수집 상태는 채널 단위입니다. 수집 위치와 단계는 연결별로 표시합니다. 연결은 식별용 해시입니다.",
+      "description": "SQLite에 기록된 연결별 위치와 가장 최근 채널 상태를 읽습니다.",
       "datasource": {
-        "type": "datasource",
-        "uid": "-- Mixed --"
+        "type": "prometheus",
+        "uid": "voc-prometheus"
       },
       "targets": [
         {
           "refId": "A",
-          "rawQuery": true,
-          "rawSql": "\nSELECT channels.channel,label AS \"채널\",connection_hash AS \"연결\",coalesce(position,'미수집') AS \"수집 위치\",\n       CASE phase WHEN 'active' THEN '증분 수집' WHEN 'bootstrap' THEN '초기 수집' END AS \"수집 단계\",\n       updated_at AS \"마지막 갱신\"\nFROM (VALUES ('gmail','Gmail'),('discord','Discord')) AS channels(channel,label)\nLEFT JOIN monitor.collector_position USING(channel)\nORDER BY label DESC, connection_hash\n",
-          "format": "table",
-          "editorMode": "code",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "voc-postgres"
-          }
+          "expr": "voc_collector_position or on(channel) (label_replace(vector(-1), \"channel\", \"gmail\", \"\", \"\") or label_replace(vector(-1), \"channel\", \"discord\", \"\", \"\"))",
+          "instant": true,
+          "range": false,
+          "format": "table"
         },
         {
           "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "voc-prometheus"
-          },
+          "expr": "max by(channel) (voc_collector_ready) or on(channel) (label_replace(vector(-1), \"channel\", \"gmail\", \"\", \"\") or label_replace(vector(-1), \"channel\", \"discord\", \"\", \"\"))",
           "instant": true,
           "range": false,
-          "format": "table",
-          "expr": "max by (channel) (voc_collector_ready{channel=~\"gmail|discord\"}) or on (channel) label_replace(vector(-1), \"channel\", \"gmail\", \"\", \"\") or on (channel) label_replace(vector(-1), \"channel\", \"discord\", \"\", \"\")"
+          "format": "table"
         }
       ],
       "options": {
@@ -1056,19 +1049,20 @@
           "id": "organize",
           "options": {
             "excludeByName": {
-              "channel": true,
-              "Time": true
-            },
-            "indexByName": {
-              "채널": 0,
-              "Value": 1,
-              "연결": 2,
-              "수집 위치": 3,
-              "수집 단계": 4,
-              "마지막 갱신": 5
+              "Time": true,
+              "Time 1": true,
+              "Time 2": true,
+              "__name__": true,
+              "job": true,
+              "instance": true,
+              "Value #A": true
             },
             "renameByName": {
-              "Value": "수집 상태"
+              "channel": "채널",
+              "source": "연결",
+              "position": "수집 위치",
+              "phase": "수집 단계",
+              "Value #B": "수집 상태"
             }
           }
         }
@@ -1155,6 +1149,7 @@
         },
         "overrides": []
       },
+      "description": "실패 시각과 복구 결과를 같은 작업에 연결하는 모델 기록이 필요합니다.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "voc-postgres"
@@ -1163,7 +1158,7 @@
         {
           "refId": "A",
           "rawQuery": true,
-          "rawSql": "\nSELECT CASE stage WHEN 'classification' THEN '분류 모델' WHEN 'embedding' THEN '임베딩 모델' END AS \"모델 종류\",\n       event_id AS \"원본 이벤트 ID\",\n       CASE reason WHEN 'incomplete_classification' THEN '분류 결과 일부 누락' ELSE reason END AS \"실패 사유\",\n       failed_at AS \"실패 시각\",recovered_at AS \"복구 시각\",\n       CASE WHEN recovered_at IS NULL THEN '미해결' ELSE '복구' END AS \"상태\"\nFROM monitor.failure\nWHERE stage IN ('classification','embedding')\n  AND (failed_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz OR recovered_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz OR recovered_at IS NULL)\nORDER BY failed_at DESC LIMIT 100\n",
+          "rawSql": "\nSELECT '미수집' AS \"상태\"\n",
           "format": "table",
           "editorMode": "code"
         }
@@ -1201,7 +1196,7 @@
         {
           "refId": "A",
           "rawQuery": true,
-          "rawSql": "\nSELECT event_id AS \"원본 키\",channel AS \"채널\",ticket_count AS \"티켓\",extra_tickets AS \"중복 발행 티켓\",\n       CASE reconciliation WHEN 'source_without_ticket' THEN '티켓 없는 원문'\n        WHEN 'ticket_without_source' THEN '원문 없는 티켓'\n        WHEN 'failed' THEN '실패 기록 있음' WHEN 'unconfirmed_delivery' THEN 'Flink 정제 처리 대기' ELSE '대조 완료' END AS \"대조 상태\"\nFROM monitor.source_reconciliation\nWHERE reconciliation IN ('source_without_ticket','ticket_without_source','failed','unconfirmed_delivery') OR extra_tickets>0\nORDER BY received_at DESC NULLS FIRST LIMIT 100\n",
+          "rawSql": "\nSELECT event_id AS \"원본 키\",channel AS \"채널\",ticket_count AS \"티켓\",extra_tickets AS \"중복 발행 티켓\",\n       CASE reconciliation WHEN 'source_without_ticket' THEN '티켓 없는 원문'\n        WHEN 'ticket_without_source' THEN '원문 없는 티켓'\n        WHEN 'unconfirmed_delivery' THEN 'Flink 정제 처리 대기'\n        WHEN 'projection_issue' THEN '티켓 생성 보류' ELSE '대조 완료' END AS \"대조 상태\"\nFROM voc_monitor.source_reconciliation\nWHERE reconciliation IN ('source_without_ticket','ticket_without_source','unconfirmed_delivery','projection_issue')\n   OR extra_tickets>0\nORDER BY received_at DESC NULLS FIRST LIMIT 100\n",
           "format": "table",
           "editorMode": "code"
         }

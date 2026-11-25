@@ -53,12 +53,12 @@
         {% for ticket in items %}
           <tr data-ticket="{{ ticket.ticket_number }}">
             <td class="ticket-row-number">{{ forloop.counter|add:ui.offset }}</td><td>#{{ ticket.ticket_number }}</td>
-            <th scope="row"><a class="ticket-detail-link" href="{% url 'tickets:detail' ticket.ticket_uuid %}{% querystring %}">{{ ticket.title }}</a>{% if ticket.classification_failed %} {% include 'tickets/includes/badge.html' with value='분류 실패' %}{% endif %}</th>
-            <td data-ticket-prediction="{{ ticket.ticket_uuid }}:category">{% include 'tickets/includes/badge.html' with value=ticket|analysis_label:'category' %}</td>
+            <th scope="row"><a class="ticket-detail-link" href="{% url 'tickets:detail' ticket.ticket_uuid %}{% querystring %}">{{ ticket.title }}</a></th>
+            <td>{% include 'tickets/includes/badge.html' with value=ticket|analysis_label:'category' %}</td>
             <td>{% if ticket.team_name %}{{ ticket.team_name }}{% else %}{% include 'tickets/includes/badge.html' with value='미배정' %}{% endif %}</td>
             <td>{{ ticket.assignee_name|default:'미지정' }}</td>
             <td>{% include 'tickets/includes/badge.html' with value=ticket.status %}</td>
-            <td data-ticket-prediction="{{ ticket.ticket_uuid }}:sentiment">{% include 'tickets/includes/badge.html' with value=ticket|analysis_label:'sentiment' %}</td>
+            <td>{% include 'tickets/includes/badge.html' with value=ticket|analysis_label:'sentiment' %}</td>
             <td class="ticket-updated-cell">
               <time data-relative datetime="{{ ticket.updated_at|timestamp }}">{{ ticket.updated_at|updated_label }}</time>
               <time class="ticket-received-date" datetime="{{ ticket.created_at|timestamp }}">접수 {{ ticket.created_at|received_label }}</time>
@@ -81,6 +81,5 @@
     </div><span class="ticket-page-count">{{ page }} / {{ ui.pages }} 페이지</span></nav>
   {% endif %}
 </section>
-{% include 'tickets/includes/prediction_display.html' %}
 {% endblock %}
-{% block scripts %}<script src="{% static 'tickets/list.js' %}" defer></script><script src="{% static 'tickets/prediction_display.js' %}" defer></script>{% endblock %}
+{% block scripts %}<script src="{% static 'tickets/list.js' %}" defer></script>{% endblock %}

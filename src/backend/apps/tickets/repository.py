@@ -10,9 +10,7 @@ SORTS = {
 TICKET_COLUMNS = """
     t.ticket_uuid, t.ticket_number, c.external_customer_id AS customer_id, t.title,
     tm.name AS team_name, COALESCE(st.name, st.email) AS assignee_name, t.status,
-    t.category_uuid, cat.name AS category, t.category_status, t.sentiment, t.sentiment_status,
-    (t.classification_final_at IS NOT NULL AND
-      (t.sentiment_status='failed' OR t.category_status='failed')) AS classification_failed,
+    cat.name AS category, t.category_status, t.sentiment, t.sentiment_status,
     t.created_at, t.updated_at, ch.type AS channel
 """
 TICKET_FROM = """
@@ -38,19 +36,27 @@ def filter_options(cursor, company_uuid):
     return {"teams": teams, "assignees": assignees, "categories": fetch_rows(cursor)}
 
 
-def detail(cursor, company_uuid, ticket_uuid):
-    cursor.execute("SELECT " + TICKET_COLUMNS + ", t.customer_uuid " + TICKET_FROM
+def detail(cursor, company_uuid, ticket_uuid, include_memos=False):
+    cursor.execute("SELECT " + TICKET_COLUMNS + ", t.customer_uuid,t.assignee_uuid,t.csv_import_kind " + TICKET_FROM
                    + " WHERE t.ticket_uuid=%s AND t.company_uuid=%s", (str(ticket_uuid), company_uuid))
     ticket = next(iter(fetch_rows(cursor)), None)
     if ticket is None:
         return None
+    customer_uuid = ticket.pop("customer_uuid")
     cursor.execute("""
-        SELECT t.ticket_uuid,t.ticket_number,m.sender_type,m.message_type,m.body,m.created_at
+        SELECT t.ticket_uuid,t.ticket_number,m.sender_type,m.message_type,m.body,m.created_at,m.delivery_status,
+               CASE WHEN m.sender_type='customer' THEN c.name ELSE s.name END AS author_name
         FROM visible_ticket t JOIN ticket_message m ON m.ticket_uuid=t.ticket_uuid
-        WHERE t.company_uuid=%s AND t.customer_uuid=%s
+        JOIN customer c ON c.customer_uuid=t.customer_uuid AND c.company_uuid=t.company_uuid
+        LEFT JOIN staff_user s ON s.staff_user_uuid=m.staff_user_uuid AND s.company_uuid=t.company_uuid
+        WHERE t.company_uuid=%s AND t.customer_uuid=%s AND (%s OR m.message_type<>'memo')
         ORDER BY m.created_at,t.ticket_number,m.ticket_message_uuid
-        """, (company_uuid, ticket.pop("customer_uuid")))
+        """, (company_uuid, customer_uuid, include_memos))
     messages = fetch_rows(cursor)
+    cursor.execute("SELECT " + TICKET_COLUMNS + TICKET_FROM + """
+        WHERE t.company_uuid=%s AND t.customer_uuid=%s ORDER BY t.created_at,t.ticket_number
+    """, (company_uuid, customer_uuid))
+    related = fetch_rows(cursor)
     cursor.execute("""
         SELECT peer.ticket_uuid,peer.ticket_number,peer.title,ch.type AS channel
         FROM ticket_duplicate_candidate link
@@ -61,7 +67,8 @@ def detail(cursor, company_uuid, ticket_uuid):
             AND peer.company_uuid=%s AND ch.type<>%s
         ORDER BY peer.created_at,peer.ticket_number
         """, (str(ticket_uuid), str(ticket_uuid), str(ticket_uuid), company_uuid, ticket["channel"]))
-    return {"ticket": ticket, "messages": messages, "duplicate_candidates": fetch_rows(cursor)}
+    return {"ticket": ticket, "messages": messages, "customer_tickets": related,
+            "duplicate_candidates": fetch_rows(cursor)}
 
 
 def _id_filter(conditions, params, column, entries):
@@ -120,95 +127,3 @@ def add_memo(cursor, company, staff, ticket, body):
         RETURNING ticket_message_uuid, ticket_uuid, staff_user_uuid, body, created_at
     """, (staff, body, company, ticket))
     return next(iter(fetch_rows(cursor)), None)
-
-
-def displayed_predictions(cursor, ticket_ids):
-    cursor.execute("""
-        SELECT p.ticket_uuid::text,p.kind,p.value,p.attempt_id::text
-        FROM voc.ticket_prediction p JOIN visible_ticket t USING(ticket_uuid)
-        WHERE p.ticket_uuid=ANY(%s::uuid[]) AND (
-            (p.kind='sentiment' AND p.value=t.sentiment) OR
-            (p.kind='category' AND p.value=t.category_uuid::text))
-    """, ([str(ticket) for ticket in ticket_ids],))
-    return fetch_rows(cursor)
-
-
-def record_display(cursor, actor, prediction):
-    cursor.execute("""
-        INSERT INTO voc.prediction_display(ticket_uuid,kind,staff_user_uuid,displayed_value,attempt_id)
-        SELECT p.ticket_uuid,p.kind,%s,p.value,p.attempt_id
-        FROM voc.ticket_prediction p JOIN public.ticket t USING(ticket_uuid)
-        WHERE p.ticket_uuid=%s AND p.kind=%s AND p.value=%s AND p.attempt_id=%s
-          AND t.company_uuid=%s
-        ON CONFLICT DO NOTHING
-    """, (actor["staff_user_uuid"], prediction["ticket_uuid"], prediction["kind"], prediction["value"],
-          prediction["attempt_id"], actor["company_uuid"]))
-
-
-def confirmed_replies(cursor, actor, ticket):
-    cursor.execute("""
-        SELECT ticket_message_uuid,created_at FROM ticket_message
-        WHERE ticket_uuid=%s AND staff_user_uuid=%s AND sender_type='staff'
-          AND message_type='reply' AND delivery_status='delivered'
-        ORDER BY created_at DESC LIMIT 1
-    """, (ticket, actor["staff_user_uuid"]))
-    return fetch_rows(cursor)
-
-
-def lock_visible(cursor, actor, ticket):
-    cursor.execute("""
-        SELECT t.domain_uuid,t.status,t.reply_delivery_uuid,t.sentiment,t.category_uuid FROM public.ticket t
-        JOIN visible_ticket v USING(ticket_uuid)
-        WHERE t.ticket_uuid=%s AND t.company_uuid=%s FOR UPDATE OF t
-    """, (ticket, actor["company_uuid"]))
-    return next(iter(fetch_rows(cursor)), None)
-
-
-def training_input_version(cursor, ticket):
-    cursor.execute(
-        "SELECT body_version,preprocess_version FROM voc.ticket_training_input WHERE ticket_uuid=%s",
-        (ticket,),
-    )
-    return cursor.fetchone()
-
-
-def category_exists(cursor, domain, category):
-    cursor.execute("SELECT 1 FROM category WHERE domain_uuid=%s AND category_uuid=%s", (domain, category))
-    return cursor.fetchone() is not None
-
-
-def set_classification(cursor, actor, ticket, sentiment, category, *, signed, version):
-    cursor.execute("""
-        WITH input AS (
-            SELECT * FROM voc.ticket_training_input WHERE ticket_uuid=%s
-        ), allowed AS (
-            SELECT 1 WHERE NOT %s
-                OR (SELECT ARRAY[body_version,preprocess_version] FROM input) IS NOT DISTINCT FROM %s::int[]
-        ), edits AS (
-            INSERT INTO voc.ticket_classification_edit(
-                ticket_uuid,kind,value,staff_user_uuid,body_version,preprocess_version,edited_at
-            )
-            SELECT i.ticket_uuid,f.kind,f.value,%s,i.body_version,i.preprocess_version,clock_timestamp()
-            FROM input i JOIN public.ticket t USING(ticket_uuid)
-            CROSS JOIN allowed
-            CROSS JOIN (VALUES ('sentiment',%s::text),('category',%s::text)) f(kind,value)
-            WHERE f.value IS DISTINCT FROM
-                  CASE f.kind WHEN 'sentiment' THEN t.sentiment ELSE t.category_uuid::text END
-            ON CONFLICT(ticket_uuid,kind) DO UPDATE SET
-                value=excluded.value,staff_user_uuid=excluded.staff_user_uuid,edited_at=excluded.edited_at,
-                body_version=excluded.body_version,preprocess_version=excluded.preprocess_version
-        )
-        UPDATE ticket SET sentiment=%s,category_uuid=%s,updated_at=clock_timestamp()
-        WHERE ticket_uuid=%s AND EXISTS (SELECT FROM allowed)
-    """, (ticket, signed, version, actor["staff_user_uuid"], sentiment, category, sentiment, category, ticket))
-    return cursor.rowcount == 1
-
-
-def complete_delivered(cursor, actor, ticket, delivery):
-    cursor.execute("""
-        UPDATE ticket t SET status='답변완료',reply_delivery_uuid=m.ticket_message_uuid,updated_at=clock_timestamp()
-        FROM ticket_message m
-        WHERE t.ticket_uuid=%s AND t.status<>'답변완료' AND m.ticket_uuid=t.ticket_uuid AND m.ticket_message_uuid=%s
-          AND m.staff_user_uuid=%s AND m.sender_type='staff' AND m.message_type='reply' AND m.delivery_status='delivered'
-    """, (ticket, delivery, actor["staff_user_uuid"]))
-    return cursor.rowcount == 1

@@ -30,11 +30,11 @@
             "mode": "fixed",
             "fixedColor": "blue"
           },
-          "noValue": "—"
+          "noValue": "미수집"
         },
         "overrides": []
       },
-      "description": "선택한 단계의 Kafka 전달, 실패, 재시도를 최근 150건까지 표시합니다.",
+      "description": "선택 단계의 저장 시각과 검토 기록을 표시합니다. 확인할 수 있는 Kafka 오프셋은 검토 기록에서 제공합니다.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "voc-postgres"
@@ -43,7 +43,7 @@
         {
           "refId": "A",
           "rawQuery": true,
-          "rawSql": "\nWITH attempts AS (\n  SELECT *,lag(error) OVER ordered AS previous_error,\n         lag(request_partition) OVER ordered AS previous_partition,lag(request_offset) OVER ordered AS previous_offset\n  FROM monitor.flink_attempt WHERE started_at<=$__timeTo()::timestamptz\n    AND ${step:sqlstring}='flink'\n  WINDOW ordered AS (PARTITION BY event_id ORDER BY started_at,attempt_id)\n), retries AS (\n  SELECT event_id,'flink' AS stage,count(*) AS retries,max(started_at) AS last_at\n  FROM attempts\n  WHERE previous_error IS NOT NULL OR (request_partition,request_offset)=(previous_partition,previous_offset)\n  GROUP BY event_id\n  UNION ALL\n  SELECT event_id,stage,retries,last_at FROM monitor.analysis_retries WHERE ${step:sqlstring}='compute'\n), detail AS (\n  SELECT recorded_at AS event_at,'Kafka 전달' AS activity,stage,event_id,topic,partition_id,kafka_offset,\n         NULL::bigint AS retries,NULL::text AS reason\n  FROM monitor.kafka_delivery WHERE recorded_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz AND stage IN ('capture','bronze','flink')\n  UNION ALL\n  SELECT failed_at,'실패',stage,event_id,NULL,NULL,NULL,NULL,reason\n  FROM monitor.failure WHERE failed_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz AND stage IN ('capture','bronze','flink','ticket')\n  UNION ALL\n  SELECT last_at,'재시도',stage,event_id,NULL,NULL,NULL,retries,NULL FROM retries\n  WHERE last_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n)\nSELECT event_at AS \"이벤트 시각\",activity AS \"이벤트 종류\",\n       CASE stage WHEN 'capture' THEN '수집' WHEN 'bronze' THEN '원문 저장' WHEN 'flink' THEN 'Flink 정제' WHEN 'ticket' THEN '티켓 저장' WHEN 'compute' THEN '분류·임베딩' WHEN 'ready' THEN '결과 저장'\n           WHEN 'classification' THEN '분류' WHEN 'embedding' THEN '임베딩' END AS \"단계\",\n       event_id AS \"원본 이벤트 ID\",topic AS \"Kafka 토픽\",partition_id AS \"파티션\",kafka_offset AS \"오프셋\",\n       retries AS \"재시도 횟수\",reason AS \"실패 사유\"\nFROM detail\nWHERE ${step:sqlstring}=stage OR (${step:sqlstring}='compute' AND stage IN ('classification','embedding'))\nORDER BY event_at DESC LIMIT 150\n",
+          "rawSql": "\nSELECT \"이벤트 시각\",\"이벤트 종류\",\"원본 이벤트 ID\",\"Kafka 토픽\",\"파티션\",\"오프셋\",\"재시도 횟수\",\"상세\"\nFROM (\n    SELECT observed_at AS \"이벤트 시각\",activity AS \"이벤트 종류\",event_id AS \"원본 이벤트 ID\",\n           topic AS \"Kafka 토픽\",partition_id AS \"파티션\",kafka_offset AS \"오프셋\",\n           NULL::bigint AS \"재시도 횟수\",reason AS \"상세\"\n    FROM voc_monitor.diagnostics\n    WHERE stage=${step:sqlstring} AND observed_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n) events\nUNION ALL SELECT NULL,'미수집',NULL,NULL,NULL,NULL,NULL,NULL\nWHERE NOT EXISTS (SELECT FROM voc_monitor.diagnostics WHERE stage=${step:sqlstring} AND observed_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz)\nORDER BY 1 DESC LIMIT 150\n",
           "format": "table",
           "editorMode": "code"
         }

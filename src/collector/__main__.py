@@ -5,9 +5,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 from .events import ROOT, status
-from .pipeline import init, init_schema, migrate_capture, publish_spool, run_db
-from .exporter import serve_metrics
-from .inference import retry_embedding, run_worker
+from .pipeline import init, migrate_capture, publish_spool, run_db
 from .sources import run_discord, run_gmail
 
 
@@ -37,32 +35,20 @@ def authorize_gmail():
 
 def main():
     parser = argparse.ArgumentParser(description="Encore VOC collection pipeline")
-    parser.add_argument("role", choices=["discord","gmail","init","schema","publish","db","gmail-oauth",
-                                         "capture-migrate","health","classify","embed","metrics","retry-embedding",
-                                         "evaluate","replay"])
-    parser.add_argument("source", nargs="?")
+    parser.add_argument("role", choices=["discord","gmail","init","publish","db","gmail-oauth","capture-migrate","health"])
+    parser.add_argument("source", nargs="?", choices=["discord","gmail"])
     args = parser.parse_args()
     role = args.role
     if role == "health":
-        if args.source not in ("discord", "gmail"):
+        if args.source is None:
             parser.error("health requires discord or gmail")
         raise SystemExit(0 if health(args.source) else 1)
     try:
         if role == "discord":
             asyncio.run(run_discord())
-        elif role in ("retry-embedding", "evaluate", "replay"):
-            if not args.source:
-                parser.error(f"{role} requires an input")
-            from .evaluation import EvaluationError, evaluate, replay
-            try:
-                {"retry-embedding": retry_embedding, "evaluate": evaluate, "replay": replay}[role](args.source)
-            except EvaluationError as exc:
-                raise SystemExit(str(exc)) from None
         else:
-            {"gmail": run_gmail, "gmail-oauth": authorize_gmail, "schema": init_schema,
-             "init": init, "capture-migrate": migrate_capture, "publish": publish_spool, "db": run_db,
-             "classify": lambda: run_worker("classification"), "embed": lambda: run_worker("embedding"),
-             "metrics": serve_metrics}[role]()
+            {"gmail": run_gmail, "gmail-oauth": authorize_gmail,
+             "init": init, "capture-migrate": migrate_capture, "publish": publish_spool, "db": run_db}[role]()
     except Exception as exc:
         if role in ("discord","gmail"):
             status(role,"error",error=type(exc).__name__)

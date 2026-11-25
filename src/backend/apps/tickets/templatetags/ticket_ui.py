@@ -17,18 +17,16 @@ SORT_LABELS = {
 BADGES = {
     "미처리": "amber", "보류": "blue", "답변완료": "green",
     "긍정": "green", "중립": "amber", "부정": "red", "매우 부정": "strong-red",
-    "미배정": "neutral", "분류 대기": "neutral", "분석 중": "neutral", "분류 실패": "red",
+    "미배정": "neutral", "분류 대기": "neutral", "분석 중": "neutral", "분석 실패": "red",
 }
 
 
 @register.filter
 def analysis_label(ticket, field):
     state = ticket.get(field + "_status")
-    if ticket.get(field):
-        return ticket[field]
     if state == "succeeded":
-        return "결과 없음"
-    return {"running": "분석 중", "failed": "분류 실패"}.get(state, "분류 대기")
+        return ticket.get(field) or ("미분류" if field == "category" else "결과 없음")
+    return {"running": "분석 중", "failed": "분석 실패"}.get(state, "분류 대기")
 
 
 @register.filter
@@ -45,6 +43,12 @@ def channel_label(value):
 def message_label(message):
     labels = {"inquiry": "고객 문의", "reply": "상담사 답변", "memo": "내부 메모"}
     return labels.get(message["message_type"], "고객" if message["sender_type"] == "customer" else "상담사")
+
+
+@register.filter
+def delivery_label(value):
+    return {"sending": "전송 중", "sent": "전송 완료", "failed": "전송 실패",
+            "unknown": "전송 결과 확인 필요", "internal_only": "내부 기록"}.get(value, value)
 
 
 def local_time(value):

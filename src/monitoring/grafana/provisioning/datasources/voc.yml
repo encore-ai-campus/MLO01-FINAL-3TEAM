@@ -4,7 +4,7 @@ datasources:
     uid: voc-postgres
     type: grafana-postgresql-datasource
     url: postgres:5432
-    user: monitor_reader
+    user: voc_monitor_reader
     secureJsonData:
       password: $MONITOR_READER_PASSWORD
     jsonData:

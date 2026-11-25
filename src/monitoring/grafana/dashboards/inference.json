@@ -36,7 +36,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "응답시간은 호출자가 응답이나 실패를 확인할 때까지 잽니다. 모델 연산시간은 모델 API가 보고한 값입니다."
+        "content": "현재 모델 계측을 기다리고 있습니다. 응답시간은 호출자가, 연산시간은 모델 API가 측정합니다."
       }
     },
     {
@@ -67,7 +67,7 @@
         {
           "refId": "A",
           "rawQuery": true,
-          "rawSql": "\nWITH samples AS (\n  SELECT * FROM monitor.inference WHERE api='classification' AND rollout='stable' AND model_name IS NOT NULL AND model_version IS NOT NULL AND traffic='operational'\n  AND ended_at IS NOT NULL AND started_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n)\nSELECT CASE WHEN count(*)>0 OR EXISTS(SELECT FROM monitor.availability WHERE step='stable_model' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz) THEN count(*) END AS \"호출\",\n       round(count(*) FILTER(WHERE error IS NOT NULL)*100.0/nullif(count(*),0),2) AS \"오류율 (%)\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY response_ms)::numeric,1) AS \"응답 P95 (ms)\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY model_ms)::numeric,1) AS \"모델 연산 P95 (ms)\"\nFROM samples\n",
+          "rawSql": "\nWITH samples AS (\n  SELECT * FROM voc_monitor.inference WHERE api='classification' AND rollout='stable' AND model_name IS NOT NULL AND model_version IS NOT NULL AND traffic='operational'\n  AND ended_at IS NOT NULL AND started_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n)\nSELECT nullif(count(*),0) AS \"호출\",\n       round(count(*) FILTER(WHERE error IS NOT NULL)*100.0/nullif(count(*),0),2) AS \"오류율 (%)\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY response_ms)::numeric,1) AS \"응답 P95 (ms)\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY model_ms)::numeric,1) AS \"모델 연산 P95 (ms)\"\nFROM samples\n",
           "format": "table",
           "editorMode": "code"
         }
@@ -105,7 +105,7 @@
         {
           "refId": "A",
           "rawQuery": true,
-          "rawSql": "\nWITH samples AS (\n  SELECT * FROM monitor.inference WHERE api='classification' AND rollout='canary' AND model_name IS NOT NULL AND model_version IS NOT NULL AND traffic='operational'\n  AND ended_at IS NOT NULL AND started_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n)\nSELECT CASE WHEN count(*)>0 OR EXISTS(SELECT FROM monitor.availability WHERE step='canary_model' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz) THEN count(*) END AS \"호출\",\n       round(count(*) FILTER(WHERE error IS NOT NULL)*100.0/nullif(count(*),0),2) AS \"오류율 (%)\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY response_ms)::numeric,1) AS \"응답 P95 (ms)\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY model_ms)::numeric,1) AS \"모델 연산 P95 (ms)\"\nFROM samples\n",
+          "rawSql": "\nWITH samples AS (\n  SELECT * FROM voc_monitor.inference WHERE api='classification' AND rollout='canary' AND model_name IS NOT NULL AND model_version IS NOT NULL AND traffic='operational'\n  AND ended_at IS NOT NULL AND started_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n)\nSELECT nullif(count(*),0) AS \"호출\",\n       round(count(*) FILTER(WHERE error IS NOT NULL)*100.0/nullif(count(*),0),2) AS \"오류율 (%)\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY response_ms)::numeric,1) AS \"응답 P95 (ms)\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY model_ms)::numeric,1) AS \"모델 연산 P95 (ms)\"\nFROM samples\n",
           "format": "table",
           "editorMode": "code"
         }
@@ -143,7 +143,7 @@
         {
           "refId": "A",
           "rawQuery": true,
-          "rawSql": "\nWITH samples AS (\n  SELECT * FROM monitor.inference WHERE api='embedding'  AND traffic='operational'\n  AND ended_at IS NOT NULL AND started_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n)\nSELECT CASE WHEN count(*)>0 OR EXISTS(SELECT FROM monitor.availability WHERE step='embedding' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz) THEN count(*) END AS \"호출\",\n       round(count(*) FILTER(WHERE error IS NOT NULL)*100.0/nullif(count(*),0),2) AS \"오류율 (%)\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY response_ms)::numeric,1) AS \"응답 P95 (ms)\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY model_ms)::numeric,1) AS \"모델 연산 P95 (ms)\"\nFROM samples\n",
+          "rawSql": "\nWITH samples AS (\n  SELECT * FROM voc_monitor.inference WHERE api='embedding'  AND traffic='operational'\n  AND ended_at IS NOT NULL AND started_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n)\nSELECT nullif(count(*),0) AS \"호출\",\n       round(count(*) FILTER(WHERE error IS NOT NULL)*100.0/nullif(count(*),0),2) AS \"오류율 (%)\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY response_ms)::numeric,1) AS \"응답 P95 (ms)\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY model_ms)::numeric,1) AS \"모델 연산 P95 (ms)\"\nFROM samples\n",
           "format": "table",
           "editorMode": "code"
         }
@@ -182,7 +182,7 @@
         {
           "refId": "A",
           "rawQuery": true,
-          "rawSql": "\nSELECT CASE api WHEN 'embedding' THEN '임베딩' ELSE '분류' END AS \"API\",\n       CASE WHEN api='embedding' THEN '임베딩' WHEN model_name IS NULL OR model_version IS NULL OR rollout IS NULL\n            THEN '버전 미확인' ELSE initcap(rollout) END AS \"응답 경로\",\n       coalesce(model_name,'미확인') AS \"모델\",coalesce(model_version,'미확인') AS \"모델 버전\",\n       CASE traffic WHEN 'operational' THEN '운영' WHEN 'replay' THEN '재생' ELSE '고정 평가' END AS \"요청 출처\",\n       count(*) FILTER(WHERE ended_at IS NOT NULL) AS \"호출\",\n       count(*) FILTER(WHERE error IS NOT NULL AND ended_at IS NOT NULL) AS \"오류\",\n       count(*) FILTER(WHERE ended_at IS NULL) AS \"결과 미확인\",\n       round(count(*) FILTER(WHERE error IS NOT NULL AND ended_at IS NOT NULL)*100.0\n           /nullif(count(*) FILTER(WHERE ended_at IS NOT NULL),0),2) AS \"오류율 (%)\",\n       round(avg(response_ms)::numeric,1) AS \"응답 평균 (ms)\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY response_ms)::numeric,1) AS \"응답 P95 (ms)\",\n       round(avg(model_ms)::numeric,1) AS \"연산 평균 (ms)\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY model_ms)::numeric,1) AS \"연산 P95 (ms)\"\nFROM monitor.inference WHERE started_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\nGROUP BY api,rollout,model_name,model_version,traffic\nORDER BY api,traffic,rollout,model_name,model_version\n",
+          "rawSql": "\nWITH stats AS (\nSELECT CASE api WHEN 'embedding' THEN '임베딩' ELSE '분류' END AS \"API\",\n       CASE WHEN api='embedding' THEN '임베딩' WHEN model_name IS NULL OR model_version IS NULL OR rollout IS NULL\n            THEN '버전 미확인' ELSE initcap(rollout) END AS \"응답 경로\",\n       coalesce(model_name,'미확인') AS \"모델\",coalesce(model_version,'미확인') AS \"모델 버전\",\n       CASE traffic WHEN 'operational' THEN '운영' WHEN 'replay' THEN '재생' ELSE '고정 평가' END AS \"요청 출처\",\n       count(*) FILTER(WHERE ended_at IS NOT NULL) AS \"호출\",\n       count(*) FILTER(WHERE error IS NOT NULL AND ended_at IS NOT NULL) AS \"오류\",\n       count(*) FILTER(WHERE ended_at IS NULL) AS \"결과 미확인\",\n       round(count(*) FILTER(WHERE error IS NOT NULL AND ended_at IS NOT NULL)*100.0\n           /nullif(count(*) FILTER(WHERE ended_at IS NOT NULL),0),2) AS \"오류율 (%)\",\n       round(avg(response_ms)::numeric,1) AS \"응답 평균 (ms)\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY response_ms)::numeric,1) AS \"응답 P95 (ms)\",\n       round(avg(model_ms)::numeric,1) AS \"연산 평균 (ms)\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY model_ms)::numeric,1) AS \"연산 P95 (ms)\"\nFROM voc_monitor.inference WHERE started_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\nGROUP BY api,rollout,model_name,model_version,traffic\n)\nSELECT * FROM stats\nUNION ALL SELECT '미수집',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL WHERE NOT EXISTS(SELECT FROM stats)\nORDER BY 1,5,2,3,4\n",
           "format": "table",
           "editorMode": "code"
         }
@@ -221,7 +221,7 @@
         {
           "refId": "A",
           "rawQuery": true,
-          "rawSql": "\nWITH latest AS (\n  SELECT run_id FROM monitor.evaluation WHERE evaluated_at<=$__timeTo()::timestamptz\n  GROUP BY run_id HAVING count(DISTINCT rollout)=2 ORDER BY max(evaluated_at) DESC LIMIT 1\n)\nSELECT initcap(e.rollout) AS \"배포\", e.model_name AS \"모델\",e.model_version AS \"버전\",e.dataset_version AS \"고정 평가셋\",\n       round(max(macro_f1) FILTER(WHERE kind='sentiment')::numeric,4) AS \"감성 Macro-F1\",\n       round(max(macro_f1) FILTER(WHERE kind='category')::numeric,4) AS \"카테고리 Macro-F1\",\n       max(samples) FILTER(WHERE kind='sentiment') AS \"감성 표본\",\n       max(samples) FILTER(WHERE kind='category') AS \"카테고리 표본\"\nFROM latest JOIN monitor.evaluation e USING(run_id) GROUP BY e.rollout,e.model_name,e.model_version,e.dataset_version\nUNION ALL SELECT 'Stable',NULL,NULL,'미수집',NULL,NULL,NULL,NULL WHERE NOT EXISTS(SELECT FROM latest)\nUNION ALL SELECT 'Canary',NULL,NULL,'미수집',NULL,NULL,NULL,NULL WHERE NOT EXISTS(SELECT FROM latest)\nORDER BY 1 DESC\n",
+          "rawSql": "\nWITH latest AS (\n  SELECT run_id FROM voc_monitor.evaluation WHERE evaluated_at<=$__timeTo()::timestamptz\n  GROUP BY run_id HAVING count(DISTINCT rollout)=2 ORDER BY max(evaluated_at) DESC LIMIT 1\n)\nSELECT initcap(e.rollout) AS \"배포\", e.model_name AS \"모델\",e.model_version AS \"버전\",e.dataset_version AS \"고정 평가셋\",\n       round(max(macro_f1) FILTER(WHERE kind='sentiment')::numeric,4) AS \"감성 Macro-F1\",\n       round(max(macro_f1) FILTER(WHERE kind='category')::numeric,4) AS \"카테고리 Macro-F1\",\n       max(samples) FILTER(WHERE kind='sentiment') AS \"감성 표본\",\n       max(samples) FILTER(WHERE kind='category') AS \"카테고리 표본\"\nFROM latest JOIN voc_monitor.evaluation e USING(run_id) GROUP BY e.rollout,e.model_name,e.model_version,e.dataset_version\nUNION ALL SELECT 'Stable',NULL,NULL,'미수집',NULL,NULL,NULL,NULL WHERE NOT EXISTS(SELECT FROM latest)\nUNION ALL SELECT 'Canary',NULL,NULL,'미수집',NULL,NULL,NULL,NULL WHERE NOT EXISTS(SELECT FROM latest)\nORDER BY 1 DESC\n",
           "format": "table",
           "editorMode": "code"
         }
@@ -260,7 +260,7 @@
         {
           "refId": "A",
           "rawQuery": true,
-          "rawSql": "\nWITH measurement AS (\n    SELECT EXISTS(SELECT FROM monitor.availability WHERE step='answer_completion' AND seen_from<=$__timeTo()::timestamptz AND seen_until>=$__timeFrom()::timestamptz) OR EXISTS(\n        SELECT FROM monitor.answer_completion WHERE completed_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz) AS tracked\n), active AS (\n    SELECT DISTINCT rollout,model_name,model_version FROM monitor.inference\n    WHERE rollout IS NOT NULL AND model_name IS NOT NULL AND model_version IS NOT NULL\n      AND api='classification' AND traffic='operational' AND ended_at IS NOT NULL AND started_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n), modifications AS (\n    SELECT rollout,model_name,model_version,kind,count(*) AS shown,\n       count(*) FILTER(WHERE displayed_value IS DISTINCT FROM final_value) AS changed\n    FROM monitor.modification WHERE completed_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n    GROUP BY rollout,model_name,model_version,kind\n), combinations AS (\n    SELECT a.*,kind FROM active a CROSS JOIN (VALUES ('sentiment'),('category')) AS k(kind)\n    UNION\n    SELECT DISTINCT rollout,model_name,model_version,kind FROM modifications\n)\nSELECT initcap(c.rollout) AS \"배포\",c.model_name AS \"모델\",c.model_version AS \"버전\",\n       CASE c.kind WHEN 'sentiment' THEN '감성' ELSE '카테고리' END AS \"항목\",\n       CASE WHEN m.shown IS NOT NULL OR measurement.tracked THEN coalesce(m.changed,0) END AS \"수정\",\n       CASE WHEN m.shown IS NOT NULL OR measurement.tracked THEN coalesce(m.shown,0) END AS \"표본\",\n       CASE WHEN m.shown IS NOT NULL THEN round(m.changed*100.0/m.shown,2)::text || '%'\n            WHEN measurement.tracked THEN '표본 없음' ELSE '미수집' END AS \"수정률\"\nFROM combinations c LEFT JOIN modifications m USING(rollout,model_name,model_version,kind)\nCROSS JOIN measurement\nUNION ALL SELECT NULL,NULL,NULL,label,CASE WHEN measurement.tracked THEN 0 END,CASE WHEN measurement.tracked THEN 0 END,\n    CASE WHEN measurement.tracked THEN '표본 없음' ELSE '미수집' END\nFROM (VALUES ('감성'),('카테고리')) v(label) CROSS JOIN measurement\nWHERE NOT EXISTS(SELECT FROM combinations)\nORDER BY 1 DESC,2,3,4\n",
+          "rawSql": "\nWITH measurement AS (\n    SELECT EXISTS(\n        SELECT FROM voc_monitor.answer_completion WHERE completed_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz) AS tracked\n), active AS (\n    SELECT DISTINCT rollout,model_name,model_version FROM voc_monitor.inference\n    WHERE rollout IS NOT NULL AND model_name IS NOT NULL AND model_version IS NOT NULL\n      AND api='classification' AND traffic='operational' AND ended_at IS NOT NULL AND started_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n), modifications AS (\n    SELECT rollout,model_name,model_version,kind,count(*) AS shown,\n       count(*) FILTER(WHERE displayed_value IS DISTINCT FROM final_value) AS changed\n    FROM voc_monitor.modification WHERE completed_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n    GROUP BY rollout,model_name,model_version,kind\n), combinations AS (\n    SELECT a.*,kind FROM active a CROSS JOIN (VALUES ('sentiment'),('category')) AS k(kind)\n    UNION\n    SELECT DISTINCT rollout,model_name,model_version,kind FROM modifications\n)\nSELECT initcap(c.rollout) AS \"배포\",c.model_name AS \"모델\",c.model_version AS \"버전\",\n       CASE c.kind WHEN 'sentiment' THEN '감성' ELSE '카테고리' END AS \"항목\",\n       CASE WHEN m.shown IS NOT NULL OR measurement.tracked THEN coalesce(m.changed,0) END AS \"수정\",\n       CASE WHEN m.shown IS NOT NULL OR measurement.tracked THEN coalesce(m.shown,0) END AS \"표본\",\n       CASE WHEN m.shown IS NOT NULL THEN round(m.changed*100.0/m.shown,2)::text || '%'\n            WHEN measurement.tracked THEN '표본 없음' ELSE '미수집' END AS \"수정률\"\nFROM combinations c LEFT JOIN modifications m USING(rollout,model_name,model_version,kind)\nCROSS JOIN measurement\nUNION ALL SELECT NULL,NULL,NULL,label,CASE WHEN measurement.tracked THEN 0 END,CASE WHEN measurement.tracked THEN 0 END,\n    CASE WHEN measurement.tracked THEN '표본 없음' ELSE '미수집' END\nFROM (VALUES ('감성'),('카테고리')) v(label) CROSS JOIN measurement\nWHERE NOT EXISTS(SELECT FROM combinations)\nORDER BY 1 DESC,2,3,4\n",
           "format": "table",
           "editorMode": "code"
         }
@@ -272,7 +272,7 @@
     },
     {
       "id": 8,
-      "type": "stat",
+      "type": "table",
       "title": "분류 API 연결 설정",
       "gridPos": {
         "x": 0,
@@ -286,55 +286,31 @@
             "mode": "fixed",
             "fixedColor": "blue"
           },
-          "noValue": "미수집",
-          "mappings": [
-            {
-              "type": "value",
-              "options": {
-                "0": {
-                  "text": "미수집"
-                },
-                "1": {
-                  "text": "설정됨"
-                }
-              }
-            }
-          ]
+          "noValue": "미수집"
         },
         "overrides": []
       },
       "datasource": {
-        "type": "prometheus",
-        "uid": "voc-prometheus"
+        "type": "grafana-postgresql-datasource",
+        "uid": "voc-postgres"
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "voc_model_configured{api=\"classification\"}",
-          "instant": true,
-          "range": false,
-          "format": "table"
+          "rawQuery": true,
+          "rawSql": "SELECT '미수집' AS \"상태\" ",
+          "format": "table",
+          "editorMode": "code"
         }
       ],
       "options": {
-        "reduceOptions": {
-          "values": false,
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": ""
-        },
-        "orientation": "auto",
-        "textMode": "value_and_name",
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "wideLayout": true
+        "showHeader": true,
+        "cellHeight": "sm"
       }
     },
     {
       "id": 9,
-      "type": "stat",
+      "type": "table",
       "title": "임베딩 API 연결 설정",
       "gridPos": {
         "x": 12,
@@ -348,50 +324,26 @@
             "mode": "fixed",
             "fixedColor": "blue"
           },
-          "noValue": "미수집",
-          "mappings": [
-            {
-              "type": "value",
-              "options": {
-                "0": {
-                  "text": "미수집"
-                },
-                "1": {
-                  "text": "설정됨"
-                }
-              }
-            }
-          ]
+          "noValue": "미수집"
         },
         "overrides": []
       },
       "datasource": {
-        "type": "prometheus",
-        "uid": "voc-prometheus"
+        "type": "grafana-postgresql-datasource",
+        "uid": "voc-postgres"
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "voc_model_configured{api=\"embedding\"}",
-          "instant": true,
-          "range": false,
-          "format": "table"
+          "rawQuery": true,
+          "rawSql": "SELECT '미수집' AS \"상태\" ",
+          "format": "table",
+          "editorMode": "code"
         }
       ],
       "options": {
-        "reduceOptions": {
-          "values": false,
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": ""
-        },
-        "orientation": "auto",
-        "textMode": "value_and_name",
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "wideLayout": true
+        "showHeader": true,
+        "cellHeight": "sm"
       }
     }
   ],

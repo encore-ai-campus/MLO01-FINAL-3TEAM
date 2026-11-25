@@ -4,15 +4,21 @@ from . import views
 
 app_name = "tickets"
 urlpatterns = [
-    path("monitoring/readiness", views.monitoring_readiness),
     path("tickets/", views.ticket_list, name="list"),
     path("tickets/<uuid:ticket_uuid>/", views.detail, name="detail"),
-    path("tickets/<uuid:ticket_uuid>/classification/", views.update_ticket, name="classification"),
-    path("tickets/<uuid:ticket_uuid>/reply/", views.send_reply, name="reply"),
-    path("tickets/<uuid:ticket_uuid>/complete/", views.update_ticket, {"complete": True}, name="complete"),
-    path("api/tickets/predictions/displayed", views.prediction_display, name="prediction-display"),
     path("api/tickets/options", views.options),
     path("api/tickets", views.ticket_list, {"as_json": True}),
     path("api/tickets/<uuid:ticket_uuid>/memos", views.add_memo, name="add-memo"),
     path("api/tickets/<str:ticket_uuid>", views.detail, {"as_json": True}),
+    path("api/ticket-requests", views.ticket_requests),
+    path("api/ticket-requests/<uuid:action_uuid>/attachment", views.request_attachment, name="request-attachment"),
 ]
+
+for action in ("messages", "transfer", "review-requests"):
+    urlpatterns += [
+        path(f"tickets/<uuid:ticket_uuid>/{action}/", views.ticket_action, {"action": action}, name=action),
+        path(f"api/tickets/<uuid:ticket_uuid>/{action}", views.ticket_action, {"action": action, "as_json": True}),
+    ]
+
+for control in ("quick-replies", "collaboration-options"):
+    urlpatterns.append(path(f"api/tickets/<uuid:ticket_uuid>/{control}", views.detail_controls, {"control": control}))

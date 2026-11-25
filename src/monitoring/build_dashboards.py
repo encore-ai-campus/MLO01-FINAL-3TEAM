@@ -66,13 +66,6 @@ def prom(panel_id, heading, x, y, w, h, query, **options):
     return panel(panel_id, heading, x, y, w, h, query, datasource=PROM, **options)
 
 
-def show_states(config, values):
-    config["fieldConfig"]["defaults"]["mappings"] = [{
-        "type": "value", "options": {str(key): {"text": name} for key, name in values.items()}
-    }]
-    return config
-
-
 def omit_prometheus_fields(config):
     config["transformations"] = [{
         "id": "organize", "options": {
@@ -84,42 +77,28 @@ def omit_prometheus_fields(config):
     return config
 
 
-def active(stage):
-    return (
-        f"EXISTS(SELECT FROM monitor.availability WHERE step='{stage}' "
-        f"AND seen_from<={TIME_TO} AND seen_until>={TIME_FROM})"
-    )
-
-
 def stage_query():
     return f"""
-WITH events AS (
-    SELECT stage,count(*) FILTER(WHERE {period('started_at')}) AS entered,
-           count(*) FILTER(WHERE {period('succeeded_at')}) AS completed
-    FROM monitor.stage WHERE {period('started_at')} OR {period('succeeded_at')}
-    GROUP BY stage
-), counts AS (
-    SELECT s.stage,e.entered,e.completed,
-        e.entered IS NOT NULL OR CASE
-            WHEN s.stage IN ('compute','ready') THEN {active('classification')} AND {active('embedding')}
-            ELSE EXISTS (SELECT FROM monitor.availability a WHERE a.step=s.stage
-                         AND seen_from<={TIME_TO} AND seen_until>={TIME_FROM})
-        END AS observed
-    FROM unnest(ARRAY['capture','bronze','flink','ticket','compute','ready']) s(stage) LEFT JOIN events e USING(stage)
+WITH capture AS (
+    SELECT count(*) AS count FROM voc_monitor.diagnostics WHERE stage='capture' AND {period('observed_at')}
+), silver AS (
+    SELECT count(*) AS count FROM voc_monitor.diagnostics
+    WHERE stage='flink' AND activity='Silver DB 저장' AND {period('observed_at')}
 )
-SELECT {", ".join(
-    f"max(CASE WHEN stage='{stage}' THEN CASE WHEN observed THEN "
-    "'유입 ' || coalesce(entered,0)::text || '건  ·  완료 ' || coalesce(completed,0)::text || '건' ELSE '미수집' END END)"
-    f' AS "{stage}"' for stage in STEPS
-)}
-FROM counts
+SELECT CASE WHEN i.bronze>0 THEN '기록된 수집 ' || c.count || '건' ELSE '미수집' END AS capture,
+       CASE WHEN i.bronze>0 THEN '현재 원문 ' || i.bronze || '건' ELSE '미수집' END AS bronze,
+       CASE WHEN s.count>0 THEN 'Silver 저장 ' || s.count || '건' ELSE '미수집' END AS flink,
+       CASE WHEN i.bronze>0 THEN '현재 원문 연결 ' || i.tickets || '건' ELSE '미수집' END AS ticket,
+       CASE WHEN i.queued IS NOT NULL THEN '현재 분류 대기 ' || i.queued || '건' ELSE '미수집' END AS compute,
+       '미수집' AS ready
+FROM voc_monitor.inventory i CROSS JOIN capture c CROSS JOIN silver s
 """
 
 
 def pipeline_canvas():
     colors = ("#E4F2FD", "#E0F5F6", "#EDEBFD", "#F9EFDE", "#F7E9F3", "#E4F3E9")
     config = panel(1, "문의 처리 흐름", 0, 0, 24, 5, stage_query(), kind="canvas",
-                   description="클릭할 수 있는 단계에서 Kafka 전달, 실패, 재시도 기록을 확인합니다.")
+                   description="단계를 눌러 DB에 저장된 수집·Kafka 전달·검토 기록을 확인합니다.")
     elements = []
     for index, (stage, label) in enumerate(STEPS.items()):
         left = round(1.1 + index * 16.6, 2)
@@ -176,92 +155,73 @@ def dashboard(name, panels, *, template=None, title=None, **options):
 
 
 def collector_positions():
-    config = panel(16, "채널별 수집 위치", 0, 27, 24, 6, """
-SELECT channels.channel,label AS "채널",connection_hash AS "연결",coalesce(position,'미수집') AS "수집 위치",
-       CASE phase WHEN 'active' THEN '증분 수집' WHEN 'bootstrap' THEN '초기 수집' END AS "수집 단계",
-       updated_at AS "마지막 갱신"
-FROM (VALUES ('gmail','Gmail'),('discord','Discord')) AS channels(channel,label)
-LEFT JOIN monitor.collector_position USING(channel)
-ORDER BY label DESC, connection_hash
-""", description="수집 상태는 채널 단위입니다. 수집 위치와 단계는 연결별로 표시합니다. 연결은 식별용 해시입니다.")
-    config["datasource"] = {"type": "datasource", "uid": "-- Mixed --"}
-    config["targets"][0]["datasource"] = SQL
+    fallback = ('label_replace(vector(-1), "channel", "gmail", "", "") '
+                'or label_replace(vector(-1), "channel", "discord", "", "")')
+    config = prom(16, "채널별 수집 위치", 0, 27, 24, 6,
+                  f'voc_collector_position or on(channel) ({fallback})',
+                  description="SQLite에 기록된 연결별 위치와 가장 최근 채널 상태를 읽습니다.")
     config["targets"].append({
-        "refId": "B", "datasource": PROM, "instant": True, "range": False, "format": "table",
-        "expr": 'max by (channel) (voc_collector_ready{channel=~"gmail|discord"}) '
-                'or on (channel) label_replace(vector(-1), "channel", "gmail", "", "") '
-                'or on (channel) label_replace(vector(-1), "channel", "discord", "", "")',
+        **config["targets"][0], "refId": "B",
+        "expr": f'max by(channel) (voc_collector_ready) or on(channel) ({fallback})',
     })
     config["transformations"] = [
         {"id": "joinByField", "options": {"byField": "channel", "mode": "outerTabular"}},
         {"id": "organize", "options": {
-            "excludeByName": {"channel": True, "Time": True},
-            "indexByName": {"채널": 0, "Value": 1, "연결": 2, "수집 위치": 3, "수집 단계": 4, "마지막 갱신": 5},
-            "renameByName": {"Value": "수집 상태"},
+            "excludeByName": {name: True for name in ("Time", "Time 1", "Time 2", "__name__", "job", "instance",
+                                                      "Value #A")},
+            "renameByName": {"channel": "채널", "source": "연결", "position": "수집 위치",
+                             "phase": "수집 단계", "Value #B": "수집 상태"},
         }},
     ]
-    config["fieldConfig"]["overrides"].append({
-        "matcher": {"id": "byName", "options": "Value"},
+    config["fieldConfig"]["overrides"] = [{
+        "matcher": {"id": "byName", "options": "Value #B"},
         "properties": [{"id": "mappings", "value": [{"type": "value", "options": {
-            "-1": {"text": "미수집"}, "0": {"text": "중단"}, "1": {"text": "수집 중"},
+            "-1": {"text": "미수집"}, "0": {"text": "준비 상태 아님"}, "1": {"text": "수집 중"},
         }}]}],
-    })
+    }]
     return config
 
 
 PIPELINES = [
     pipeline_canvas(),
     panel(8, "단계별 처리 시간", 0, 8, 12, 7, f"""
-SELECT CASE stage {' '.join(f"WHEN '{step}' THEN '{label}'" for step, label in STEPS.items())} END AS "단계",
-       count(*) AS "완료 표본",
-       round(percentile_cont(0.95) WITHIN GROUP (
-           ORDER BY extract(epoch FROM (succeeded_at-started_at)))::numeric, 2) AS "P95 (초)"
-FROM monitor.stage
-WHERE {period('succeeded_at')} AND started_at<=succeeded_at
-GROUP BY stage ORDER BY array_position(ARRAY['capture','bronze','flink','ticket','compute','ready'],stage)
-""", description="같은 문의에서 최초 유입과 최초 완료의 차이를 측정합니다."),
-    panel(9, "전체 처리 시간과 30초 목표", 12, 8, 12, 7, f"""
-WITH completed AS (
-  SELECT extract(epoch FROM ready_at-registered_at) AS seconds FROM monitor.normal_inquiry
-  WHERE {period('ready_at')} AND ready_at>=registered_at
-), cohort AS (
-  SELECT *, ready_at >= registered_at AND ready_at<=least(registered_at+interval '30 seconds',{TIME_TO}) AS hit
-  FROM monitor.normal_inquiry WHERE {period('registered_at')}
-   AND (registered_at<={TIME_TO}-interval '30 seconds' OR ready_at BETWEEN registered_at AND {TIME_TO})
+WITH samples AS (
+  SELECT CASE WHEN published_at>=queued_at THEN extract(epoch FROM published_at-queued_at) END AS queued_seconds,
+         CASE WHEN standardized_at>=published_at THEN extract(epoch FROM standardized_at-published_at) END AS stored_seconds
+  FROM voc_monitor.standardization WHERE {period('standardized_at')}
 )
-SELECT label AS "지표",value AS "측정값"
-FROM (
-  SELECT (SELECT round(percentile_cont(0.95) WITHIN GROUP(ORDER BY seconds)::numeric,2) FROM completed) AS p95,
-         CASE WHEN count(*)>0 OR {active('bronze')} THEN count(*) FILTER(WHERE hit) END AS hits,
-         CASE WHEN count(*)>0 OR {active('bronze')} THEN count(*) FILTER(WHERE NOT coalesce(hit,false)) END AS misses,
-         CASE WHEN count(*)>0 OR {active('bronze')} THEN count(*) END AS total,
-         round(count(*) FILTER(WHERE hit)*100.0/nullif(count(*),0),1) AS completion
-  FROM cohort
-) metrics CROSS JOIN LATERAL (VALUES ('전체 시간 P95 (초)',p95),('30초 이내 완료 (건)',hits),
-  ('목표 미달 (건)',misses),('대상 (건)',total),('30초 내 완료율 (%)',completion)) AS v(label,value)
-""", description="원본 공급자 등록부터 결과 저장까지 잽니다. 등록 시각을 모르는 문의는 제외합니다."),
-    panel(10, "원문과 티켓 대조", 0, 15, 12, 6, f"""
+SELECT label AS "측정 구간",nullif(count(seconds),0) AS "완료 표본",
+       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY seconds)::numeric,2) AS "P95 (초)"
+FROM (VALUES ('요청 대기 → Kafka 전달'),('Kafka 전달 → Silver 저장')) v(label)
+LEFT JOIN samples ON true
+LEFT JOIN LATERAL (SELECT CASE label WHEN '요청 대기 → Kafka 전달' THEN queued_seconds ELSE stored_seconds END AS seconds)
+    duration ON true
+GROUP BY label
+""", description="현재 정제 요청과 최초 Silver 저장 기록의 시각을 비교합니다. Kafka 전달 기록은 발행 트랜잭션의 시각입니다."),
+    panel(9, "전체 처리 시간과 30초 목표", 12, 8, 12, 7, """
+SELECT label AS "지표", '미수집' AS "측정값"
+FROM (VALUES ('전체 시간 P95 (초)'),('30초 이내 완료 (건)'),('목표 미달 (건)'),('대상 (건)'),('30초 내 완료율 (%)')) v(label)
+""", description="문의 등록 시각과 최종 결과 저장 시각을 연결하는 기록이 필요합니다."),
+    panel(10, "원문과 티켓 대조", 0, 15, 12, 6, """
 SELECT label AS "대조 상태",CASE WHEN observed THEN value END AS "건수"
 FROM (
-    SELECT count(*)>0 OR {active('bronze')} AS observed,
+    SELECT count(*)>0 AS observed,
        count(*) FILTER(WHERE reconciliation='source_without_ticket') AS missing_ticket,
        count(*) FILTER(WHERE reconciliation='ticket_without_source') AS missing_source,
        coalesce(sum(extra_tickets),0) AS duplicates,
        count(*) FILTER(WHERE reconciliation='pending') AS pending,
        count(*) FILTER(WHERE reconciliation='unconfirmed_delivery') AS unconfirmed,
-       count(*) FILTER(WHERE reconciliation='failed') AS failed
-    FROM monitor.source_reconciliation
-) metrics CROSS JOIN LATERAL (VALUES ('티켓 없는 원문',missing_ticket),('원문 없는 티켓',missing_source),
+       count(*) FILTER(WHERE reconciliation='projection_issue') AS projection_issues
+    FROM voc_monitor.source_reconciliation
+) metrics CROSS JOIN LATERAL (VALUES ('티켓 없는 문의 원문',missing_ticket),('원문 없는 수집 티켓',missing_source),
     ('중복 발행 티켓',duplicates),('정제 처리 요청 대기',pending),('Flink 정제 처리 대기',unconfirmed),
-    ('실패 기록 있음',failed)) AS v(label,value)
-""", description="현재 전체 원문과 티켓을 비교합니다. 대기·실패 기록은 누락 의심에서 제외합니다."),
-    panel(11, "AI 모델 분석 대기", 12, 15, 12, 6, f"""
-SELECT label AS "단계", CASE WHEN q.pending>0
-    OR (stage='classification' AND {active('classification')}) OR (stage='embedding' AND {active('embedding')})
-    THEN coalesce(q.pending,0) END AS "대기 건수", q.oldest_seconds::integer AS "가장 오래된 대기 (초)"
-FROM (VALUES ('classification','분류'),('embedding','임베딩')) AS s(stage,label)
-LEFT JOIN monitor.queue_backlog q USING(stage)
-"""),
+    ('티켓 생성 보류',projection_issues)) AS v(label,value)
+""", description="수집 원문을 업무 티켓과 대조합니다. Flink 정제 처리 대기는 발행 이후 현재 Silver 저장을 확인하지 못한 건입니다."),
+    panel(11, "AI 모델 분석 대기", 12, 15, 12, 6, """
+SELECT label AS "단계", q.pending AS "대기 작업", q.oldest_seconds::integer AS "가장 오래된 대기 (초)"
+FROM (VALUES ('classification','분류 요청'),('embedding','임베딩')) AS s(stage,label)
+LEFT JOIN voc_monitor.queue_backlog q USING(stage)
+""", description="기존 아웃박스의 감성·카테고리 대기 작업을 셉니다. 한 티켓이 두 작업을 가질 수 있습니다."),
     prom(14, "Flink 마지막 성공 체크포인트", 0, 21, 6, 6, "voc_flink_last_checkpoint_seconds * 1000",
          kind="stat", unit="dateTimeAsLocal"),
     prom(15, "Flink 마지막 체크포인트 복원", 6, 21, 6, 6, "voc_flink_last_restore_seconds * 1000",
@@ -271,24 +231,18 @@ LEFT JOIN monitor.queue_backlog q USING(stage)
                                 description="작업 상태와 성공·실패·복원 체크포인트 수를 표시합니다.")),
     collector_positions(),
     omit_prometheus_fields(prom(18, "Kafka 소비 지연", 0, 33, 24, 8, "voc_kafka_consumer_lag")),
-    panel(20, "분류·임베딩 모델 실패 및 복구 기록", 0, 41, 24, 8, f"""
-SELECT CASE stage WHEN 'classification' THEN '분류 모델' WHEN 'embedding' THEN '임베딩 모델' END AS "모델 종류",
-       event_id AS "원본 이벤트 ID",
-       CASE reason WHEN 'incomplete_classification' THEN '분류 결과 일부 누락' ELSE reason END AS "실패 사유",
-       failed_at AS "실패 시각",recovered_at AS "복구 시각",
-       CASE WHEN recovered_at IS NULL THEN '미해결' ELSE '복구' END AS "상태"
-FROM monitor.failure
-WHERE stage IN ('classification','embedding')
-  AND ({period('failed_at')} OR {period('recovered_at')} OR recovered_at IS NULL)
-ORDER BY failed_at DESC LIMIT 100
-"""),
+    panel(20, "분류·임베딩 모델 실패 및 복구 기록", 0, 41, 24, 8, """
+SELECT '미수집' AS "상태"
+""", description="실패 시각과 복구 결과를 같은 작업에 연결하는 모델 기록이 필요합니다."),
     panel(23, "대조가 필요한 원본 키", 0, 49, 24, 8, """
 SELECT event_id AS "원본 키",channel AS "채널",ticket_count AS "티켓",extra_tickets AS "중복 발행 티켓",
        CASE reconciliation WHEN 'source_without_ticket' THEN '티켓 없는 원문'
         WHEN 'ticket_without_source' THEN '원문 없는 티켓'
-        WHEN 'failed' THEN '실패 기록 있음' WHEN 'unconfirmed_delivery' THEN 'Flink 정제 처리 대기' ELSE '대조 완료' END AS "대조 상태"
-FROM monitor.source_reconciliation
-WHERE reconciliation IN ('source_without_ticket','ticket_without_source','failed','unconfirmed_delivery') OR extra_tickets>0
+        WHEN 'unconfirmed_delivery' THEN 'Flink 정제 처리 대기'
+        WHEN 'projection_issue' THEN '티켓 생성 보류' ELSE '대조 완료' END AS "대조 상태"
+FROM voc_monitor.source_reconciliation
+WHERE reconciliation IN ('source_without_ticket','ticket_without_source','unconfirmed_delivery','projection_issue')
+   OR extra_tickets>0
 ORDER BY received_at DESC NULLS FIRST LIMIT 100
 """),
 ]
@@ -298,40 +252,18 @@ for pipeline_panel in PIPELINES[1:]:
 
 
 STAGE_DETAIL = panel(21, "단계 상세 · ${step:text}", 0, 0, 24, 18, f"""
-WITH attempts AS (
-  SELECT *,lag(error) OVER ordered AS previous_error,
-         lag(request_partition) OVER ordered AS previous_partition,lag(request_offset) OVER ordered AS previous_offset
-  FROM monitor.flink_attempt WHERE started_at<={TIME_TO}
-    AND ${{step:sqlstring}}='flink'
-  WINDOW ordered AS (PARTITION BY event_id ORDER BY started_at,attempt_id)
-), retries AS (
-  SELECT event_id,'flink' AS stage,count(*) AS retries,max(started_at) AS last_at
-  FROM attempts
-  WHERE previous_error IS NOT NULL OR (request_partition,request_offset)=(previous_partition,previous_offset)
-  GROUP BY event_id
-  UNION ALL
-  SELECT event_id,stage,retries,last_at FROM monitor.analysis_retries WHERE ${{step:sqlstring}}='compute'
-), detail AS (
-  SELECT recorded_at AS event_at,'Kafka 전달' AS activity,stage,event_id,topic,partition_id,kafka_offset,
-         NULL::bigint AS retries,NULL::text AS reason
-  FROM monitor.kafka_delivery WHERE {period('recorded_at')} AND stage IN ('capture','bronze','flink')
-  UNION ALL
-  SELECT failed_at,'실패',stage,event_id,NULL,NULL,NULL,NULL,reason
-  FROM monitor.failure WHERE {period('failed_at')} AND stage IN ('capture','bronze','flink','ticket')
-  UNION ALL
-  SELECT last_at,'재시도',stage,event_id,NULL,NULL,NULL,retries,NULL FROM retries
-  WHERE {period('last_at')}
-)
-SELECT event_at AS "이벤트 시각",activity AS "이벤트 종류",
-       CASE stage {" ".join(f"WHEN '{stage}' THEN '{label}'" for stage, label in STEPS.items())}
-           WHEN 'classification' THEN '분류' WHEN 'embedding' THEN '임베딩' END AS "단계",
-       event_id AS "원본 이벤트 ID",topic AS "Kafka 토픽",partition_id AS "파티션",kafka_offset AS "오프셋",
-       retries AS "재시도 횟수",reason AS "실패 사유"
-FROM detail
-WHERE ${{step:sqlstring}}=stage OR (${{step:sqlstring}}='compute' AND stage IN ('classification','embedding'))
-ORDER BY event_at DESC LIMIT 150
-""", description="선택한 단계의 Kafka 전달, 실패, 재시도를 최근 150건까지 표시합니다.",
-    empty="—")
+SELECT "이벤트 시각","이벤트 종류","원본 이벤트 ID","Kafka 토픽","파티션","오프셋","재시도 횟수","상세"
+FROM (
+    SELECT observed_at AS "이벤트 시각",activity AS "이벤트 종류",event_id AS "원본 이벤트 ID",
+           topic AS "Kafka 토픽",partition_id AS "파티션",kafka_offset AS "오프셋",
+           NULL::bigint AS "재시도 횟수",reason AS "상세"
+    FROM voc_monitor.diagnostics
+    WHERE stage=${{step:sqlstring}} AND {period('observed_at')}
+) events
+UNION ALL SELECT NULL,'미수집',NULL,NULL,NULL,NULL,NULL,NULL
+WHERE NOT EXISTS (SELECT FROM voc_monitor.diagnostics WHERE stage=${{step:sqlstring}} AND {period('observed_at')})
+ORDER BY 1 DESC LIMIT 150
+""", description="선택 단계의 저장 시각과 검토 기록을 표시합니다. 확인할 수 있는 Kafka 오프셋은 검토 기록에서 제공합니다.")
 
 filter_variable = {
     "name": "step", "type": "custom", "label": "단계 상세", "hide": 2,
@@ -345,10 +277,10 @@ def inference_query(rollout=None):
     route = f"AND rollout='{rollout}' AND model_name IS NOT NULL AND model_version IS NOT NULL" if rollout else ""
     return f"""
 WITH samples AS (
-  SELECT * FROM monitor.inference WHERE api='{api}' {route} AND traffic='operational'
+  SELECT * FROM voc_monitor.inference WHERE api='{api}' {route} AND traffic='operational'
   AND ended_at IS NOT NULL AND {period('started_at')}
 )
-SELECT CASE WHEN count(*)>0 OR {active(rollout + '_model' if rollout else 'embedding')} THEN count(*) END AS "호출",
+SELECT nullif(count(*),0) AS "호출",
        round(count(*) FILTER(WHERE error IS NOT NULL)*100.0/nullif(count(*),0),2) AS "오류율 (%)",
        round(percentile_cont(0.95) WITHIN GROUP(ORDER BY response_ms)::numeric,1) AS "응답 P95 (ms)",
        round(percentile_cont(0.95) WITHIN GROUP(ORDER BY model_ms)::numeric,1) AS "모델 연산 P95 (ms)"
@@ -358,12 +290,13 @@ FROM samples
 
 INFERENCE = [
     text(1, "모델 호출과 품질",
-         "응답시간은 호출자가 응답이나 실패를 확인할 때까지 잽니다. 모델 연산시간은 모델 API가 보고한 값입니다.",
+         "현재 모델 계측을 기다리고 있습니다. 응답시간은 호출자가, 연산시간은 모델 API가 측정합니다.",
          y=0, h=3),
     panel(2, "Stable 분류", 0, 3, 8, 6, inference_query("stable")),
     panel(3, "Canary 분류", 8, 3, 8, 6, inference_query("canary")),
     panel(4, "임베딩 API", 16, 3, 8, 6, inference_query()),
     panel(5, "실제 모델 버전별 요청", 0, 9, 24, 8, f"""
+WITH stats AS (
 SELECT CASE api WHEN 'embedding' THEN '임베딩' ELSE '분류' END AS "API",
        CASE WHEN api='embedding' THEN '임베딩' WHEN model_name IS NULL OR model_version IS NULL OR rollout IS NULL
             THEN '버전 미확인' ELSE initcap(rollout) END AS "응답 경로",
@@ -378,13 +311,16 @@ SELECT CASE api WHEN 'embedding' THEN '임베딩' ELSE '분류' END AS "API",
        round(percentile_cont(0.95) WITHIN GROUP(ORDER BY response_ms)::numeric,1) AS "응답 P95 (ms)",
        round(avg(model_ms)::numeric,1) AS "연산 평균 (ms)",
        round(percentile_cont(0.95) WITHIN GROUP(ORDER BY model_ms)::numeric,1) AS "연산 P95 (ms)"
-FROM monitor.inference WHERE {period('started_at')}
+FROM voc_monitor.inference WHERE {period('started_at')}
 GROUP BY api,rollout,model_name,model_version,traffic
-ORDER BY api,traffic,rollout,model_name,model_version
+)
+SELECT * FROM stats
+UNION ALL SELECT '미수집',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL WHERE NOT EXISTS(SELECT FROM stats)
+ORDER BY 1,5,2,3,4
 """, description="응답의 모델 버전과 실제 배포 구분에 따라 집계합니다. 오류로 버전을 확인하지 못한 요청은 별도 행에 표시합니다."),
     panel(6, "고정 평가셋 Macro-F1", 0, 17, 24, 7, f"""
 WITH latest AS (
-  SELECT run_id FROM monitor.evaluation WHERE evaluated_at<={TIME_TO}
+  SELECT run_id FROM voc_monitor.evaluation WHERE evaluated_at<={TIME_TO}
   GROUP BY run_id HAVING count(DISTINCT rollout)=2 ORDER BY max(evaluated_at) DESC LIMIT 1
 )
 SELECT initcap(e.rollout) AS "배포", e.model_name AS "모델",e.model_version AS "버전",e.dataset_version AS "고정 평가셋",
@@ -392,23 +328,23 @@ SELECT initcap(e.rollout) AS "배포", e.model_name AS "모델",e.model_version 
        round(max(macro_f1) FILTER(WHERE kind='category')::numeric,4) AS "카테고리 Macro-F1",
        max(samples) FILTER(WHERE kind='sentiment') AS "감성 표본",
        max(samples) FILTER(WHERE kind='category') AS "카테고리 표본"
-FROM latest JOIN monitor.evaluation e USING(run_id) GROUP BY e.rollout,e.model_name,e.model_version,e.dataset_version
+FROM latest JOIN voc_monitor.evaluation e USING(run_id) GROUP BY e.rollout,e.model_name,e.model_version,e.dataset_version
 UNION ALL SELECT 'Stable',NULL,NULL,'미수집',NULL,NULL,NULL,NULL WHERE NOT EXISTS(SELECT FROM latest)
 UNION ALL SELECT 'Canary',NULL,NULL,'미수집',NULL,NULL,NULL,NULL WHERE NOT EXISTS(SELECT FROM latest)
 ORDER BY 1 DESC
 """, description="사람이 따로 검수한 동일 평가셋에서 두 모델을 실행한 가장 최근 결과입니다."),
     panel(7, "상담사 수정률", 0, 24, 24, 7, f"""
 WITH measurement AS (
-    SELECT {active('answer_completion')} OR EXISTS(
-        SELECT FROM monitor.answer_completion WHERE {period('completed_at')}) AS tracked
+    SELECT EXISTS(
+        SELECT FROM voc_monitor.answer_completion WHERE {period('completed_at')}) AS tracked
 ), active AS (
-    SELECT DISTINCT rollout,model_name,model_version FROM monitor.inference
+    SELECT DISTINCT rollout,model_name,model_version FROM voc_monitor.inference
     WHERE rollout IS NOT NULL AND model_name IS NOT NULL AND model_version IS NOT NULL
       AND api='classification' AND traffic='operational' AND ended_at IS NOT NULL AND {period('started_at')}
 ), modifications AS (
     SELECT rollout,model_name,model_version,kind,count(*) AS shown,
        count(*) FILTER(WHERE displayed_value IS DISTINCT FROM final_value) AS changed
-    FROM monitor.modification WHERE {period('completed_at')}
+    FROM voc_monitor.modification WHERE {period('completed_at')}
     GROUP BY rollout,model_name,model_version,kind
 ), combinations AS (
     SELECT a.*,kind FROM active a CROSS JOIN (VALUES ('sentiment'),('category')) AS k(kind)
@@ -429,10 +365,8 @@ FROM (VALUES ('감성'),('카테고리')) v(label) CROSS JOIN measurement
 WHERE NOT EXISTS(SELECT FROM combinations)
 ORDER BY 1 DESC,2,3,4
 """, description="답변한 상담사가 처음 본 예측과 실제 답변완료 당시 최종값을 비교합니다."),
-    show_states(prom(8, "분류 API 연결 설정", 0, 31, 12, 4,
-                     'voc_model_configured{api="classification"}', kind="stat"), {0: "미수집", 1: "설정됨"}),
-    show_states(prom(9, "임베딩 API 연결 설정", 12, 31, 12, 4,
-                     'voc_model_configured{api="embedding"}', kind="stat"), {0: "미수집", 1: "설정됨"}),
+    panel(8, "분류 API 연결 설정", 0, 31, 12, 4, """SELECT '미수집' AS "상태" """),
+    panel(9, "임베딩 API 연결 설정", 12, 31, 12, 4, """SELECT '미수집' AS "상태" """),
 ]
 
 if __name__ == "__main__":
@@ -444,5 +378,5 @@ if __name__ == "__main__":
     ]
     for document in payloads:
         (ROOT / (document["uid"].removeprefix("voc-") + ".json")).write_text(
-            json.dumps(document, ensure_ascii=False, indent=2) + "\n"
+            json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )

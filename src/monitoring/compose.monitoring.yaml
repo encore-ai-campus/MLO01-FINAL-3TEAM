@@ -1,32 +1,24 @@
-x-model-env: &model-env
-  VOC_CLASSIFIER_STABLE_URL: ${VOC_CLASSIFIER_STABLE_URL:-}
-  VOC_CLASSIFIER_CANARY_URL: ${VOC_CLASSIFIER_CANARY_URL:-}
-  VOC_CLASSIFIER_ROUTER_URL: ${VOC_CLASSIFIER_ROUTER_URL:-}
-  VOC_CANARY_PERCENT: ${VOC_CANARY_PERCENT:-0}
-  VOC_EMBEDDING_URL: ${VOC_EMBEDDING_URL:-}
-  VOC_MODEL_API_TOKEN: ${VOC_MODEL_API_TOKEN:-}
-x-monitor-worker: &monitor-worker
-  image: encore-voc-collector:local
-  build: {context: ./src, dockerfile: collector/Dockerfile}
-  restart: unless-stopped
-  init: true
 services:
   monitor-db:
-    <<: *monitor-worker
-    command: ["schema"]
+    image: pgvector/pgvector:pg16
     restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export PGPASSWORD="$$(cat /run/secrets/postgres_password)"
+        export MONITOR_READER_PASSWORD="$$(cat /run/secrets/monitor_reader_password)"
+        test -n "$$MONITOR_READER_PASSWORD"
+        exec psql -X -h postgres -U voc -d voc -v ON_ERROR_STOP=1 -f /monitoring/schema.sql
     secrets: [postgres_password, monitor_reader_password]
+    volumes: ["./src/monitoring/schema.sql:/monitoring/schema.sql:ro"]
     depends_on:
       postgres: {condition: service_healthy}
   metrics:
-    <<: *monitor-worker
-    command: ["metrics"]
-    secrets: [postgres_password]
-    depends_on:
-      monitor-db: {condition: service_completed_successfully}
-    environment:
-      <<: *model-env
-      VOC_MONITOR_RUNTIME: ${VOC_MONITOR_RUNTIME:-true}
+    build: ./src/monitoring
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
     volumes: ["${VOC_CAPTURE_DIR:-./.local/collector/data}:/data:ro"]
   prometheus:
     image: prom/prometheus:v3.5.1
@@ -48,7 +40,7 @@ services:
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_USERS_DEFAULT_THEME: light
       GF_USERS_DEFAULT_LANGUAGE: ko-KR
-      GF_AUTH_ANONYMOUS_ENABLED: ${VOC_GRAFANA_ANONYMOUS:-true}
+      GF_AUTH_ANONYMOUS_ENABLED: ${VOC_GRAFANA_ANONYMOUS:-false}
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/pipeline.json
       GF_ANALYTICS_REPORTING_ENABLED: "false"

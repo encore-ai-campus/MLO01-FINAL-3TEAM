@@ -1,4 +1,4 @@
--- Run on a disposable database after collector/schema.sql, collector/ticket_schema.sql and collector/monitoring.sql.
+-- Run on a disposable database after collector/schema.sql and collector/ticket_schema.sql.
 \set ON_ERROR_STOP on
 BEGIN;
 SET LOCAL plpgsql.check_asserts=on;
@@ -38,8 +38,7 @@ BEGIN
     ASSERT (SELECT reason='unregistered_source' FROM voc.ticket_projection_issue WHERE event_id=e1);
 
     INSERT INTO voc.ticket_source_connection VALUES('fixture-a','gmail',registered_mailbox,'',company_one,channel_one);
-    SELECT * INTO STRICT original FROM public.ticket WHERE source_event_id=e1;
-    ASSERT NOT EXISTS(SELECT FROM public.visible_ticket WHERE source_event_id=e1);
+    SELECT * INTO STRICT original FROM public.visible_ticket WHERE source_event_id=e1;
     ASSERT original.company_uuid=company_one AND original.ticket_number='00000001';
     ASSERT original.status='미처리' AND original.title='배송 문의' AND original.assignee_uuid IS NULL;
     ASSERT original.sentiment_status='pending' AND original.category_status='pending';
@@ -47,7 +46,7 @@ BEGIN
     ASSERT NOT EXISTS(SELECT FROM voc.ticket_projection_issue WHERE event_id=e1);
     ASSERT (SELECT body=E'\n  배송 문의!\n다음 줄' AND created_at=original.created_at
             FROM public.ticket_message WHERE source_event_id=e1);
-    ASSERT (SELECT count(*)=3 FROM voc.ticket_analysis_outbox WHERE event_id=e1);
+    ASSERT (SELECT count(*)=2 FROM voc.ticket_analysis_outbox WHERE event_id=e1);
 
     -- Replays and role corrections preserve independent staff workflow and the first number.
     UPDATE public.ticket SET status='보류' WHERE ticket_uuid=original.ticket_uuid;
@@ -57,19 +56,18 @@ BEGIN
     ASSERT NOT EXISTS(SELECT FROM voc.ticket_analysis_outbox WHERE event_id=e1);
     UPDATE voc.silver_messages SET message_kind='customer_inquiry' WHERE event_id=e1;
     ASSERT (SELECT ticket_uuid=original.ticket_uuid AND ticket_number='00000001' AND status='보류'
-            FROM public.ticket WHERE source_event_id=e1);
-    ASSERT NOT EXISTS(SELECT FROM public.visible_ticket WHERE source_event_id=e1);
+            FROM public.visible_ticket WHERE source_event_id=e1);
     ASSERT (SELECT count(*)=1 FROM public.ticket_message WHERE source_event_id=e1);
-    ASSERT (SELECT count(*)=3 FROM voc.ticket_analysis_outbox WHERE event_id=e1);
+    ASSERT (SELECT count(*)=2 FROM voc.ticket_analysis_outbox WHERE event_id=e1);
 
     UPDATE voc.silver_messages SET body_version=2, body_text='승인된 본문 정정' WHERE event_id=e1;
     ASSERT (SELECT body_version=2 AND body='승인된 본문 정정' FROM public.ticket_message WHERE source_event_id=e1);
     ASSERT (SELECT array_agg(model_text ORDER BY body_version)=ARRAY[E'\n  배송 문의!\n다음 줄','승인된 본문 정정']
             FROM voc.model_text_history WHERE event_id=e1);
-    ASSERT (SELECT count(*)=6 FROM voc.ticket_analysis_outbox WHERE event_id=e1);
+    ASSERT (SELECT count(*)=4 FROM voc.ticket_analysis_outbox WHERE event_id=e1);
 
     e2 := pg_temp.test_mail('fixture-a',registered_mailbox,'second','customer_inquiry',upper(customer_mail));
-    ASSERT (SELECT customer_uuid=original.customer_uuid AND ticket_number='00000002' FROM public.ticket WHERE source_event_id=e2);
+    ASSERT (SELECT customer_uuid=original.customer_uuid AND ticket_number='00000002' FROM public.visible_ticket WHERE source_event_id=e2);
     e_other := pg_temp.test_mail('fixture-a',registered_mailbox,'staff','staff_reply',customer_mail);
     ASSERT NOT EXISTS(SELECT FROM public.ticket WHERE source_event_id=e_other);
     missing := pg_temp.test_mail('fixture-a',registered_mailbox,'no-sender','customer_inquiry',NULL);
@@ -79,7 +77,7 @@ BEGIN
     INSERT INTO voc.ticket_source_connection VALUES('fixture-b','gmail',registered_mailbox,'',company_two,channel_two);
     e3 := pg_temp.test_mail('fixture-b',registered_mailbox,'other-tenant','customer_inquiry',customer_mail);
     ASSERT (SELECT customer_uuid<>original.customer_uuid AND company_uuid=company_two AND ticket_number='00000001'
-            FROM public.ticket WHERE source_event_id=e3);
+            FROM public.visible_ticket WHERE source_event_id=e3);
     INSERT INTO public.channel(company_uuid,name,type) VALUES(company_one,'테스트 디스코드','discord')
         RETURNING channel_uuid INTO discord_channel;
     INSERT INTO voc.ticket_source_connection VALUES('fixture-a','discord','server','room',company_one,discord_channel);
@@ -89,7 +87,7 @@ BEGIN
         source_channel_id,source_conversation_id,message_kind,sender_ref,body_text,body_version,received_at,source_metadata)
     VALUES(4,discord_event,'fixture-a','discord','server','message','room','message','customer_inquiry',
            'user','배송 문의',1,now(),'{}');
-    SELECT ticket_uuid INTO STRICT discord_ticket FROM public.ticket WHERE source_event_id=discord_event;
+    SELECT ticket_uuid INTO STRICT discord_ticket FROM public.visible_ticket WHERE source_event_id=discord_event;
     INSERT INTO public.ticket_duplicate_candidate VALUES(discord_ticket,original.ticket_uuid) ON CONFLICT DO NOTHING;
     INSERT INTO public.ticket_duplicate_candidate VALUES(original.ticket_uuid,discord_ticket) ON CONFLICT DO NOTHING;
     ASSERT (SELECT count(*)=1 FROM public.ticket_duplicate_candidate

@@ -9,15 +9,8 @@ x-worker: &worker
   logging:
     driver: json-file
     options: {max-size: 5m, max-file: "3"}
-x-model-env: &model-env
-  VOC_CLASSIFIER_STABLE_URL: ${VOC_CLASSIFIER_STABLE_URL:-}
-  VOC_CLASSIFIER_CANARY_URL: ${VOC_CLASSIFIER_CANARY_URL:-}
-  VOC_CLASSIFIER_ROUTER_URL: ${VOC_CLASSIFIER_ROUTER_URL:-}
-  VOC_CANARY_PERCENT: ${VOC_CANARY_PERCENT:-0}
-  VOC_EMBEDDING_URL: ${VOC_EMBEDDING_URL:-}
-  VOC_MODEL_API_TOKEN: ${VOC_MODEL_API_TOKEN:-}
 x-spool: &spool
-  - ${VOC_CAPTURE_DIR:-./.local/collector/data}:/data
+  - ./.local/collector/data:/data
 x-initialized: &initialized
   init-db-topics:
     condition: service_completed_successfully
@@ -34,9 +27,6 @@ x-flink: &flink
       taskmanager.numberOfTaskSlots: 2
       execution.checkpointing.interval: 10s
       execution.checkpointing.dir: file:///opt/flink/checkpoints
-      execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
-      jobmanager.memory.process.size: 768m
-      taskmanager.memory.process.size: 1024m
       restart-strategy.type: fixed-delay
       restart-strategy.fixed-delay.attempts: 2147483647
       restart-strategy.fixed-delay.delay: 5s
@@ -44,9 +34,7 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
-    command: ["postgres", "-c", "timezone=UTC", "-c", "log_timezone=UTC"]
     environment:
-      TZ: UTC
       POSTGRES_DB: voc
       POSTGRES_USER: voc
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
@@ -71,8 +59,6 @@ services:
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
       KAFKA_MESSAGE_MAX_BYTES: 67108864
@@ -97,7 +83,7 @@ services:
     command: ["discord"]
     environment:
       VOC_COMPANY: ${VOC_COMPANY:-encore}
-      DISCORD_CHANNEL_ID: ${DISCORD_CHANNEL_ID:-}
+      DISCORD_CHANNEL_ID: ${DISCORD_CHANNEL_ID:?Set DISCORD_CHANNEL_ID in .env}
     volumes: *spool
     secrets: [discord_token]
     healthcheck:
@@ -141,24 +127,10 @@ services:
     <<: *worker
     command: ["publish"]
     volumes: *spool
-    secrets: [postgres_password]
     depends_on: *initialized
   db-worker:
     <<: *worker
     command: ["db"]
-    secrets: [postgres_password]
-    depends_on: *initialized
-  classify:
-    <<: *worker
-    command: ["classify"]
-    environment: *model-env
-    secrets: [postgres_password]
-    volumes: ["${VOC_EVAL_DIR:-./.local/monitoring/eval}:/eval:ro"]
-    depends_on: *initialized
-  embed:
-    <<: *worker
-    command: ["embed"]
-    environment: *model-env
     secrets: [postgres_password]
     depends_on: *initialized
   ticket-desk:
@@ -167,11 +139,10 @@ services:
     init: true
     environment:
       DATABASE_URL: postgresql://voc@postgres/voc
-      VOC_REPLY_URL: ${VOC_REPLY_URL:-}
-      VOC_REPLY_TOKEN: ${VOC_REPLY_TOKEN:-}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,[::1]}
+      TASK3_REPLY_CONNECTIONS:
     secrets: [postgres_password, django_secret_key]
-    ports: ["127.0.0.1:${VOC_DESK_PORT:-18082}:8000"]
+    ports: ["127.0.0.1:18082:8000"]
     depends_on: *initialized
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=3).close()"]
@@ -181,7 +152,7 @@ services:
   jobmanager:
     <<: *flink
     command: ["standalone-job","--job-classname","voc.StandardizeJob"]
-    ports: ["127.0.0.1:${VOC_FLINK_PORT:-18081}:8081"]
+    ports: ["127.0.0.1:18081:8081"]
     depends_on: *initialized
   taskmanager:
     <<: *flink
@@ -192,7 +163,7 @@ volumes:
   kafka_data:
   flink_checkpoints:
 secrets:
-  django_secret_key: {file: "${VOC_COLLECTOR_SECRETS_DIR:-./.local/collector}/django-secret-key"}
-  postgres_password: {file: "${VOC_COLLECTOR_SECRETS_DIR:-./.local/collector}/postgres-password"}
+  django_secret_key: {file: ./.local/collector/django-secret-key}
+  postgres_password: {file: ./.local/collector/postgres-password}
   discord_token: {file: ./.local/collector/discord-token}
   gmail_token: {file: ./.local/channel-probe/token.json}

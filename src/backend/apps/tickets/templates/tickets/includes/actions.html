@@ -1,0 +1,26 @@
+<section class="ticket-conversation ticket-actions" aria-labelledby="ticket-action-title">
+  <h2 id="ticket-action-title">답변 작성</h2>
+  <form class="detail-composer" method="post" action="{% url 'tickets:messages' ticket.ticket_uuid %}{% querystring %}">
+    {% csrf_token %}
+    <input type="hidden" name="request_key" value="{{ request_key }}">
+    <fieldset class="detail-modes">
+      <legend>작성 유형</legend>
+      <label><input type="radio" name="message_type" value="reply" checked> 고객에게 답변</label>
+      <label><input type="radio" name="message_type" value="memo"> 내부 메모</label>
+    </fieldset>
+    {% if quick_replies %}<label>신속답변
+      <select id="ticket-quick-reply"><option value="">등록 답변 선택</option>
+        {% for reply in quick_replies %}<option value="{{ reply.body }}">{{ reply.name }}</option>{% endfor %}
+      </select>
+    </label>{% endif %}
+    <label for="ticket-reply-body">본문</label>
+    <textarea id="ticket-reply-body" name="body" required rows="4" aria-describedby="ticket-reply-limit"></textarea>
+    <div class="detail-commit">
+      <span id="ticket-reply-limit">최대 2,000자</span>
+      <button class="desk-button desk-button-solid">
+        <span data-label="reply">{% if ticket.csv_import_kind == 'migration' %}처리 기록 저장{% else %}답변 보내기{% endif %}</span>
+        <span data-label="memo">메모 저장</span>
+      </button>
+    </div>
+  </form>
+</section>
