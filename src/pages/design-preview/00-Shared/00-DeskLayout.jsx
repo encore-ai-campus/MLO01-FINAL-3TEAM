@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { loadSidebar } from './00-DeskPreferences.js';
+import { followUpChanged, followUpHistory, followUpKey, followUpNotificationCount, loadFollowUp, localStamp, updateFollowUpReminders } from './00-FollowUpStore.js';
 import { currentStaff, rolePolicyKey, staffKey, withStaffPreview } from './00-StaffAccess.js';
 import { availableSettingsGroups } from './00-SettingsNavigation.js';
 
 const workHome = '../02-WorkHomePage/02-WorkHomePage.html#02-01';
 const ticketList = '../03-TicketListPage/03-TicketListPage.html';
+const followup = '../08-FollowUpPage/08-FollowUpPage.html';
 const analytics = '../06-AnalyticsDashboardPage/06-AnalyticsDashboardPage.html';
 export const settingsUrl = '../07-SettingsPage/07-SettingsPage.html';
 export const settingsDisplayUrl = settingsUrl + '?view=display&from=home';
@@ -16,7 +18,33 @@ export const defaultAccountName = '한서윤';
 
 export function DeskLayout({active, children, accountName, settingsPreview, settingsCategory}) {
   const previewId = new URLSearchParams(location.search).get('as');
-  const name = accountName ?? (previewId ? currentStaff()?.name : null) ?? defaultAccountName;
+  const person = currentStaff();
+  const name = accountName ?? (previewId ? person?.name : null) ?? defaultAccountName;
+  const accountId = person?.account === 'active' ? person.id : undefined;
+  const [followUp, setFollowUp] = useState(() => loadFollowUp(accountId));
+  const [bellOpen, setBellOpen] = useState(false);
+  const unread = followUpNotificationCount(followUp);
+  const history = bellOpen ? followUpHistory(followUp) : [];
+  useEffect(() => {
+    if (!accountId) return;
+    const refresh = () => setFollowUp(loadFollowUp(accountId));
+    const tick = () => updateFollowUpReminders(accountId);
+    const restore = () => { tick(); refresh(); };
+    const onStorage = event => { if (event.key === followUpKey || event.key === null) refresh(); };
+    window.addEventListener(followUpChanged, refresh);
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('pageshow', restore);
+    document.addEventListener('visibilitychange', tick);
+    const timer = setInterval(tick, 1000);
+    tick();
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener(followUpChanged, refresh);
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('pageshow', restore);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, [accountId]);
   const sidebar = loadSidebar();
   const [settingsOpen, setSettingsOpen] = useState(active === "settings");
   useEffect(() => {
@@ -50,7 +78,18 @@ export function DeskLayout({active, children, accountName, settingsPreview, sett
 <div id="desk" className="desk">
     <header className="desk-bar">
       <a className="brand" href={withStaffPreview(workHome)}><span className="logo" aria-hidden="true">?</span><span>섭명뭐</span></a>
-      <span title="알림"><svg aria-label="알림" role="img"><use href="#desk-bell"/></svg></span>
+      <div className="desk-bell" onKeyDown={event => { if (event.key === 'Escape') setBellOpen(false); }}>
+        <button type="button" className="desk-bell-button" aria-label="알림 이력" aria-expanded={bellOpen}
+          aria-controls="desk-bell-history" onClick={() => setBellOpen(open => !open)}>
+          <svg aria-hidden="true"><use href="#desk-bell"/></svg>
+        </button>
+        <section id="desk-bell-history" className="desk-bell-history" aria-label="업데이트 이력" hidden={!bellOpen}>
+          <h2>업데이트 이력</h2>
+          {history.length ? <ul>{history.map(entry => <li key={entry.id}>
+            <strong>{entry.label}</strong><p>{entry.title}</p><small>{localStamp(new Date(entry.time)).replace('T', ' ')}</small>
+          </li>)}</ul> : <p>표시할 업데이트가 없습니다.</p>}
+        </section>
+      </div>
       <span className="desk-account" aria-label={'내 계정 ' + name}><span className="desk-avatar" aria-hidden="true">{name[0]}</span>{name}<svg aria-hidden="true"><use href="#desk-down"/></svg></span>
       <a id="desk-logout" className="desk-button desk-logout" href="../01-LoginPage/01-LoginPage.html">로그아웃</a>
     </header>
@@ -58,7 +97,11 @@ export function DeskLayout({active, children, accountName, settingsPreview, sett
       {sidebar.home && <a className="desk-nav-item" href={withStaffPreview(workHome)} aria-current={active === "home" ? "page" : undefined}><svg aria-hidden="true"><use href="#desk-home"/></svg>업무 홈</a>}
       {sidebar.tickets && <a className="desk-nav-item" href={withStaffPreview(ticketList)} aria-current={active === "tickets" ? "page" : undefined}><svg aria-hidden="true"><use href="#desk-ticket"/></svg>티켓 목록</a>}
       {sidebar.inbox && <a className="desk-nav-item" href={withStaffPreview(inboxUrl)} aria-current={active === "inbox" ? "page" : undefined}><svg aria-hidden="true"><use href="#desk-inbox"/></svg>받은 요청</a>}
-      {sidebar.followup && <span className="desk-nav-item" aria-disabled="true"><svg aria-hidden="true"><use href="#desk-clock"/></svg>팔로업</span>}
+      {sidebar.followup && <a className="desk-nav-item" href={withStaffPreview(followup)}
+        aria-current={active === "followup" ? "page" : undefined}>
+        <svg aria-hidden="true"><use href="#desk-clock"/></svg>팔로업
+        {unread > 0 && <span className="desk-nav-unread" aria-label={unread + '건 알림'}>{unread}</span>}
+      </a>}
       {sidebar.analytics && <a className="desk-nav-item" href={active === "analytics" ? location.href : withStaffPreview(analytics)} aria-current={active === "analytics" ? "page" : undefined}><svg aria-hidden="true"><use href="#desk-analytics"/></svg>분석 대시보드</a>}
       <button className="desk-nav-item desk-nav-settings" type="button" aria-expanded={settingsOpen}
         aria-controls="desk-settings-links" data-active={active === "settings" || undefined}
