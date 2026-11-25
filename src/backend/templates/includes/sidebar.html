@@ -10,7 +10,7 @@
   <a class="desk-nav-item" href="/inbox/" {% if active == "inbox" %}aria-current="page"{% endif %}><svg aria-hidden="true"><use href="#desk-inbox"></use></svg>받은 요청</a>
   {% endif %}
   {% if sidebar == "" or "followup" in sidebar %}
-  <span class="desk-nav-item" aria-disabled="true"><svg aria-hidden="true"><use href="#desk-clock"></use></svg>팔로업</span>
+  <a class="desk-nav-item" href="{% url 'followup:page' %}" {% if active == 'followup' %}aria-current="page"{% endif %}><svg aria-hidden="true"><use href="#desk-clock"></use></svg>팔로업{% if actor.can_read %}<span class="desk-count" data-followup-badge="{% url 'followup:notifications' %}?summary=1" hidden></span>{% endif %}</a>
   {% endif %}
   {% if sidebar == "" or "analytics" in sidebar %}
   <a class="desk-nav-item" href="/analytics/" {% if active == "analytics" %}aria-current="page"{% endif %}><svg aria-hidden="true"><use href="#desk-analytics"></use></svg>분석 대시보드</a>

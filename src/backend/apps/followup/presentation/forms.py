@@ -24,3 +24,9 @@ class ContactForm(forms.Form):
 class CompleteForm(forms.Form):
     contacted_at = forms.DateTimeField()
     result = forms.CharField(max_length=1000)
+
+
+class RegistrationQueryForm(forms.Form):
+    mode = forms.ChoiceField(choices=(("track", "추적 등록"), ("schedule", "연락 예약")), required=False)
+    source = forms.ChoiceField(choices=(("ticket", "티켓"), ("chat", "1:1 문의")), required=False)
+    q = forms.CharField(max_length=100, required=False)

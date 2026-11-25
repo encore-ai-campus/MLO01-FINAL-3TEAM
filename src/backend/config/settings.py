@@ -29,7 +29,7 @@ if not DATABASES["default"]["PASSWORD"]:
     DATABASES["default"]["PASSWORD"] = secret("PGPASSWORD", "postgres_password")
 
 INSTALLED_APPS = ["django.contrib.staticfiles", "apps.accounts", "apps.tickets", "apps.workspace",
-                  "apps.collaboration", "apps.analytics", "apps.preferences", "apps.assignment"]
+                  "apps.collaboration", "apps.analytics", "apps.preferences", "apps.followup", "apps.assignment"]
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",

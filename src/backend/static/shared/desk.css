@@ -65,6 +65,7 @@
     .desk-card h2 { display: flex; align-items: center; gap: 12px; font-size: 18px; line-height: 27px; }
     .desk-card p { color: var(--desk-muted); font-size: 13px; line-height: 21px; }
     .desk-count, .desk-badge { display: inline-block; padding: 4px 9px; border-radius: 5px; background: #f1f1f1; color: #555; font-size: 11px; line-height: 16px; font-weight: 600; }
+    .desk-count[hidden] { display: none; }
     .desk-badge-needed { background: #f7efe0; color: #72501e; }
     .desk-badge-active { background: #ebf1f7; color: #35536c; }
     .desk-table { width: 100%; margin-top: 11px; border-collapse: collapse; table-layout: fixed; text-align: left; }

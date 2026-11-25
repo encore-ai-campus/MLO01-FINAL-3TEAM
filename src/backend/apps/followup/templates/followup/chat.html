@@ -1,0 +1,18 @@
+{% extends "followup/base.html" %}
+{% block title %}1:1 상담{% endblock %}
+{% block content %}
+<section class="follow-page follow-register">
+  <a class="desk-button" href="{% url 'followup:page' %}?tab=scheduled&amp;source=chat">팔로업으로</a>
+  <h1>1:1 상담</h1>
+  <p class="follow-muted">{{ chat.chat_uuid }} · 접수 {{ chat.waiting_at|date:"Y.m.d H:i" }}</p>
+  <ol class="follow-events">
+    {% for message in chat.messages %}
+      <li>
+        <strong>{% if message.sender_type == "customer" %}고객{% else %}상담사{% endif %}</strong>
+        <time datetime="{{ message.sent_at|date:'c' }}">{{ message.sent_at|date:"m.d H:i" }}</time>
+        <p>{{ message.body }}</p>
+      </li>
+    {% empty %}<li>상담 메시지가 없습니다.</li>{% endfor %}
+  </ol>
+</section>
+{% endblock %}
