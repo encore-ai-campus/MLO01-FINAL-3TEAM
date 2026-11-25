@@ -104,6 +104,23 @@ Task 10은 배정 트랜잭션에서 `apps.assignment.services.get_policy(cursor
 | `GET /api/tickets`, `GET /api/tickets/options` | 티켓 검색·복수 필터·접수 기간·정렬·페이지, 회사별 필터 선택지 |
 | `GET /api/tickets/{ticket_uuid}` | 티켓과 고객 대화 이력 조회 |
 
+### Task 8 팔로업 백엔드
+
+`init-db-topics`가 `followup_schema.sql`을 적용한다. 기존 Docker 환경에서는 위의 빌드·초기화 명령을 다시 실행한다. API 변경 요청에는 로그인 세션과 `X-CSRFToken`이 필요하다.
+
+| 엔드포인트 | 용도 |
+| --- | --- |
+| `GET /api/follow-up/tracks` | 내 추적 티켓 조회 |
+| `POST /api/follow-up/tracks/{ticket_uuid}`, `DELETE /api/follow-up/tracks/{ticket_uuid}` | 내 추적 등록·해제 |
+| `POST /api/tickets/{ticket_uuid}/memos` | 티켓 메모 등록. `body`를 전달한다. |
+| `GET /api/follow-up/notifications` | 추적 이후 다른 상담사의 메모와 고객 후속 문의 목록 및 알림 건수 조회 |
+| `GET /api/follow-up/contacts` | `state=scheduled\|completed`, `source=ticket\|chat`, `q`로 연락 기록 조회. 기본 상태는 `scheduled`이다. |
+| `POST /api/follow-up/contacts` | `ticket_uuid` 또는 `chat_uuid`, `assignee_uuid`, `reason`, `scheduled_at`으로 연락 등록 |
+| `GET /api/follow-up/contacts/{contact_uuid}` | 단일 연락 기록과 원본 링크 조회 |
+| `POST /api/follow-up/contacts/{contact_uuid}/complete` | `contacted_at`과 `result`로 완료 처리. 실제 처리자는 로그인한 직원으로 기록한다. |
+
+연락 시각은 ISO 8601 값을 사용한다. 연락 기록은 등록자와 지정 담당자가 조회할 수 있으며, 티켓·채팅 조회 권한을 각각 적용한다. 채팅 원본 링크는 1:1 상담과 메시지를 반환하는 `GET /api/chats/{chat_uuid}`로 연결된다. 종료된 Gmail 스레드의 후속 문의 알림 조건은 팀 합의가 필요하며, 현재는 원본 티켓이 답변완료 상태면 해당 고객 알림을 제외한다.
+
 ### 테스트
 
 앞서 만든 가상환경에서 아래 명령을 실행한다. `DATABASE_URL`을 데이터베이스를 생성할 수 있는 **테스트 전용** 접속 문자열로 먼저 설정한다. 티켓 테스트는 임시 데이터베이스를 생성해 삭제하고, 로그인 조회 테스트는 임시 스키마를 만들어 정리한다.
