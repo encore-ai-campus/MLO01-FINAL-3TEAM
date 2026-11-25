@@ -145,14 +145,6 @@ def record_display(cursor, actor, prediction):
           prediction["attempt_id"], actor["company_uuid"]))
 
 
-def can_reply(cursor, actor):
-    cursor.execute("""
-        SELECT EXISTS (SELECT FROM staff_permission JOIN permission USING(permission_uuid)
-                       WHERE staff_user_uuid=%s AND code='ticket.reply')
-    """, (actor["staff_user_uuid"],))
-    return cursor.fetchone()[0]
-
-
 def confirmed_replies(cursor, actor, ticket):
     cursor.execute("""
         SELECT ticket_message_uuid,created_at FROM ticket_message

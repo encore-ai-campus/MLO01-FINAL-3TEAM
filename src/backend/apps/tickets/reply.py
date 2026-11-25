@@ -60,8 +60,6 @@ def sent_to_provider(url, reply_id, payload):
 
 def send(token, ticket, data):
     url = reply_endpoint()
-    if not url:
-        raise DeskError(503, "REPLY_UNAVAILABLE", "회신 API가 연결되지 않았습니다.")
     try:
         reply_id = UUID(data["reply_id"])
         body = data["body"].strip()
@@ -72,6 +70,8 @@ def send(token, ticket, data):
     claim = uuid4()
     with transaction.atomic(), connection.cursor() as cursor:
         actor, locked = services.lock_reply_ticket(cursor, token, ticket)
+        if not url:
+            raise DeskError(503, "REPLY_UNAVAILABLE", "회신 API가 연결되지 않았습니다.")
         cursor.execute("""SELECT ticket_uuid,staff_user_uuid,body,delivered_at,
                           lease_until>clock_timestamp() AS busy FROM voc.reply_dispatch WHERE reply_uuid=%s""",
                        (reply_id,))

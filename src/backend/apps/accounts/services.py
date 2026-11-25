@@ -65,12 +65,14 @@ def settings_employee(cursor, actor, staff_uuid, *, lock=False):
     return staff
 
 
-def require_work_permission(cursor, actor, code):
+def has_work_permission(cursor, actor, code):
     if code == DASHBOARD_READ:
-        allowed = repository.dashboard_allowed(cursor, actor, code)
-    else:
-        allowed = repository.work_permissions(cursor, actor["company_uuid"], actor["staff_user_uuid"], (code,))
-    if not allowed:
+        return repository.dashboard_allowed(cursor, actor, code)
+    return bool(repository.work_permissions(cursor, actor["company_uuid"], actor["staff_user_uuid"], (code,)))
+
+
+def require_work_permission(cursor, actor, code):
+    if not has_work_permission(cursor, actor, code):
         raise DeskError(403, "WORK_PERMISSION_REQUIRED", "이 업무를 처리할 권한이 없습니다.")
 
 

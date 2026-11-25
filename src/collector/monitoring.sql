@@ -95,7 +95,6 @@ CREATE TABLE IF NOT EXISTS voc.ticket_prediction (
     attempt_id uuid NOT NULL REFERENCES voc.inference_attempt,
     PRIMARY KEY(ticket_uuid,kind)
 );
-INSERT INTO public.permission(code,name) VALUES ('ticket.reply','티켓 답변 및 분류 수정') ON CONFLICT DO NOTHING;
 ALTER TABLE public.ticket ADD COLUMN IF NOT EXISTS reply_delivery_uuid uuid REFERENCES public.ticket_message;
 ALTER TABLE public.ticket_message ADD COLUMN IF NOT EXISTS sent_at timestamptz;
 CREATE TABLE IF NOT EXISTS voc.prediction_display (

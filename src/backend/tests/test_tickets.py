@@ -344,25 +344,39 @@ class TicketTests(TicketDatabase):
 
         self.login(company=2)
         ticket, agent = self.tickets[-1], self.employees[-1]
+        detail_url = reverse("tickets:detail", args=[ticket])
+        classification_url = reverse("tickets:classification", args=[ticket])
+        permissions_url = reverse("accounts:employee-permissions", args=[agent])
         reply_id = str(uuid4())
         url = f"/tickets/{ticket}/reply/"
         payload = {"reply_id": reply_id, "body": "확인했습니다."}
-        self.cur.execute("INSERT INTO staff_permission SELECT %s,permission_uuid FROM permission WHERE code='ticket.reply'", (agent,))
+        self.cur.execute("UPDATE staff_user SET role='admin' WHERE staff_user_uuid=%s", (agent,))
+        self.addCleanup(self.cur.execute, "UPDATE staff_user SET role=NULL WHERE staff_user_uuid=%s", (agent,))
         with patch.dict(os.environ, {"VOC_REPLY_URL": ""}):
-            self.assertContainsHTML(self.client.get(f"/tickets/{ticket}/"), "회신 API 미연결")
+            self.assertNotIn("분류 수정", self.client.get(detail_url).text)
+            self.assertEqual(self.client.post(classification_url, {"sentiment": "중립"}).status_code, 403)
+            self.assertEqual(self.client.post(url, payload).status_code, 403)
+            self.assertEqual(self.client.post(permissions_url, {"permissions": ["ticket.handle"]}).status_code, 302)
+            self.assertContainsHTML(self.client.get(detail_url), "회신 API 미연결")
+            self.assertEqual(self.client.post(classification_url, {"sentiment": "중립"}).status_code, 302)
             self.assertEqual(self.client.post(url, payload).status_code, 503)
         with ThreadingHTTPServer(("127.0.0.1", 0), Adapter) as server:
             thread = Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
                 with patch.dict(os.environ, {"VOC_REPLY_URL": f"http://127.0.0.1:{server.server_port}/reply"}):
-                    self.assertContainsHTML(self.client.get(f"/tickets/{ticket}/"), "답변 보내기")
+                    self.assertContainsHTML(self.client.get(detail_url), "답변 보내기")
                     self.assertEqual(self.client.post(url, payload).status_code, 502)
                     self.cur.execute("SELECT count(*) FROM voc.ticket_answer_completion WHERE ticket_uuid=%s", (ticket,))
                     self.assertEqual(self.cur.fetchone()[0], 0)
-                    self.assertContainsHTML(self.client.get(f"/tickets/{ticket}/"), "발송 다시 확인")
+                    self.assertContainsHTML(self.client.get(detail_url), "발송 다시 확인")
+                    self.assertEqual(self.client.post(permissions_url, {}).status_code, 302)
+                    self.assertNotIn("발송 다시 확인", self.client.get(detail_url).text)
+                    self.assertEqual(self.client.post(url, payload).status_code, 403)
+                    self.assertEqual(self.client.post(permissions_url, {"permissions": ["ticket.handle"]}).status_code, 302)
                     self.assertEqual(self.client.post(url, payload).status_code, 302)
                     self.assertEqual(self.client.post(url, payload).status_code, 302)
+                    self.assertEqual(self.client.post(permissions_url, {}).status_code, 302)
             finally:
                 server.shutdown()
                 thread.join()
@@ -499,7 +513,7 @@ class TicketTests(TicketDatabase):
             UPDATE ticket SET category_uuid=%s,category_status='succeeded',classification_final_at=clock_timestamp()
             WHERE ticket_uuid=%s
         """, (first_category, ticket))
-        self.cur.execute("INSERT INTO staff_permission SELECT %s,permission_uuid FROM permission WHERE code='ticket.reply'", (agent,))
+        self.cur.execute("INSERT INTO staff_permission SELECT %s,permission_uuid FROM permission WHERE code='ticket.handle'", (agent,))
         response = self.client.get(f"/tickets/{ticket}/")
         self.assertContainsHTML(response, "미분류")
         self.assertContainsHTML(response, "분류 실패")

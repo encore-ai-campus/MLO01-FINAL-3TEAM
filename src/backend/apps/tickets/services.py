@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 from django.core import signing
 from django.db import connection, transaction
 
-from apps.accounts.services import TICKET_HANDLE, current_actor, require_work_permission
+from apps.accounts.services import TICKET_HANDLE, current_actor, has_work_permission, require_work_permission
 from config.database import read_snapshot
 from config.http import DeskError
 
@@ -119,7 +119,7 @@ def signed_classification_version(actor, ticket, signed):
 def reply_options(desk, ticket):
     from .reply import pending_reply, reply_endpoint
 
-    if ticket["status"] == "답변완료" or not repository.can_reply(desk._cursor, desk.actor):
+    if ticket["status"] == "답변완료" or not has_work_permission(desk._cursor, desk.actor, TICKET_HANDLE):
         return None
     pending = pending_reply(desk._cursor, ticket["ticket_uuid"])
     own = pending and str(pending["staff_user_uuid"]) == str(desk.actor["staff_user_uuid"])
@@ -136,8 +136,9 @@ def reply_options(desk, ticket):
 
 def lock_reply_ticket(cursor, token, ticket):
     actor = current_actor(token, cursor)
-    if not actor["can_read"] or not repository.can_reply(cursor, actor):
-        raise DeskError(403, "TICKET_REPLY_FORBIDDEN", "티켓 답변 권한이 없습니다.")
+    if not actor["can_read"]:
+        raise DeskError(403, "TICKET_READ_FORBIDDEN", "티켓 조회 권한이 없습니다.")
+    require_work_permission(cursor, actor, TICKET_HANDLE)
     locked = repository.lock_visible(cursor, actor, ticket)
     if locked is None:
         raise DeskError(404, "TICKET_NOT_FOUND", "티켓을 찾을 수 없습니다.")

@@ -24,7 +24,7 @@ EDITED = "상담사 직접 수정·지정"
 class TrainingCandidateTests(TicketDatabase):
     def allow_reply(self, employee):
         self.cur.execute("""
-            INSERT INTO staff_permission SELECT %s,permission_uuid FROM permission WHERE code='ticket.reply'
+            INSERT INTO staff_permission SELECT %s,permission_uuid FROM permission WHERE code='ticket.handle'
             ON CONFLICT DO NOTHING
         """, (employee,))
 

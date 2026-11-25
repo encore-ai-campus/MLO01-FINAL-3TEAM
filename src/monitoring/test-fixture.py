@@ -98,7 +98,7 @@ def seed_reference_data(cn, company, password_hash):
         """, (STAFF_ID, COMPANY_ID, password_hash))
         cn.execute("""
             INSERT INTO public.staff_permission(staff_user_uuid,permission_uuid)
-            SELECT %s,permission_uuid FROM public.permission WHERE code IN ('ticket.read','ticket.reply')
+            SELECT %s,permission_uuid FROM public.permission WHERE code IN ('ticket.read','ticket.handle')
             ON CONFLICT DO NOTHING
         """, (STAFF_ID,))
         cn.execute("""
