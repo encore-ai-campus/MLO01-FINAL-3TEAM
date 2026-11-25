@@ -122,6 +122,20 @@ class AssignmentTests(unittest.TestCase):
         self.assertEqual(response.status_code, status, response.content)
         return response.json()
 
+    @override_settings(VOC_POC_RANDOM_ASSIGNMENT=True)
+    def test_random_assignment_respects_team_slots_and_duplicate_delivery(self):
+        self.cursor.execute("UPDATE staff_user SET team_uuid=%s WHERE staff_user_uuid=%s", (self.teams[0], self.staff[1]))
+        first, _ = self.ticket()
+        second, _ = self.ticket()
+        waiting, _ = self.ticket()
+        with patch("apps.assignment.services.random.choice", side_effect=lambda eligible: eligible[-1]) as choose:
+            assigned = self.result(first, self.categories[0])
+            self.assertEqual(self.result(first, self.categories[0])["outcome"], "already_applied")
+            other = self.result(second, self.categories[0])
+            self.assertEqual({assigned["assignee_uuid"], other["assignee_uuid"]}, set(self.staff))
+            self.assertIsNone(self.result(waiting, self.categories[0])["assignee_uuid"])
+            self.assertTrue(choose.called)
+
     def test_assignment_duplicate_and_manual_change(self):
         event, ticket = self.ticket()
         wait_event, wait_ticket = self.ticket()

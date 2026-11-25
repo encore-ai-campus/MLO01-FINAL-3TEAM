@@ -121,6 +121,7 @@ def fill_staff_batch(cursor, company_uuid, team_uuid, staff_uuid, slots):
         SELECT ticket_uuid,event_type_uuid,%s,jsonb_build_object('team_uuid',%s::uuid)
         FROM assigned CROSS JOIN (SELECT event_type_uuid FROM event_type WHERE code='assigned') ev
     """, (company_uuid, team_uuid, slots, staff_uuid, staff_uuid, team_uuid))
+    return cursor.rowcount
 
 
 def routing_options(cursor, company_uuid):

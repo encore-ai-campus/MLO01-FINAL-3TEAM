@@ -1,3 +1,6 @@
+import random
+
+from django.conf import settings
 from django.db import connection, transaction
 
 from config.database import fetch_rows
@@ -28,7 +31,20 @@ def save_policy(cursor, company_uuid, staff_uuid, policy):
 
 def refill_team(cursor, company_uuid, team_uuid):
     """Serialize staff rotation for a team while allowing concurrent case updates."""
-    for policy in repo.team_policies(cursor, company_uuid, team_uuid):
+    policies = repo.team_policies(cursor, company_uuid, team_uuid)
+    if settings.VOC_POC_RANDOM_ASSIGNMENT:
+        eligible = [p for p in policies if p["active_count"] < p["batch_size"]
+                    and (p["refill_mode"] == "immediate" or not p["active_count"])]
+        while eligible:
+            policy = random.choice(eligible)
+            assigned = repo.fill_staff_batch(cursor, company_uuid, team_uuid, policy["staff_user_uuid"], 1)
+            if not assigned:
+                break
+            policy["active_count"] += 1
+            if policy["active_count"] == policy["batch_size"]:
+                eligible.remove(policy)
+        return
+    for policy in policies:
         active = policy["active_count"]
         if policy["refill_mode"] == "after_all" and active:
             continue
