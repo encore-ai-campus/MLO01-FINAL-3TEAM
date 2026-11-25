@@ -199,10 +199,15 @@ LEFT JOIN samples USING(stage)
 GROUP BY stages.stage,label
 ORDER BY stages.stage
 """, empty="-", description="각 구간의 완료 시각을 기준으로 집계합니다. Kafka 전달 기록은 발행 트랜잭션의 시각입니다."),
-    panel(9, "전체 처리 시간과 30초 목표", 12, 8, 12, 7, """
-SELECT label AS "지표", '미수집' AS "측정값"
-FROM (VALUES ('전체 시간 P95 (초)'),('30초 이내 완료 (건)'),('목표 미달 (건)'),('대상 (건)'),('30초 내 완료율 (%)')) v(label)
-""", description="문의 등록 시각과 최종 결과 저장 시각을 연결하는 기록이 필요합니다."),
+    panel(9, "전체 처리 시간과 30초 목표", 12, 8, 12, 7, f"""
+SELECT label AS "지표",
+       CASE WHEN NOT EXISTS (
+           SELECT 1 FROM voc_monitor.diagnostics WHERE stage='capture' AND {period('observed_at')}
+       ) THEN empty_value ELSE '미수집' END AS "측정값"
+FROM (VALUES (1,'전체 시간 P95 (초)','-'),(2,'30초 이내 완료 (건)','0'),(3,'목표 미달 (건)','0'),
+             (4,'대상 (건)','0'),(5,'30초 내 완료율 (%)','0%')) AS metrics(position,label,empty_value)
+ORDER BY position
+""", description="선택한 기간에 수집 기록이 없으면 건수는 0입니다. 수집 기록이 있으면 분류·임베딩 최종 완료 시각이 없어 미수집으로 표시합니다."),
     panel(10, "원문과 티켓 대조", 0, 15, 12, 6, """
 SELECT label AS "대조 상태",CASE WHEN observed THEN value END AS "건수"
 FROM (

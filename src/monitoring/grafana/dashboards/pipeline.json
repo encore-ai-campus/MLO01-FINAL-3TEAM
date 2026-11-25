@@ -705,7 +705,7 @@
         },
         "overrides": []
       },
-      "description": "문의 등록 시각과 최종 결과 저장 시각을 연결하는 기록이 필요합니다.",
+      "description": "선택한 기간에 수집 기록이 없으면 건수는 0입니다. 수집 기록이 있으면 분류·임베딩 최종 완료 시각이 없어 미수집으로 표시합니다.",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "voc-postgres"
@@ -714,7 +714,7 @@
         {
           "refId": "A",
           "rawQuery": true,
-          "rawSql": "\nSELECT label AS \"지표\", '미수집' AS \"측정값\"\nFROM (VALUES ('전체 시간 P95 (초)'),('30초 이내 완료 (건)'),('목표 미달 (건)'),('대상 (건)'),('30초 내 완료율 (%)')) v(label)\n",
+          "rawSql": "\nSELECT label AS \"지표\",\n       CASE WHEN NOT EXISTS (\n           SELECT 1 FROM voc_monitor.diagnostics WHERE stage='capture' AND observed_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n       ) THEN empty_value ELSE '미수집' END AS \"측정값\"\nFROM (VALUES (1,'전체 시간 P95 (초)','-'),(2,'30초 이내 완료 (건)','0'),(3,'목표 미달 (건)','0'),\n             (4,'대상 (건)','0'),(5,'30초 내 완료율 (%)','0%')) AS metrics(position,label,empty_value)\nORDER BY position\n",
           "format": "table",
           "editorMode": "code"
         }
