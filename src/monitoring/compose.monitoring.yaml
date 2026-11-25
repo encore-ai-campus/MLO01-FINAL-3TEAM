@@ -1,0 +1,64 @@
+services:
+  monitor-db:
+    image: pgvector/pgvector:pg16
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export PGPASSWORD="$$(cat /run/secrets/postgres_password)"
+        export MONITOR_READER_PASSWORD="$$(cat /run/secrets/monitor_reader_password)"
+        test -n "$$MONITOR_READER_PASSWORD"
+        exec psql -X -h postgres -U voc -d voc -v ON_ERROR_STOP=1 -f /monitoring/schema.sql
+    secrets: [postgres_password, monitor_reader_password]
+    volumes: ["./src/monitoring/schema.sql:/monitoring/schema.sql:ro"]
+    depends_on:
+      postgres: {condition: service_healthy}
+  metrics:
+    build: ./src/monitoring
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    volumes: ["${VOC_CAPTURE_DIR:-./.local/collector/data}:/data:ro"]
+  prometheus:
+    image: prom/prometheus:v3.5.1
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml","--storage.tsdb.retention.time=6h"]
+    volumes:
+      - ./src/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - monitor_prometheus:/prometheus
+    depends_on: [metrics]
+    ports: ["127.0.0.1:${VOC_PROMETHEUS_PORT:-19090}:9090"]
+  grafana:
+    image: grafana/grafana:12.3.2
+    restart: unless-stopped
+    entrypoint: ["/bin/sh","-ec"]
+    command:
+      - 'export MONITOR_READER_PASSWORD="$$(cat /run/secrets/monitor_reader_password)"; exec /run.sh'
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_DEFAULT_THEME: light
+      GF_USERS_DEFAULT_LANGUAGE: ko-KR
+      GF_AUTH_ANONYMOUS_ENABLED: ${VOC_GRAFANA_ANONYMOUS:-false}
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/pipeline.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    secrets: [monitor_reader_password, grafana_admin_password]
+    volumes:
+      - ./src/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./src/monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - monitor_grafana:/var/lib/grafana
+    depends_on:
+      monitor-db: {condition: service_completed_successfully}
+      prometheus: {condition: service_started}
+    ports: ["127.0.0.1:${VOC_GRAFANA_PORT:-13000}:3000"]
+secrets:
+  monitor_reader_password: {file: "${VOC_MONITOR_SECRETS_DIR:-./.local/monitoring}/reader-password"}
+  grafana_admin_password: {file: "${VOC_MONITOR_SECRETS_DIR:-./.local/monitoring}/grafana-password"}
+volumes:
+  monitor_grafana:
+  monitor_prometheus:

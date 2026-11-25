@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 15s
+scrape_configs:
+  - job_name: voc
+    scrape_timeout: 12s
+    static_configs:
+      - targets: [metrics:9108]
