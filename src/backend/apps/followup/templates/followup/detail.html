@@ -1,0 +1,54 @@
+<aside class="follow-detail" id="follow-detail" aria-labelledby="follow-detail-title">
+  <h2 id="follow-detail-title">{% if tab == "tracks" %}추적 티켓 상세{% elif tab == "scheduled" %}연락 예정 상세{% else %}연락 완료 상세{% endif %}</h2>
+  <div class="follow-detail-body">
+    <p class="follow-muted">{% if selected.ticket_number %}#{{ selected.ticket_number }}{% else %}1:1 문의{% endif %}</p>
+    <h3>{{ selected.title|default:"1:1 상담" }}</h3>
+    {% if tab == "tracks" %}
+      <p class="follow-muted">{{ selected.assignee|default:"미지정" }} · {{ selected.status }}</p>
+      <h4>업데이트 이력</h4>
+      <ul class="follow-events">
+        {% for event in events %}
+          <li>
+            <strong>{% if event.kind == "memo" %}{{ event.author }} 상담사 메모{% else %}고객 후속 문의{% endif %}</strong>
+            <time datetime="{{ event.occurred_at|date:'c' }}">{{ event.occurred_at|date:"m.d H:i" }}</time>
+            <p>{{ event.body }}</p>
+            {% if event.related_ticket_uuid %}<a href="{% url 'tickets:detail' event.related_ticket_uuid %}">후속 티켓 열기</a>{% endif %}
+          </li>
+        {% empty %}<li>추적 시작 이후 업데이트가 없습니다.</li>{% endfor %}
+      </ul>
+      <form class="follow-actions" method="post" action="{% url 'followup:remove' selected.ticket_uuid %}">
+        {% csrf_token %}<button class="desk-button" type="submit">추적 해제</button>
+      </form>
+    {% else %}
+      <dl>
+        <dt>연락 사유</dt><dd>{{ selected.reason }}</dd>
+        <dt>예정 일시</dt><dd>{{ selected.scheduled_at|date:"Y.m.d H:i" }}</dd>
+        <dt>담당자</dt><dd>{{ selected.assignee }}</dd>
+        {% if selected.contacted_at %}
+          <dt>실제 연락 일시</dt><dd>{{ selected.contacted_at|date:"Y.m.d H:i" }}</dd>
+          <dt>처리자</dt><dd>{{ selected.completed_by }}</dd>
+        {% endif %}
+      </dl>
+      {% if selected.contacted_at %}
+        <h4>연락 결과</h4><p class="follow-result">{{ selected.result }}</p>
+      {% else %}
+        <details>
+          <summary class="desk-button">연락 완료 처리</summary>
+          <form class="follow-form" method="post" action="{% url 'followup:finish' selected.contact_uuid %}">
+            {% csrf_token %}
+            <label>실제 연락 일시 <input type="datetime-local" name="contacted_at" value="{{ local_now }}" required></label>
+            <label>연락 결과 <textarea name="result" rows="4" maxlength="1000" required></textarea></label>
+            <button class="desk-button desk-button-solid" type="submit">완료 처리</button>
+          </form>
+        </details>
+      {% endif %}
+    {% endif %}
+    <div class="follow-origin">
+      {% if selected.source == "ticket" %}
+        <a class="desk-button" href="{{ selected.source_url }}">원본 티켓 열기</a>
+      {% else %}
+        <a class="desk-button" href="{% url 'followup:chat-page' selected.chat_uuid %}">원본 상담 열기</a>
+      {% endif %}
+    </div>
+  </div>
+</aside>

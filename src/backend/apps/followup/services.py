@@ -2,7 +2,7 @@ from contextlib import contextmanager
 
 from django.db import connection, transaction
 
-from apps.accounts.repository import company_employee, work_permissions
+from apps.accounts.repository import company_employee, company_staff, work_permissions
 from apps.accounts.services import CHAT_HANDLE, current_actor
 from config.http import DeskError
 from . import repository
@@ -11,6 +11,7 @@ from . import repository
 class FollowUpDesk:
     def __init__(self, cursor, actor):
         self.cursor = cursor
+        self.actor = actor
         self.company = actor["company_uuid"]
         self.staff = actor["staff_user_uuid"]
         self.can_read = actor["can_read"]
@@ -34,9 +35,24 @@ class FollowUpDesk:
         self.require_ticket_read()
         return repository.tracks(self.cursor, self.company, self.staff)
 
-    def notifications(self):
+    def notifications(self, *, summary=False):
         self.require_ticket_read()
-        return repository.notifications(self.cursor, self.company, self.staff)
+        return repository.notifications(self.cursor, self.company, self.staff, summary=summary)
+
+    def registration_sources(self, kind, keyword, *, tracking):
+        if kind == "ticket":
+            self.require_ticket_read()
+        else:
+            self.require_chat()
+        return repository.registration_sources(self.cursor, self.company, self.staff, kind, keyword, tracking=tracking)
+
+    def assignees(self):
+        return company_staff(self.cursor, self.company)
+
+    def track_and_schedule(self, data):
+        if not self.track(data["ticket_uuid"]):
+            raise DeskError(409, "ALREADY_TRACKED", "이미 추적 중인 티켓입니다.")
+        return self.schedule(data)
 
     def schedule(self, data):
         if data["chat_uuid"]:
