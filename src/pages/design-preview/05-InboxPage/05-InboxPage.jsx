@@ -1,16 +1,17 @@
-import { withStaffPreview } from '../00-Shared/00-StaffAccess.js';
+import { currentStaff, withStaffPreview } from '../00-Shared/00-StaffAccess.js';
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { DeskLayout, defaultAccountName } from '../00-Shared/00-DeskLayout.jsx';
 import { requestGroups, ticketProfiles } from './05-InboxData.js';
+import { loadTicketEvents, subscribeTicketEvents, ticketDate, ticketState } from '../00-Shared/00-TicketWorkflow.js';
 import { loadReplies, readReply, saveReply } from './05-ReplyStore.js';
 
 const tabs = { transfer: '받은 이관', review: '받은 검토 요청', reply: '받은 검토 답변' };
 const columns = { transfer: '이관 메시지', review: '검토 메모', reply: '답변' };
 const allRequests = Object.values(requestGroups).flat();
-const requestsById = new Map(allRequests.map(request => [request.requestId, request]));
 const params = new URLSearchParams(location.search);
-const account = defaultAccountName;
+const person = currentStaff();
+const account = person?.name ?? defaultAccountName;
 const initialTab = Object.hasOwn(tabs, params.get('tab')) ? params.get('tab') : 'transfer';
 const emptyDemo = params.get('empty') === '1';
 const readKey = 'voc.inbox.confirmedRequests';
@@ -59,6 +60,16 @@ function TicketLink({ id }) {
   return <a className="desk-button desk-button-solid" href={withStaffPreview(`../04-TicketDetailPage/04-TicketDetailPage.html?ticket=${encodeURIComponent(id)}`)}>티켓 열기</a>;
 }
 
+function Attachment({ file }) {
+  const [url, setUrl] = useState('');
+  useEffect(() => {
+    const objectUrl = URL.createObjectURL(file);
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [file]);
+  return url && <p><a className="inbox-file" href={url} download={file.name}>{file.name}</a></p>;
+}
+
 function RequestDetail({ request, reply, ready, onSend, onClose }) {
   const [view, setView] = useState('detail');
   const [draft, setDraft] = useState('');
@@ -66,7 +77,7 @@ function RequestDetail({ request, reply, ready, onSend, onClose }) {
   const [sending, setSending] = useState(false);
   const pending = useRef(false);
   const isReview = request.requestId.startsWith('review-');
-  const profile = ticketProfiles[request.id];
+  const profile = request.profile ?? ticketProfiles[request.id];
   const detailTitle = isReview ? '받은 검토 요청 상세' : '받은 이관 상세';
   const noteTitle = isReview ? '검토 메모' : '이관 메시지';
 
@@ -152,6 +163,9 @@ function RequestDetail({ request, reply, ready, onSend, onClose }) {
       <h3>{isReview ? '참고 자료' : '전달된 답변'}</h3>
       <p className={isReview ? 'inbox-file' : 'inbox-shared-reply'}>{request.extra}</p>
     </section>}
+    {!!request.files?.length && <section className="inbox-reference"><h3>첨부파일</h3>
+      {request.files.map((file, index) => <Attachment key={index} file={file} />)}
+    </section>}
     {reply && <section className="inbox-sent-reply" aria-live="polite">
       <h3>보낸 답변</h3><p>{reply.message}</p>
     </section>}
@@ -188,6 +202,7 @@ function InboxPage() {
   const [selectedId, setSelectedId] = useState(saved ? saved.selectedId : params.get('request'));
   const [read, setRead] = useState(readConfirmed);
   const [replies, setReplies] = useState([]);
+  const [events, setEvents] = useState([]);
   const [storeState, setStoreState] = useState('loading');
   const [replyError, setReplyError] = useState('');
   const focusedRow = useRef(null);
@@ -209,9 +224,46 @@ function InboxPage() {
     };
   }, []);
 
-  const showRequests = !emptyDemo;
-  const selectedRequest = showRequests ? requestsById.get(selectedId) : null;
-  const receivedReplies = emptyDemo ? [] : replies.filter(reply => reply.recipient === account)
+  useEffect(() => {
+    const refresh = () => loadTicketEvents().then(setEvents).catch(() => {});
+    const off = subscribeTicketEvents(refresh);
+    refresh();
+    return off;
+  }, []);
+
+  const live = events.filter(event => event.kind === 'review' || event.kind === 'transfer')
+    .sort((a, b) => b.time - a.time)
+    .map(event => ({
+      ...event.ticket,
+      requestId: event.kind + '-' + event.eventId,
+      kind: event.kind,
+      recipientId: event.recipientId,
+      actorId: event.actorId,
+      sender: event.author,
+      time: formatReceivedTime(event.time),
+      unread: true,
+      memo: event.message,
+      summary: event.message,
+      status: ticketState(events.filter(item => item.ticketId === event.ticketId)).status ?? event.ticket.status,
+      extra: event.reference,
+      files: event.files,
+      profile: {
+        receivedAt: event.ticket.receivedAt,
+        transferredAt: ticketDate(event.time),
+        priorTransfers: events.filter(item => item.ticketId === event.ticketId && item.kind === 'transfer' && item.time < event.time)
+          .sort((a, b) => b.time - a.time).map(item => [item.recipient, ticketDate(item.time), item.message])
+      }
+    }));
+  const requestsById = new Map([...allRequests, ...live].map(request => [request.requestId, request]));
+  const showRequests = !emptyDemo && person?.account === 'active';
+  const receivedRequest = request => request.recipientId ? request.recipientId === person?.id : person?.id === 'sy';
+  const lists = Object.fromEntries(['review', 'transfer'].map(key => [key, [
+    ...live.filter(request => request.kind === key && receivedRequest(request)),
+    ...requestGroups[key].filter(receivedRequest)
+  ]]));
+  const selection = requestsById.get(selectedId);
+  const selectedRequest = showRequests && selection && receivedRequest(selection) ? selection : null;
+  const receivedReplies = !showRequests ? [] : replies.filter(reply => reply.recipientId ? reply.recipientId === person.id : reply.recipient === account)
     .filter(reply => requestsById.has(reply.requestId))
     .sort((a, b) => b.sentAt - a.sentAt);
   const selectedReply = receivedReplies.find(reply => 'reply:' + reply.requestId === selectedId);
@@ -224,7 +276,7 @@ function InboxPage() {
       try { sessionStorage.setItem(readKey, JSON.stringify([...updated])); } catch {}
       return updated;
     });
-  }, [selectedRequest]);
+  }, [selectedRequest?.requestId, selectedRequest?.unread]);
 
   useEffect(() => {
     history.replaceState({ ...history.state, inbox: { tab, scope, input, query, selectedId } }, '');
@@ -235,7 +287,7 @@ function InboxPage() {
   }
   async function sendResponse(request, message) {
     const record = {
-      requestId: request.requestId, sender: account, recipient: request.sender,
+      requestId: request.requestId, sender: account, senderId: person.id, recipient: request.sender, recipientId: request.actorId,
       message, sentAt: Date.now(), read: false
     };
     try {
@@ -254,7 +306,7 @@ function InboxPage() {
     setSelectedId(row.key);
     setReplyError('');
     if (tab === 'reply' && row.unread) {
-      readReply(row.requestId, account).then(record => { if (record) updateReply(record); })
+      readReply(row.requestId, account, person.id).then(record => { if (record) updateReply(record); })
         .catch(() => setReplyError('답변의 확인 상태를 저장하지 못했습니다.'));
     }
   }
@@ -278,7 +330,7 @@ function InboxPage() {
     const request = requestsById.get(reply.requestId);
     return { ...request, key: 'reply:' + request.requestId, summary: reply.message, sender: reply.sender,
       time: formatReceivedTime(reply.sentAt), unread: !reply.read };
-  }) : (showRequests ? requestGroups[tab] : []).map(request => ({
+  }) : (showRequests ? lists[tab] : []).map(request => ({
     ...request, key: request.requestId, unread: isUnread(request)
   }));
   const visible = tab === 'reply' ? received : received.filter(row =>
@@ -296,7 +348,7 @@ function InboxPage() {
         {Object.entries(tabs).map(([key, label]) => <button key={key} type="button"
           className="desk-button" aria-pressed={tab === key} onClick={() => selectTab(key)}>
           {label}<span className="inbox-count" aria-label="미확인 건수">
-            {key === 'reply' ? receivedReplies.filter(reply => !reply.read).length : showRequests ? requestGroups[key].filter(isUnread).length : 0}
+            {key === 'reply' ? receivedReplies.filter(reply => !reply.read).length : showRequests ? lists[key].filter(isUnread).length : 0}
           </span>
         </button>)}
       </nav>
@@ -338,7 +390,7 @@ function InboxPage() {
         </div>}
       </div>
       {selectedRequest && <RequestDetail key={selectedRequest.requestId} request={selectedRequest}
-        ready={storeState === 'ready'} reply={replies.find(reply => reply.requestId === selectedRequest.requestId && reply.sender === account)}
+        ready={storeState === 'ready'} reply={replies.find(reply => reply.requestId === selectedRequest.requestId && (reply.senderId ? reply.senderId === person.id : reply.sender === account))}
         onSend={sendResponse} onClose={closeDetail} />}
       {selectedReply && <ReplyDetail key={selectedReply.requestId} reply={selectedReply}
         request={requestsById.get(selectedReply.requestId)} onClose={closeDetail} />}
