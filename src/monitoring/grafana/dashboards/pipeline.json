@@ -1041,7 +1041,7 @@
           }
         ]
       },
-      "description": "Gmail과 Discord의 저장된 위치를 표시합니다. 선택한 기간에 기록이 없으면 수집 상태는 미수집입니다.",
+      "description": "Gmail과 Discord의 저장된 위치를 표시합니다. 선택한 기간에 상태 기록이 없으면 수집 상태는 미수집, 수집 단계는 -로 표시합니다.",
       "datasource": {
         "type": "prometheus",
         "uid": "voc-prometheus"
@@ -1049,7 +1049,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "(voc_collector_position * on(channel) group_left() (max by(channel) (last_over_time(voc_collector_ready[$__range]) and (last_over_time(voc_collector_status_observed_seconds[$__range]) >= (${__from} / 1000) <= (${__to} / 1000))) or on(channel) (label_replace(vector(-1), \"channel\", \"gmail\", \"\", \"\") or label_replace(vector(-1), \"channel\", \"discord\", \"\", \"\")))) or on(channel) (max by(channel) (last_over_time(voc_collector_ready[$__range]) and (last_over_time(voc_collector_status_observed_seconds[$__range]) >= (${__from} / 1000) <= (${__to} / 1000))) or on(channel) (label_replace(vector(-1), \"channel\", \"gmail\", \"\", \"\") or label_replace(vector(-1), \"channel\", \"discord\", \"\", \"\")))",
+          "expr": "(voc_collector_position * on(channel) group_left() (max by(channel) (last_over_time(voc_collector_ready[$__range]) and (last_over_time(voc_collector_status_observed_seconds[$__range]) >= (${__from} / 1000) <= (${__to} / 1000))))) or (label_replace((voc_collector_position unless on(channel) (max by(channel) (last_over_time(voc_collector_ready[$__range]) and (last_over_time(voc_collector_status_observed_seconds[$__range]) >= (${__from} / 1000) <= (${__to} / 1000))))), \"phase\", \"-\", \"\", \"\") * -1) or on(channel) (max by(channel) (last_over_time(voc_collector_ready[$__range]) and (last_over_time(voc_collector_status_observed_seconds[$__range]) >= (${__from} / 1000) <= (${__to} / 1000)))) or on(channel) label_replace((label_replace(vector(-1), \"channel\", \"gmail\", \"\", \"\") or label_replace(vector(-1), \"channel\", \"discord\", \"\", \"\")), \"phase\", \"-\", \"\", \"\")",
           "instant": true,
           "range": false,
           "format": "table"
@@ -1067,7 +1067,8 @@
               "Time": true,
               "__name__": true,
               "instance": true,
-              "job": true
+              "job": true,
+              "source": true
             },
             "renameByName": {
               "channel": "채널",
