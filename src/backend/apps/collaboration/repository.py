@@ -45,13 +45,26 @@ def received(cursor, scope):
         SELECT {TICKET_COLUMNS}, e.ticket_event_uuid, 'transfer', 'accepted', e.created_at, e.created_at, e.transfer_reason,
                coalesce(requester.name, requester.email), ARRAY[]::text[], NULL, NULL, false
         {LEGACY_FROM}
-        UNION ALL
-        SELECT {TICKET_COLUMNS}, rep.collab_review_reply_uuid, 'reply', NULL, rep.created_at, rep.read_at, rep.body,
-               coalesce(recipient.name, recipient.email), ARRAY[]::text[], NULL, r.memo, false
-        {REQUEST_FROM} {REPLY_JOIN}
-        WHERE t.company_uuid=%s AND r.requester_uuid=%s AND r.request_type='review'
         ORDER BY received_at DESC, id
-    """, scope * 3)
+    """, scope * 2)
+    return fetch_rows(cursor)
+
+
+def sent(cursor, scope):
+    cursor.execute(f"""
+        SELECT {TICKET_COLUMNS}, r.collab_request_uuid AS id, r.request_type AS kind,
+               r.status AS request_status, r.created_at AS received_at, r.memo,
+               coalesce(recipient.name, recipient.email) AS counterpart,
+               ARRAY(SELECT a.original_filename FROM collab_request_attachment a
+                     WHERE a.collab_request_uuid=r.collab_request_uuid
+                     ORDER BY a.created_at, a.collab_request_attachment_uuid) AS attachment_names,
+               rep.body AS sent_reply, rep.collab_review_reply_uuid AS reply_id, rep.read_at
+        {REQUEST_FROM}
+        LEFT JOIN collab_review_reply rep ON r.request_type='review' AND rep.collab_request_uuid=r.collab_request_uuid
+            AND rep.author_uuid=r.recipient_uuid
+        WHERE t.company_uuid=%s AND r.requester_uuid=%s
+        ORDER BY r.created_at DESC, r.collab_request_uuid
+    """, scope)
     return fetch_rows(cursor)
 
 

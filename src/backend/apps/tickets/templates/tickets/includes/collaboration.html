@@ -2,7 +2,9 @@
   <summary>이관 및 검토 요청</summary>
   <details>
     <summary>티켓 이관</summary>
-    {% if transfer_recipients %}
+    {% if not is_assignee %}
+      <p>현재 담당 상담사만 이관을 요청할 수 있습니다.</p>
+    {% elif transfer_recipients %}
     <form method="post" action="{% url 'tickets:transfer' ticket.ticket_uuid %}{% querystring %}">
       {% csrf_token %}
       <label>새 담당자 <select name="recipient_uuid" required><option value="">선택</option>
@@ -10,7 +12,7 @@
       </select></label>
       <label>이관 사유 <textarea name="reason" required></textarea></label>
       <label>첨부 답변 <textarea name="attached_reply"></textarea></label>
-      <button class="desk-button desk-button-solid">이관하기</button>
+      <button class="desk-button desk-button-solid">이관 요청</button>
     </form>
     {% else %}<p>선택할 수 있는 상담사가 없습니다.</p>{% endif %}
   </details>

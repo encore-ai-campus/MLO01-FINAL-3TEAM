@@ -4,64 +4,68 @@
 {% block content %}
 <section class="inbox-page" aria-labelledby="inbox-title" id="inbox" data-scope="{{ scope }}">
   <h1 id="inbox-title">받은 요청</h1>
-  <nav class="inbox-tabs" aria-label="받은 요청 유형">
-    {% for id,label,count in tabs %}
-      <a class="desk-button" href="{% url 'workspace:inbox' %}{% querystring tab=id request=None q=None %}" {% if id == tab %}aria-current="page"{% endif %}>
-        {{ label }} <span class="inbox-count" data-count="{{ id }}" aria-label="미확인 건수">{{ count }}</span>
+  <nav class="inbox-tabs" aria-label="요청 유형">
+    {% for id,label,count,attention in tabs %}
+      <a class="desk-button" data-tab="{{ id }}" data-attention-count="{{ attention }}" href="{% url 'workspace:inbox' %}{% querystring tab=id request=None q=None scope=None %}" {% if id == tab %}aria-current="page"{% endif %}>
+        {{ label }} <span class="inbox-count" data-count="{{ id }}" aria-label="전체 {{ count }}건">{{ count }}</span>
+        <span class="inbox-tab-attention" role="img" aria-label="처리 또는 확인할 요청 있음"></span>
       </a>
     {% endfor %}
   </nav>
-  {% if tab != 'reply' %}
     <div class="inbox-toolbar">
       <form class="inbox-search" method="get" action="{% url 'workspace:inbox' %}">
         <input type="hidden" name="tab" value="{{ tab }}"><input type="hidden" name="scope" value="{{ scope }}">
-        <input name="q" type="search" value="{{ query }}" aria-label="받은 요청 검색" placeholder="티켓명·티켓번호·보낸 사람 검색">
+        <input name="q" type="search" value="{{ query }}" aria-label="요청 검색" placeholder="티켓명·티켓번호·{{ person_label }} 검색">
         <button class="desk-button desk-button-solid">검색</button><a class="desk-button" href="{% url 'workspace:inbox' %}{% querystring tab=tab q=None request=None %}">초기화</a>
       </form>
-      <nav class="inbox-scopes" aria-label="요청 확인 상태">
+      {% if has_unread_filter %}<nav class="inbox-scopes" aria-label="요청 확인 상태">
         <a class="desk-button" href="{% url 'workspace:inbox' %}{% querystring tab=tab scope='all' request=None %}" {% if scope == 'all' %}aria-current="page"{% endif %}>전체</a>
         <a class="desk-button" href="{% url 'workspace:inbox' %}{% querystring tab=tab scope='unread' request=None %}" {% if scope == 'unread' %}aria-current="page"{% endif %}>미확인</a>
-      </nav>
+      </nav>{% endif %}
     </div>
-  {% endif %}
-  <p class="inbox-sort">받은 시각 최신순</p>
-  <div class="inbox-table-wrap {% if tab == 'reply' %}inbox-reply-table{% endif %}">
+  <p class="inbox-sort">{{ time_label }} 최신순</p>
+  <div class="inbox-table-wrap">
     <table class="inbox-table">
       <colgroup><col class="inbox-col-read"><col class="inbox-col-ticket"><col class="inbox-col-note"><col class="inbox-col-category"><col class="inbox-col-sender"><col class="inbox-col-date"></colgroup>
-      <thead><tr><th>상태</th><th>티켓</th><th>{{ column }}</th><th>카테고리</th><th>보낸 사람</th><th>받은 시각</th></tr></thead>
+      <thead><tr><th>요청 상태</th><th>티켓</th><th>{{ column }}</th><th>카테고리</th><th>{{ person_label }}</th><th>{{ time_label }}</th></tr></thead>
       <tbody id="inbox-rows">{% for row in rows %}
-        <tr data-id="{{ row.id }}" data-kind="{{ row.kind }}">
-          <td><span class="inbox-read-label">{% if row.read_at %}확인{% else %}미확인{% endif %}</span>{% if not row.read_at %}<span class="inbox-unread-dot" aria-hidden="true"></span>{% endif %}</td>
+        <tr data-id="{{ row.id }}"{% if row.unread %} data-unread{% endif %}{% if row.needs_action %} data-needs-action{% endif %}>
+          <td><div class="inbox-row-status">
+            <span class="inbox-request-state" data-status="{{ row.request_status }}" data-kind="{{ row.kind }}">{{ row.status_label }}</span>
+            {% if row.unread and row.is_sent %}<span class="inbox-unread-label">새 답변</span>{% endif %}
+          </div></td>
           <th scope="row"><a class="inbox-row-open" href="{% url 'workspace:inbox' %}{% querystring tab=tab request=row.id %}">{{ row.title }}</a><div class="inbox-ticket-meta">#{{ row.ticket_number }}</div></th>
-          <td class="inbox-summary"><span>{{ row.memo }}</span></td><td>{{ row|analysis_label:"category" }}</td>
-          <td>{{ row.sender|default:"—" }}</td><td class="inbox-received">{{ row.received_at|date:"m/d H:i" }}<span aria-hidden="true">›</span></td>
+          <td class="inbox-summary"><span>{{ row.memo }}</span>{% if row.is_sent and row.sent_reply %}<span class="inbox-reply-preview">{{ row.sent_reply }}</span>{% endif %}</td><td>{{ row|analysis_label:"category" }}</td>
+          <td>{{ row.counterpart|default:"—" }}</td><td class="inbox-received">{{ row.received_at|date:"m/d H:i" }}<span aria-hidden="true">›</span></td>
         </tr>{% endfor %}</tbody>
     </table>
     <div class="inbox-empty" role="status" id="inbox-empty" {% if rows %}hidden{% endif %}><strong>
-      {% if tab == 'reply' %}받은 검토 답변이 없습니다.{% elif query %}검색 결과가 없습니다.{% elif scope == 'unread' %}미확인 요청이 없습니다.{% else %}받은 요청이 없습니다.{% endif %}
+      {% if query %}검색 결과가 없습니다.{% elif scope == 'unread' %}미확인 요청이 없습니다.{% else %}{{ tab_label }}이 없습니다.{% endif %}
     </strong></div>
   </div>
   {% if selected %}
-  <dialog open class="inbox-drawer" id="request-drawer" aria-labelledby="inbox-drawer-title" data-selected="{{ selected.id }}" data-kind="{{ selected.kind }}">
+  <dialog open class="inbox-drawer" id="request-drawer" aria-labelledby="inbox-drawer-title" data-selected="{{ selected.id }}" data-tab="{{ selected.tab }}"{% if selected.needs_action %} data-needs-action{% endif %}>
     <section class="inbox-drawer-panel">
       <header class="inbox-drawer-header">
-        <h2 id="inbox-drawer-title" tabindex="-1">{% if selected.kind == 'review' %}받은 검토 요청 상세{% elif selected.kind == 'reply' %}받은 검토 답변 상세{% else %}받은 이관 상세{% endif %}</h2>
+        <h2 id="inbox-drawer-title" tabindex="-1">{% if tab == 'transfer' %}받은 이관 상세{% else %}{{ tab_label }} 상세{% endif %}</h2>
         <a class="desk-button" href="{% url 'workspace:inbox' %}{% querystring tab=tab request=None %}" id="drawer-close">닫기</a>
       </header>
       <div class="inbox-drawer-body">
-        {% if not selected.read_at %}
-          <form id="request-read" method="post" action="{% if selected.kind == 'reply' %}{% url 'workspace:inbox-read' 'reply' selected.id %}{% else %}{% url 'workspace:inbox-read' 'request' selected.id %}{% endif %}">{% csrf_token %}</form>
+        {% if selected.unread %}
+          <form id="request-read" method="post" action="{% if selected.is_sent %}{% url 'workspace:inbox-read' 'reply' selected.reply_id %}{% else %}{% url 'workspace:inbox-read' 'request' selected.id %}{% endif %}">{% csrf_token %}</form>
         {% endif %}
         <div id="request-detail">
           <p class="inbox-ticket-meta">#{{ selected.ticket_number }}</p><h3>{{ selected.title }}</h3>
           <dl class="inbox-detail-meta">
-            <dt>보낸 사람</dt><dd>{{ selected.sender|default:"—" }}</dd><dt>접수일자</dt><dd>{{ selected.ticket_received_at|date:"Y-m-d H:i" }}</dd>
-            <dt>받은 시각</dt><dd>{{ selected.received_at|date:"m/d H:i" }}</dd><dt>상태</dt><dd id="request-read-label">{% if selected.read_at %}확인{% else %}미확인{% endif %}</dd>
+            <dt>{{ person_label }}</dt><dd>{{ selected.counterpart|default:"—" }}</dd><dt>접수일자</dt><dd>{{ selected.ticket_received_at|date:"Y-m-d H:i" }}</dd>
+            <dt>{{ time_label }}</dt><dd>{{ selected.received_at|date:"m/d H:i" }}</dd>
+            {% if selected.tracks_read %}<dt>확인 상태</dt><dd id="request-read-label">{% if selected.unread %}미확인{% else %}확인{% endif %}</dd>{% endif %}
+            <dt>요청 상태</dt><dd><span class="inbox-request-state{% if selected.needs_action %} inbox-action-state{% endif %}" data-status="{{ selected.request_status }}" data-kind="{{ selected.kind }}">{{ selected.status_label }}</span></dd>
             <dt>티켓 처리 상태</dt><dd>{{ selected.ticket_status }}</dd><dt>감성</dt><dd><span class="inbox-sentiment inbox-sentiment-{{ sentiment_class }}">{{ selected|analysis_label:"sentiment" }}</span></dd>
           </dl>
           <section class="inbox-note">
             <div class="inbox-note-heading">
-              <h3>{% if selected.kind == 'review' %}검토 메모{% elif selected.kind == 'reply' %}답변 내용{% else %}이관 메시지{% endif %}</h3>
+              <h3>{{ column }}</h3>
               {% if selected.kind == 'transfer' %}<button type="button" class="desk-button" data-view="history">이관 이력</button>{% endif %}
             </div>
             <p>{{ selected.memo }}</p>
@@ -69,10 +73,9 @@
           {% if selected.attachment_names %}<section class="inbox-reference"><h3>참고 자료</h3><p class="inbox-file">{{ selected.attachment_names|join:", " }}</p>
             {% if selected.has_download %}<a href="{% url 'tickets:request-attachment' selected.id %}">참고 자료 내려받기</a>{% endif %}
           </section>{% endif %}
-          {% if selected.sent_reply %}<section class="inbox-sent-reply"><h3>보낸 답변</h3><p>{{ selected.sent_reply }}</p></section>{% endif %}
-          {% if selected.kind == 'reply' %}<details class="inbox-reference"><summary>원래 검토 요청 보기</summary><p>{{ selected.original_memo }}</p></details>{% endif %}
+          {% if selected.sent_reply %}<section class="inbox-sent-reply"><h3>{% if selected.is_sent %}받은 답변{% else %}보낸 답변{% endif %}</h3><p>{{ selected.sent_reply }}</p></section>{% endif %}
         </div>
-        {% if can_reply %}
+        {% if selected.can_reply %}
           <form id="request-write" method="post" action="{% url 'workspace:inbox-reply' selected.id %}" hidden>
             {% csrf_token %}
             <dl class="inbox-detail-meta"><dt>받는 사람</dt><dd>{{ selected.sender }}</dd></dl>
@@ -91,11 +94,17 @@
         <p class="inbox-send-error" role="alert" id="inbox-status"></p>
       </div>
       <footer class="inbox-drawer-footer">
-        <span id="detail-actions">
-          {% if can_reply %}<button type="button" class="desk-button" data-view="write">회신하기</button>{% endif %}
-          <a class="desk-button desk-button-solid" href="{% url 'tickets:detail' selected.ticket_uuid %}">티켓 열기</a>
-        </span>
-        {% if can_reply %}<span id="write-actions" hidden><button type="button" class="desk-button" data-view="detail">취소</button><button class="desk-button desk-button-solid" form="request-write" type="submit">보내기</button></span>{% endif %}
+        <div id="detail-actions"{% if selected.kind == 'transfer' %} class="inbox-transfer-actions"{% endif %}>
+          {% if selected.can_reply %}<button type="button" class="desk-button" data-view="write">회신하기</button>{% endif %}
+          {% if selected.kind == 'transfer' and selected.needs_action %}
+            <form id="request-accept" method="post" action="{% url 'tickets:accept-transfer' selected.ticket_uuid selected.id %}">
+              {% csrf_token %}
+              <button type="submit" class="desk-button desk-button-solid">수락</button>
+            </form>
+          {% endif %}
+          <a class="desk-button{% if selected.kind != 'transfer' %} desk-button-solid{% endif %}" href="{% url 'tickets:detail' selected.ticket_uuid %}">티켓 열기</a>
+        </div>
+        {% if selected.can_reply %}<span id="write-actions" hidden><button type="button" class="desk-button" data-view="detail">취소</button><button class="desk-button desk-button-solid" form="request-write" type="submit">보내기</button></span>{% endif %}
       </footer>
     </section>
   </dialog>

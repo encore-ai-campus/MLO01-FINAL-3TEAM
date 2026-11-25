@@ -12,6 +12,8 @@ urlpatterns = [
     path("api/tickets/<str:ticket_uuid>", views.detail, {"as_json": True}),
     path("api/ticket-requests", views.ticket_requests),
     path("api/ticket-requests/<uuid:action_uuid>/attachment", views.request_attachment, name="request-attachment"),
+    path("api/tickets/<uuid:ticket_uuid>/transfer/<uuid:request_uuid>/accept",
+         views.accept_transfer, name="accept-transfer"),
 ]
 
 for action in ("messages", "transfer", "review-requests"):

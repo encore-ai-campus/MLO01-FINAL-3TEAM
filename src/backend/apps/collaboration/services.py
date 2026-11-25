@@ -8,11 +8,15 @@ from config.database import read_snapshot
 from config.http import DeskError
 from . import repository
 
-TABS = {"transfer": "받은 이관", "review": "받은 검토 요청", "reply": "받은 검토 답변"}
-COLUMNS = {"transfer": "이관 메시지", "review": "검토 메모", "reply": "답변"}
+TABS = {
+    "transfer": "받은 이관 요청", "review": "받은 검토 요청",
+    "sent_transfer": "보낸 이관 요청", "sent_review": "보낸 검토 요청",
+}
 SENTIMENTS = {"긍정": "positive", "중립": "neutral", "부정": "negative", "매우 부정": "very-negative",
               "분석 실패": "negative"}
 REPLY_ALLOWED = {"pending", "accepted"}
+TRANSFER_STATUS = {"pending": "수락 대기", "accepted": "수락 완료", "rejected": "거절"}
+REVIEW_STATUS = {"pending": "검토 대기", "accepted": "검토 중", "rejected": "거절", "replied": "회신 완료"}
 
 
 @contextmanager
@@ -32,11 +36,29 @@ def _scope(actor):
 
 
 def missing():
-    raise DeskError(404, "INBOX_ITEM_NOT_FOUND", "받은 항목을 찾을 수 없습니다.")
+    raise DeskError(404, "INBOX_ITEM_NOT_FOUND", "요청 항목을 찾을 수 없습니다.")
+
+
+def request_rows(cursor, actor):
+    scope = _scope(actor)
+    for is_sent, requests in ((False, repository.received(cursor, scope)), (True, repository.sent(cursor, scope))):
+        for item in requests:
+            kind = item["kind"]
+            status = item["request_status"]
+            item["is_sent"] = is_sent
+            item["tab"] = f"sent_{kind}" if is_sent else kind
+            item["counterpart"] = item["counterpart"] if is_sent else item["sender"]
+            item["tracks_read"] = not is_sent or bool(item.get("reply_id"))
+            item["unread"] = item["tracks_read"] and item["read_at"] is None
+            item["can_reply"] = not is_sent and kind == "review" and not item["sent_reply"] and status in REPLY_ALLOWED
+            item["needs_action"] = item["can_reply"] or (not is_sent and kind == "transfer" and status == "pending")
+            statuses = TRANSFER_STATUS if kind == "transfer" else REVIEW_STATUS
+            item["status_label"] = statuses.get(status, "—")
+            yield item
 
 
 def inbox_context(cursor, actor, params, request_id=None):
-    items = repository.received(cursor, _scope(actor))
+    items = list(request_rows(cursor, actor))
     selected = None
     item_id = request_id or params.get("request")
     if item_id:
@@ -44,29 +66,37 @@ def inbox_context(cursor, actor, params, request_id=None):
             item_id = UUID(str(item_id))
         except ValueError:
             missing()
-        selected = next((item for item in items if UUID(str(item["id"])) == item_id), None)
+        selected = next((item for item in items if item_id in (item["id"], item.get("reply_id"))), None)
         if selected is None:
             missing()
-    tab = params.get("tab")
+    requested_tab = params.get("tab")
+    tab = selected["tab"] if selected else requested_tab
+    if tab == "reply":
+        tab = "sent_review"
     if tab not in TABS:
-        tab = selected["kind"] if selected else "transfer"
-    search = params.get("q", "").strip() if tab != "reply" else ""
+        tab = "transfer"
+    is_sent = tab.startswith("sent_")
+    has_unread_filter = tab != "sent_transfer"
+    search = params.get("q", "").strip()
     key = search.casefold()
-    scope = "unread" if tab != "reply" and params.get("scope") == "unread" else "all"
+    scope = "unread" if has_unread_filter and requested_tab != "reply" and params.get("scope") == "unread" else "all"
     counts = dict.fromkeys(TABS, 0)
+    attention = dict.fromkeys(TABS, 0)
     rows = []
     for item in items:
-        counts[item["kind"]] += item["read_at"] is None
-        if item["kind"] != tab or (scope == "unread" and item["read_at"] is not None):
+        counts[item["tab"]] += 1
+        attention[item["tab"]] += item["unread"] or item["needs_action"]
+        if item["tab"] != tab or (scope == "unread" and not item["unread"]):
             continue
-        if any(key in value.casefold() for value in (item["title"], "#" + item["ticket_number"], item["sender"] or "")):
+        if any(key in value.casefold() for value in (item["title"], "#" + item["ticket_number"], item["counterpart"] or "")):
             rows.append(item)
     history = repository.transfer_history(cursor, actor["company_uuid"], selected["ticket_uuid"]) if selected and selected["kind"] == "transfer" else []
-    can_reply = (selected and selected["kind"] == "review" and not selected["sent_reply"]
-                 and selected["request_status"] in REPLY_ALLOWED)
-    return {"tabs": [(kind, label, counts[kind]) for kind, label in TABS.items()], "tab": tab, "column": COLUMNS[tab],
+    return {"tabs": [(kind, label, counts[kind], attention[kind]) for kind, label in TABS.items()], "tab": tab,
+            "tab_label": TABS[tab], "column": "이관 메시지" if tab.endswith("transfer") else "검토 메모",
+            "person_label": "받는 사람" if is_sent else "보낸 사람", "time_label": "보낸 시각" if is_sent else "받은 시각",
+            "has_unread_filter": has_unread_filter,
             "scope": scope, "query": search, "selected": selected, "rows": rows, "transfer_history": history,
-            "can_reply": can_reply, "sentiment_class": SENTIMENTS.get(selected["sentiment"], "pending") if selected else ""}
+            "sentiment_class": SENTIMENTS.get(selected["sentiment"], "pending") if selected else ""}
 
 
 def mark_read(cursor, actor, kind, item_id):

@@ -350,6 +350,10 @@ class TicketTests(unittest.TestCase):
                 self.assertContainsHTML(page, f'href="{detail}">티켓 열기')
                 self.assertEqual(self.client.get(detail).status_code, 200)
         self.assertContainsHTML(page, "검토.txt")
+        self.assertEqual({tab: (count, attention) for tab, _, count, attention in page.context["tabs"]},
+                         {"transfer": (1, 1), "review": (1, 1), "sent_transfer": (0, 0), "sent_review": (0, 0)})
+        self.assertContainsHTML(page, "검토 대기")
+        self.assertNotIn('class="inbox-unread-label"', page.text)
         self.assertNotIn("private/fixture", page.text)
         self.assertNotIn("다른 상담사 요청", page.text)
         self.assertEqual(self.client.get("/inbox/", {"request": requests["other"]}).status_code, 404)
@@ -361,6 +365,9 @@ class TicketTests(unittest.TestCase):
         self.assertEqual(first.status_code, 200, first.text)
         self.assertEqual(self.client.post(read).json()["read_at"], first.json()["read_at"])
         self.assertNotIn("응대 문구 검토", self.client.get("/inbox/", {"tab": "review", "scope": "unread"}).text)
+        read_page = self.client.get("/inbox/", {"tab": "review"})
+        self.assertContainsHTML(read_page, "검토 대기")
+        self.assertEqual(read_page.context["tabs"][1][2:], (1, 1))
         reply = reverse("workspace:inbox-reply", args=[requests["review"]])
         self.assertEqual(self.client.post(reply, {"body": "확인했습니다."}).status_code, 200)
         self.assertEqual(self.client.post(reply, {"body": "확인했습니다."}).status_code, 200)
@@ -371,7 +378,20 @@ class TicketTests(unittest.TestCase):
         self.client.post("/api/auth/login", {"email": "agent2@qa1.test", "password": "SamplePass1!"}, content_type="application/json")
         self.cur.execute("SELECT collab_review_reply_uuid FROM collab_review_reply WHERE collab_request_uuid=%s", (requests["review"],))
         reply_id = self.cur.fetchone()[0]
+        sent_transfer = self.client.get("/inbox/", {"tab": "sent_transfer", "request": requests["transfer"]})
+        self.assertContainsHTML(sent_transfer, "보낸 이관 요청 상세")
+        self.assertContainsHTML(sent_transfer, "수락 대기")
+        self.assertNotIn('id="request-accept"', sent_transfer.text)
+        sent_review = self.client.get("/inbox/", {"tab": "sent_review", "request": requests["review"]})
+        self.assertContainsHTML(sent_review, "보낸 검토 요청 상세")
+        self.assertContainsHTML(sent_review, "새 답변")
+        self.assertContainsHTML(sent_review, "확인했습니다.")
+        self.assertNotIn("다른 회사 요청", sent_review.text)
+        self.assertContainsHTML(self.client.get("/inbox/", {"tab": "reply", "request": reply_id}), "확인했습니다.")
         self.assertEqual(self.client.post(reverse("workspace:inbox-read", args=["reply", reply_id])).status_code, 200)
+        unread = self.client.get("/inbox/", {"tab": "sent_review", "scope": "unread"})
+        self.assertNotIn("확인했습니다.", unread.text)
+        self.assertEqual(unread.context["tabs"][3][2:], (2, 0))
         self.assertContainsHTML(self.client.get("/inbox/", {"tab": "reply", "scope": "unread"}), "확인했습니다.")
 
     def delete_inbox_fixture(self, sender):
@@ -527,7 +547,15 @@ class TicketTests(unittest.TestCase):
         endpoint = f"/api/tickets/{ticket}/messages"
         self.assertEqual(self.client.post(endpoint, payload, content_type="application/json").status_code, 403)
         self.grant_conduct()
-        self.assertContainsHTML(self.client.get(href), "고객에게 답변")
+        detail = self.client.get(href)
+        self.assertContainsHTML(detail, "내부 메모 작성")
+        self.assertNotIn("고객에게 답변", detail.text)
+        self.assertNotIn("카테고리 수정", detail.text)
+        with patch("apps.tickets.delivery.send_reply") as send:
+            denied = self.client.post(endpoint, {**payload, "message_type": "reply"},
+                                      content_type="application/json")
+            self.assertEqual(denied.status_code, 403)
+            send.assert_not_called()
         first = self.client.post(endpoint, payload, content_type="application/json")
         again = self.client.post(endpoint, payload, content_type="application/json")
         self.assertEqual(first.status_code, 200, first.text)
@@ -544,6 +572,7 @@ class TicketTests(unittest.TestCase):
         self.login()
         self.grant_conduct()
         first, _, discord, *_ = self.tickets
+        self.assign_unassigned_ticket(discord)
         endpoint = f"/api/tickets/{discord}/messages"
         payload = {"message_type": "reply", "body": "회신입니다", "request_key": str(uuid4())}
         with patch("apps.tickets.delivery.send_reply", return_value="outbound-123") as send:
@@ -563,6 +592,7 @@ class TicketTests(unittest.TestCase):
         self.login()
         self.grant_conduct()
         ticket = self.tickets[0]
+        self.assign_unassigned_ticket(ticket)
         self.cur.execute("SELECT source_event_id FROM ticket WHERE ticket_uuid=%s", (ticket,))
         source = self.cur.fetchone()[0]
         raw = {"payload": {"headers": [{"name": "Message-ID", "value": " <original@example.com> "},
@@ -598,6 +628,7 @@ class TicketTests(unittest.TestCase):
         self.assertEqual(number, f'{self.cur.fetchone()[0]:08}')
         self.addCleanup(self.cur.execute, "DELETE FROM ticket WHERE ticket_uuid=%s", (ticket,))
         self.addCleanup(self.cur.execute, "DELETE FROM ticket_message WHERE ticket_uuid=%s", (ticket,))
+        self.assign_unassigned_ticket(ticket)
         key = str(uuid4())
         with patch("apps.tickets.delivery.send_reply") as send:
             result = self.client.post(f"/api/tickets/{ticket}/messages",
@@ -615,6 +646,10 @@ class TicketTests(unittest.TestCase):
         self.cur.execute("SELECT company_uuid,password_hash FROM staff_user WHERE staff_user_uuid=%s",
                          (self.employees[0],))
         company, password_hash = self.cur.fetchone()
+        self.cur.execute("INSERT INTO team(company_uuid,name) VALUES (%s,'이관 검증팀') RETURNING team_uuid",
+                         (company,))
+        recipient_team = str(self.cur.fetchone()[0])
+        self.addCleanup(self.cur.execute, "DELETE FROM team WHERE team_uuid=%s", (recipient_team,))
         self.cur.execute("""INSERT INTO staff_user(staff_user_uuid,company_uuid,email,password_hash,team_uuid)
                          VALUES (%s,%s,'receiver@qa1.test',%s,%s)""", (recipient, company, password_hash, self.team))
         self.cur.execute("INSERT INTO staff_permission SELECT %s,permission_uuid FROM permission WHERE code IN "
@@ -624,7 +659,8 @@ class TicketTests(unittest.TestCase):
         channel = str(self.cur.fetchone()[0])
         self.cur.execute("INSERT INTO ticket_review_channel_member VALUES (%s,%s,%s)", (company, channel, recipient))
         self.addCleanup(self.cur.execute, "DELETE FROM staff_user WHERE staff_user_uuid=%s", (recipient,))
-        self.addCleanup(self.cur.execute, "UPDATE ticket SET assignee_uuid=NULL WHERE ticket_uuid=%s", (ticket,))
+        self.addCleanup(self.cur.execute, "UPDATE ticket SET assignee_uuid=NULL,assigned_team_uuid=%s WHERE ticket_uuid=%s",
+                        (self.team, ticket))
         self.addCleanup(self.cur.execute, "DELETE FROM ticket_review_channel WHERE review_channel_uuid=%s", (channel,))
         self.addCleanup(self.cur.execute, "DELETE FROM collab_request WHERE ticket_uuid=%s AND recipient_uuid=%s",
                         (ticket, recipient))
@@ -633,6 +669,7 @@ class TicketTests(unittest.TestCase):
                         (ticket, recipient))
         self.addCleanup(self.cur.execute, "DELETE FROM ticket_event WHERE ticket_uuid=%s AND recipient_uuid=%s",
                         (ticket, recipient))
+        self.cur.execute("UPDATE ticket SET assignee_uuid=%s WHERE ticket_uuid=%s", (self.employees[0], ticket))
 
         options = self.client.get(f"/api/tickets/{ticket}/collaboration-options").json()
         self.assertEqual(options["transfer_recipients"][0]["staff_user_uuid"], recipient)
@@ -640,7 +677,14 @@ class TicketTests(unittest.TestCase):
                                     {"recipient_uuid": recipient, "reason": "배송 재확인", "attached_reply": "초안"},
                                     content_type="application/json")
         self.assertEqual(transfer.status_code, 201, transfer.text)
-        self.assertEqual(transfer.json()["assigned_team_uuid"], self.team)
+        self.assertEqual(transfer.json()["status"], "pending")
+        transfer_request = transfer.json()["transfer_request_uuid"]
+        accept_url = reverse("tickets:accept-transfer", args=[ticket, transfer_request])
+        self.assertEqual(self.client.post(accept_url).status_code, 404)
+        duplicate = self.client.post(f"/api/tickets/{ticket}/transfer",
+                                     {"recipient_uuid": recipient, "reason": "한 번 더 요청"},
+                                     content_type="application/json")
+        self.assertEqual(duplicate.status_code, 409)
         review = self.client.post(f"/api/tickets/{ticket}/review-requests",
                                   {"review_channel_uuid": channel, "memo": "검토해 주세요",
                                    "attachment": {"content_type": "text/plain", "content": "확인 자료"}},
@@ -669,8 +713,55 @@ class TicketTests(unittest.TestCase):
                          .content.decode("utf-8"), "확인 자료")
         self.assertContainsHTML(receiver.get("/inbox/", {"request": image_review.json()["review_request_uuid"]}),
                                 attachment_url)
-        transfer_request = next(item["id"] for item in received if item["kind"] == "transfer")
-        self.assertContainsHTML(receiver.get("/inbox/", {"request": transfer_request}), f"/tickets/{ticket}/")
+        [transfer_item] = [item for item in received if item["kind"] == "transfer"]
+        self.assertEqual((transfer_item["id"], transfer_item["request_status"]), (transfer_request, "pending"))
+        drawer = receiver.get("/inbox/", {"request": transfer_request})
+        self.assertContainsHTML(drawer, f"/tickets/{ticket}/")
+        self.assertContainsHTML(drawer, 'id="request-accept"')
+        self.assertContainsHTML(drawer, "수락 대기")
+        detail_url = f"/tickets/{ticket}/"
+        category_url = detail_url + "category/"
+        self.assertContainsHTML(self.client.get(detail_url), "카테고리 수정")
+        self.assertNotIn("카테고리 수정", receiver.get(detail_url).text)
+        self.assertEqual(receiver.get(category_url).status_code, 403)
+        reply_payload = {"message_type": "reply", "body": "담당 상담사 답변", "request_key": str(uuid4())}
+        with patch("apps.tickets.delivery.send_reply") as send:
+            self.assertEqual(receiver.post(detail_url + "messages/", reply_payload).status_code, 403)
+            send.assert_not_called()
+        self.assertNotIn(ticket, [item["ticket_uuid"] for item in receiver.get("/api/tickets?scope=mine").json()["items"]])
+        self.assertIn(ticket, [item["ticket_uuid"] for item in self.client.get("/api/tickets?scope=mine").json()["items"]])
+        self.assertEqual(receiver.post(f"/api/inbox/request/{transfer_request}/read/").status_code, 200)
+        self.cur.execute("SELECT status,decided_at FROM collab_request WHERE collab_request_uuid=%s", (transfer_request,))
+        self.assertEqual(self.cur.fetchone(), ("pending", None))
+
+        self.cur.execute("UPDATE ticket SET assignee_uuid=NULL WHERE ticket_uuid=%s", (ticket,))
+        self.assertEqual(receiver.post(accept_url).status_code, 409)
+        self.cur.execute("UPDATE ticket SET assignee_uuid=%s WHERE ticket_uuid=%s", (self.employees[0], ticket))
+        self.cur.execute("UPDATE staff_user SET team_uuid=%s WHERE staff_user_uuid=%s", (recipient_team, recipient))
+        for _ in range(2):
+            self.assertEqual(receiver.post(accept_url).status_code, 200)
+
+        self.assertIn(ticket, [item["ticket_uuid"] for item in receiver.get("/api/tickets?scope=mine").json()["items"]])
+        self.assertNotIn(ticket, [item["ticket_uuid"] for item in self.client.get("/api/tickets?scope=mine").json()["items"]])
+        self.assertContainsHTML(receiver.get(detail_url), "고객에게 답변")
+        self.assertContainsHTML(receiver.get(detail_url), "카테고리 수정")
+        self.assertEqual(receiver.get(category_url).status_code, 200)
+        self.assertEqual(self.client.post(category_url, {"category_uuid": str(uuid4())}).status_code, 403)
+        with patch("apps.tickets.delivery.send_reply") as send:
+            self.assertEqual(self.client.post(detail_url + "messages/", reply_payload).status_code, 403)
+            send.assert_not_called()
+        self.cur.execute("SELECT assigned_team_uuid::text FROM ticket WHERE ticket_uuid=%s", (ticket,))
+        self.assertEqual(self.cur.fetchone()[0], recipient_team)
+        self.cur.execute("SELECT count(*) FROM ticket_event WHERE collab_request_uuid=%s", (transfer_request,))
+        self.assertEqual(self.cur.fetchone()[0], 1)
+        accepted_drawer = receiver.get("/inbox/", {"request": transfer_request})
+        self.assertContainsHTML(accepted_drawer, "수락 완료")
+        self.assertEqual([(row["status_label"], row["needs_action"]) for row in accepted_drawer.context["rows"]],
+                         [("수락 완료", False)])
+        self.assertEqual(accepted_drawer.context["tabs"][0][2:], (1, 0))
+        sent_drawer = self.client.get("/inbox/", {"tab": "sent_transfer", "request": transfer_request})
+        self.assertContainsHTML(sent_drawer, "수락 완료")
+        self.assertNotIn('id="request-accept"', accepted_drawer.text)
 
     def test_recommendations_follow_saved_category(self):
         self.login()
@@ -695,6 +786,10 @@ class TicketTests(unittest.TestCase):
             result = self.client.get(path)
             self.assertEqual(result.status_code, 200, result.text)
             self.assertEqual([item["name"] for item in result.json()["items"]], [expected])
+
+    def assign_unassigned_ticket(self, ticket):
+        self.cur.execute("UPDATE ticket SET assignee_uuid=%s WHERE ticket_uuid=%s", (self.employees[0], ticket))
+        self.addCleanup(self.cur.execute, "UPDATE ticket SET assignee_uuid=NULL WHERE ticket_uuid=%s", (ticket,))
 
     def grant_conduct(self):
         self.cur.execute("INSERT INTO staff_permission SELECT %s,permission_uuid FROM permission WHERE code='ticket.handle' "

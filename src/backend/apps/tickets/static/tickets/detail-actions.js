@@ -3,9 +3,9 @@ const responseBody = document.querySelector("#ticket-reply-body");
 const composer = responseBody?.form;
 
 if (composer) {
-  const modes = composer.elements.message_type;
+  const modes = composer.querySelectorAll('input[type="radio"][name="message_type"]');
   const drafts = { reply: "", memo: "" };
-  let mode = modes.value;
+  let mode = composer.elements.message_type.value;
 
   for (const input of modes) {
     input.addEventListener("change", () => {
