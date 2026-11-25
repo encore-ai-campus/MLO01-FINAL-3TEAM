@@ -1,0 +1,5 @@
+modelRelease: voc-live-classification
+remoteWriteUrl: ""
+models:
+  stable: klue-v1
+  canary: klue-v2

@@ -94,12 +94,36 @@ SELECT 'compute',o.queued_at,CASE o.analysis_kind WHEN 'sentiment' THEN '감성 
        o.event_id::text,NULL,NULL,NULL,NULL
 FROM voc.ticket_analysis_outbox o;
 
--- These views describe the data a future inference/quality producer needs to supply.
+-- Collection-only installations can start before the classification worker schema.
+SELECT to_regclass('voc.classification_attempt') IS NOT NULL AS has_attempts \gset
+\if :has_attempts
+CREATE OR REPLACE VIEW voc_monitor.inference AS
+SELECT 'classification'::text AS api,
+       CASE WHEN b.context->>'synthetic'='true' OR b.origin='synthetic-canary'
+            THEN 'replay' ELSE 'operational' END AS traffic,
+       CASE WHEN a.served_version=j.model_version THEN j.route END AS rollout,
+       CASE WHEN a.served_version IN ('klue-v1','klue-v2') THEN 'KLUE-BERT' END AS model_name,
+       a.served_version AS model_version,a.started_at,a.finished_at AS ended_at,
+       NULL::double precision AS response_ms,NULL::double precision AS model_ms,
+       CASE WHEN a.outcome IN ('failed','expired') THEN coalesce(a.error_code,a.outcome) END AS error,
+       j.analysis_kind,t.ticket_number,
+       CASE WHEN a.outcome='succeeded' AND a.attempt_no=j.attempt_count AND j.state='succeeded' THEN
+           CASE WHEN j.analysis_kind='sentiment' THEN j.label ELSE c.name END
+       END AS prediction,
+       (a.outcome='succeeded' AND a.attempt_no=j.attempt_count AND j.applied) AS applied
+FROM voc.classification_attempt a JOIN voc.classification_job j USING(request_id)
+JOIN voc.bronze_messages b ON b.event_id=j.event_id
+LEFT JOIN public.ticket t ON (t.company_uuid,t.source_event_id)=(j.company_uuid,j.event_id)
+LEFT JOIN voc.classification_category_map m ON j.analysis_kind='category' AND (m.domain_uuid,m.label)=(t.domain_uuid,j.label)
+LEFT JOIN public.category c ON (c.domain_uuid,c.category_uuid)=(m.domain_uuid,m.category_uuid);
+\else
 CREATE OR REPLACE VIEW voc_monitor.inference AS
 SELECT NULL::text AS api,NULL::text AS traffic,NULL::text AS rollout,NULL::text AS model_name,
        NULL::text AS model_version,NULL::timestamptz AS started_at,NULL::timestamptz AS ended_at,
-       NULL::double precision AS response_ms,NULL::double precision AS model_ms,NULL::text AS error
+       NULL::double precision AS response_ms,NULL::double precision AS model_ms,NULL::text AS error,
+       NULL::text AS analysis_kind,NULL::text AS ticket_number,NULL::text AS prediction,NULL::boolean AS applied
 WHERE false;
+\endif
 
 CREATE OR REPLACE VIEW voc_monitor.evaluation AS
 SELECT NULL::uuid AS run_id,NULL::text AS rollout,NULL::text AS model_name,NULL::text AS model_version,

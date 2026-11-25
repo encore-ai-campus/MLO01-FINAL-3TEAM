@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+      - job_name: voc-live-model
+        static_configs:
+        {{- range $route, $version := .Values.models }}
+          - targets: ["{{ $.Values.modelRelease }}-{{ $version }}:8080"]
+            labels: {rollout: "{{ $route }}", model_version: "{{ $version }}", namespace: "{{ $.Release.Namespace }}"}
+        {{- end }}
+    remote_write:
+      - url: {{ required "Set the private Prometheus remote write URL" .Values.remoteWriteUrl | quote }}
+        write_relabel_configs:
+          - source_labels: [__name__]
+            regex: 'up|voc_model_.*'
+            action: keep
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-wal
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests: {storage: 1Gi}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: {{ .Release.Name }}}
+  template:
+    metadata:
+      labels: {app: {{ .Release.Name }}}
+      annotations:
+        config-hash: {{ .Values | toJson | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.5.0
+          imagePullPolicy: IfNotPresent
+          args: ["--agent", "--config.file=/config/prometheus.yml", "--storage.agent.path=/wal", "--web.listen-address=127.0.0.1:9090"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 20m, memory: 48Mi}
+            limits: {cpu: 300m, memory: 160Mi}
+          volumeMounts:
+            - {name: config, mountPath: /config, readOnly: true}
+            - {name: wal, mountPath: /wal}
+      volumes:
+        - name: config
+          configMap: {name: {{ .Release.Name }}}
+        - name: wal
+          persistentVolumeClaim: {claimName: {{ .Release.Name }}-wal}

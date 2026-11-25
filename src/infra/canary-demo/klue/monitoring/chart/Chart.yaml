@@ -1,0 +1,5 @@
+apiVersion: v2
+name: voc-live-model-monitoring
+description: Scrape the private KLUE model services and forward their metrics
+type: application
+version: 0.1.0

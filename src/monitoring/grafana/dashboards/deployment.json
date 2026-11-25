@@ -7,7 +7,7 @@
   "schemaVersion": 41,
   "version": 1,
   "editable": false,
-  "refresh": "",
+  "refresh": "15s",
   "timezone": "Asia/Seoul",
   "time": {
     "from": "now-10m",
@@ -16,13 +16,13 @@
   "panels": [
     {
       "id": 1,
-      "type": "text",
-      "title": "",
+      "type": "table",
+      "title": "모델 지표 수집 (1 = 정상)",
       "gridPos": {
         "x": 0,
         "y": 0,
-        "w": 24,
-        "h": 8
+        "w": 12,
+        "h": 5
       },
       "fieldConfig": {
         "defaults": {
@@ -34,10 +34,354 @@
         },
         "overrides": []
       },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voc-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=\"voc-live-model\"}",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
       "options": {
-        "mode": "markdown",
-        "content": "## 준비 중"
-      }
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true
+            },
+            "renameByName": {
+              "channel": "채널",
+              "source": "연결",
+              "position": "수집 위치",
+              "phase": "상태",
+              "group": "소비 그룹",
+              "topic": "토픽",
+              "partition": "파티션",
+              "Value": "측정값"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "모델 준비 상태 (1 = 준비)",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집"
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voc-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "voc_model_ready{job=\"voc-live-model\"}",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true
+            },
+            "renameByName": {
+              "channel": "채널",
+              "source": "연결",
+              "position": "수집 위치",
+              "phase": "상태",
+              "group": "소비 그룹",
+              "topic": "토픽",
+              "partition": "파티션",
+              "Value": "측정값"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "최근 5분 감성 호출 비율",
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 12,
+        "h": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집",
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "description": "직접 API 테스트를 포함한 실제 호출 비율입니다. 요청이 없는 구간은 비율이 없습니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voc-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rollout, model_version) (rate(voc_model_predictions_total{job=\"voc-live-model\",analysis_kind=\"sentiment\"}[5m])) / scalar(sum(rate(voc_model_predictions_total{job=\"voc-live-model\",analysis_kind=\"sentiment\"}[5m])))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true
+            },
+            "renameByName": {
+              "channel": "채널",
+              "source": "연결",
+              "position": "수집 위치",
+              "phase": "상태",
+              "group": "소비 그룹",
+              "topic": "토픽",
+              "partition": "파티션",
+              "Value": "측정값"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "최근 5분 모델 연산 P95",
+      "gridPos": {
+        "x": 12,
+        "y": 5,
+        "w": 12,
+        "h": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집",
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voc-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, rollout, model_version, analysis_kind) (rate(voc_model_prediction_seconds_bucket{job=\"voc-live-model\"}[5m])))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true
+            },
+            "renameByName": {
+              "channel": "채널",
+              "source": "연결",
+              "position": "수집 위치",
+              "phase": "상태",
+              "group": "소비 그룹",
+              "topic": "토픽",
+              "partition": "파티션",
+              "Value": "측정값"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "최근 5분 모델 오류 (추정 건수)",
+      "gridPos": {
+        "x": 0,
+        "y": 11,
+        "w": 12,
+        "h": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집"
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voc-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rollout,model_version) (increase(voc_model_predictions_total{job=\"voc-live-model\",outcome=~\"error|unsupported|not_ready\"}[5m])) or on (rollout,model_version) (0 * max by (rollout,model_version) (up{job=\"voc-live-model\"} == 1))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true
+            },
+            "renameByName": {
+              "channel": "채널",
+              "source": "연결",
+              "position": "수집 위치",
+              "phase": "상태",
+              "group": "소비 그룹",
+              "topic": "토픽",
+              "partition": "파티션",
+              "Value": "측정값"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "모델 프로세스 누적 호출",
+      "gridPos": {
+        "x": 12,
+        "y": 11,
+        "w": 12,
+        "h": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집"
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "voc-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rollout,model_version,analysis_kind) (voc_model_predictions_total{job=\"voc-live-model\"})",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true
+            },
+            "renameByName": {
+              "channel": "채널",
+              "source": "연결",
+              "position": "수집 위치",
+              "phase": "상태",
+              "group": "소비 그룹",
+              "topic": "토픽",
+              "partition": "파티션",
+              "Value": "측정값"
+            }
+          }
+        }
+      ]
     }
   ],
   "links": [
