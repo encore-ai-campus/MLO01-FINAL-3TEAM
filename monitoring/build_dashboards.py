@@ -119,7 +119,7 @@ FROM counts
 def pipeline_canvas():
     colors = ("#E4F2FD", "#E0F5F6", "#EDEBFD", "#F9EFDE", "#F7E9F3", "#E4F3E9")
     config = panel(1, "문의 처리 흐름", 0, 0, 24, 5, stage_query(), kind="canvas",
-                   description="단계를 누르면 해당 문의의 Kafka 전달 내역과 재시도로 이동합니다.")
+                   description="단계를 누르면 해당 단계의 유입, 완료, 전달 및 재시도 내역으로 이동합니다.")
     elements = []
     for index, (stage, label) in enumerate(STEPS.items()):
         left = round(1.1 + index * 16.6, 2)
@@ -179,7 +179,7 @@ PIPELINES = [
 SELECT CASE stage {' '.join(f"WHEN '{step}' THEN '{label}'" for step, label in STEPS.items())} END AS "단계",
        count(*) AS "완료 표본",
        round(percentile_cont(0.95) WITHIN GROUP (
-           ORDER BY extract(epoch FROM (succeeded_at-started_at)))::numeric, 2) AS "95백분위 (초)"
+           ORDER BY extract(epoch FROM (succeeded_at-started_at)))::numeric, 2) AS "P95 (초)"
 FROM monitor.stage
 WHERE {period('succeeded_at')} AND started_at<=succeeded_at
 GROUP BY stage ORDER BY array_position(ARRAY['capture','bronze','flink','ticket','compute','ready'],stage)
@@ -201,7 +201,7 @@ FROM (
          CASE WHEN count(*)>0 OR {active('bronze')} THEN count(*) END AS total,
          round(count(*) FILTER(WHERE hit)*100.0/nullif(count(*),0),1) AS completion
   FROM cohort
-) metrics CROSS JOIN LATERAL (VALUES ('전체 시간 95백분위 (초)',p95),('30초 이내 완료 (건)',hits),
+) metrics CROSS JOIN LATERAL (VALUES ('전체 시간 P95 (초)',p95),('30초 이내 완료 (건)',hits),
   ('목표 미달 (건)',misses),('대상 (건)',total),('30초 내 완료율 (%)',completion)) AS v(label,value)
 """, description="원본 공급자 등록부터 결과 저장까지 잽니다. 등록 시각을 모르는 문의는 제외합니다."),
     panel(10, "원문과 티켓 대조", 0, 15, 12, 6, f"""
@@ -251,41 +251,46 @@ FROM monitor.failure
 WHERE {period('failed_at')} OR {period('recovered_at')} OR recovered_at IS NULL
 ORDER BY failed_at DESC LIMIT 100
 """),
-    panel(21, "단계 상세 · Kafka 전달 및 재시도", 0, 47, 24, 12, f"""
+    panel(21, "단계 상세 · ${step:text}", 0, 47, 24, 12, f"""
 WITH attempts AS (
   SELECT *,lag(error) OVER ordered AS previous_error,
          lag(request_partition) OVER ordered AS previous_partition,lag(request_offset) OVER ordered AS previous_offset
   FROM monitor.flink_attempt WHERE started_at<={TIME_TO}
+    AND ${{step:sqlstring}} IN ('all','flink')
   WINDOW ordered AS (PARTITION BY event_id ORDER BY started_at,attempt_id)
-), flink AS (
-  SELECT event_id,'flink' AS stage,count(*) AS retries,max(started_at) AS last_at
-  FROM attempts WHERE previous_error IS NOT NULL
-                  OR (request_partition,request_offset)=(previous_partition,previous_offset)
-  GROUP BY event_id
 ), retries AS (
-  SELECT * FROM flink UNION ALL
-  SELECT event_id,stage,count(*),max(failed_at) FROM monitor.failure
-  WHERE failed_at<={TIME_TO} AND event_id IS NOT NULL AND stage NOT IN ('flink','classification','embedding')
-  GROUP BY event_id,stage
-  UNION ALL SELECT event_id,stage,retries,last_at FROM monitor.analysis_retries WHERE last_at<={TIME_TO}
+  SELECT event_id,'flink' AS stage,count(*) AS retries,max(started_at) AS last_at
+  FROM attempts
+  WHERE previous_error IS NOT NULL OR (request_partition,request_offset)=(previous_partition,previous_offset)
+  GROUP BY event_id
+  UNION ALL
+  SELECT event_id,stage,retries,last_at FROM monitor.analysis_retries WHERE ${{step:sqlstring}} IN ('all','compute')
 ), detail AS (
-  SELECT recorded_at,'Kafka 전달' AS activity,k.stage,k.event_id,topic,partition_id,kafka_offset,NULL::bigint AS retries
-  FROM monitor.kafka_delivery k WHERE {period('recorded_at')}
-    AND (${{step:sqlstring}}='all'
-      OR (${{step:sqlstring}}='capture' AND k.stage='capture')
-      OR (${{step:sqlstring}}='bronze' AND k.stage IN ('capture','bronze'))
-      OR (${{step:sqlstring}}='flink' AND k.stage IN ('bronze','flink'))
-      OR (${{step:sqlstring}} IN ('ticket','compute','ready') AND k.stage='flink'
-          AND EXISTS(SELECT FROM monitor.stage s WHERE s.event_id=k.event_id AND s.stage=${{step:sqlstring}})))
+  SELECT started_at AS event_at,'유입' AS activity,stage,event_id,
+         NULL::text AS topic,NULL::integer AS partition_id,NULL::bigint AS kafka_offset,NULL::bigint AS retries
+  FROM monitor.stage WHERE {period('started_at')}
+  UNION ALL
+  SELECT succeeded_at,'완료',stage,event_id,NULL,NULL,NULL,NULL
+  FROM monitor.stage WHERE {period('succeeded_at')}
+  UNION ALL
+  SELECT recorded_at,'Kafka 전달',stage,event_id,topic,partition_id,kafka_offset,NULL
+  FROM monitor.kafka_delivery WHERE {period('recorded_at')} AND stage IN ('capture','bronze','flink')
+  UNION ALL
+  SELECT failed_at,'실패',stage,event_id,NULL,NULL,NULL,NULL
+  FROM monitor.failure WHERE {period('failed_at')} AND event_id IS NOT NULL AND stage IN ('capture','bronze','ticket')
   UNION ALL
   SELECT last_at,'재시도',stage,event_id,NULL,NULL,NULL,retries FROM retries
-  WHERE {period('last_at')} AND (${{step:sqlstring}}='all' OR stage=${{step:sqlstring}}
-      OR (${{step:sqlstring}} IN ('compute','ready') AND stage IN ('classification','embedding')))
+  WHERE {period('last_at')}
 )
-SELECT recorded_at AS "확인 시각",activity AS "기록",stage AS "단계",event_id AS "원본 키",
-       topic AS "Kafka 토픽",partition_id AS "파티션",kafka_offset AS "오프셋",retries AS "재시도"
-FROM detail ORDER BY recorded_at DESC LIMIT 150
-""", description="Flink와 모델 워커는 최초 시도를 뺍니다. 분류·임베딩의 앞선 Kafka 전달 기록도 같은 원본 키로 확인할 수 있습니다.",
+SELECT event_at AS "이벤트 시각",activity AS "이벤트 종류",
+       CASE stage {" ".join(f"WHEN '{stage}' THEN '{label}'" for stage, label in STEPS.items())}
+           WHEN 'classification' THEN '분류' WHEN 'embedding' THEN '임베딩' END AS "단계",
+       event_id AS "원본 이벤트 ID",topic AS "Kafka 토픽",partition_id AS "파티션",kafka_offset AS "오프셋",
+       retries AS "재시도 횟수"
+FROM detail
+WHERE ${{step:sqlstring}} IN ('all',stage) OR (${{step:sqlstring}}='compute' AND stage IN ('classification','embedding'))
+ORDER BY event_at DESC LIMIT 150
+""", description="선택한 단계의 이벤트를 최근 150건까지 표시합니다. 원본 이벤트 ID는 단계마다 같은 원본 문의를 찾는 데 쓰입니다.",
           empty="—"),
     panel(23, "대조가 필요한 원본 키", 0, 59, 24, 8, """
 SELECT event_id AS "원본 키",channel AS "채널",ticket_count AS "티켓",extra_tickets AS "초과",
@@ -318,8 +323,8 @@ WITH samples AS (
 )
 SELECT CASE WHEN count(*)>0 OR {active(rollout + '_model' if rollout else 'embedding')} THEN count(*) END AS "호출",
        round(count(*) FILTER(WHERE error IS NOT NULL)*100.0/nullif(count(*),0),2) AS "오류율 (%)",
-       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY response_ms)::numeric,1) AS "응답 95백분위 (ms)",
-       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY model_ms)::numeric,1) AS "모델 연산 95백분위 (ms)"
+       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY response_ms)::numeric,1) AS "응답 P95 (ms)",
+       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY model_ms)::numeric,1) AS "모델 연산 P95 (ms)"
 FROM samples
 """
 
@@ -343,9 +348,9 @@ SELECT CASE api WHEN 'embedding' THEN '임베딩' ELSE '분류' END AS "API",
        round(count(*) FILTER(WHERE error IS NOT NULL AND ended_at IS NOT NULL)*100.0
            /nullif(count(*) FILTER(WHERE ended_at IS NOT NULL),0),2) AS "오류율 (%)",
        round(avg(response_ms)::numeric,1) AS "응답 평균 (ms)",
-       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY response_ms)::numeric,1) AS "응답 95백분위 (ms)",
+       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY response_ms)::numeric,1) AS "응답 P95 (ms)",
        round(avg(model_ms)::numeric,1) AS "연산 평균 (ms)",
-       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY model_ms)::numeric,1) AS "연산 95백분위 (ms)"
+       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY model_ms)::numeric,1) AS "연산 P95 (ms)"
 FROM monitor.inference WHERE {period('started_at')}
 GROUP BY api,rollout,model_name,model_version,traffic
 ORDER BY api,traffic,rollout,model_name,model_version
