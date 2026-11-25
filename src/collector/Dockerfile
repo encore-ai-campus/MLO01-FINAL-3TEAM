@@ -6,5 +6,5 @@ COPY collector/requirements.txt /tmp/collector.txt
 RUN pip install --no-cache-dir -r /tmp/probe.txt -r /tmp/collector.txt
 COPY infra/channel_probe/__main__.py infra/channel_probe/artifacts.py infra/channel_probe/normalize.py infra/channel_probe/providers.py infra/channel_probe/test_probe.py /app/src/infra/channel_probe/
 COPY collector/__main__.py collector/events.py collector/pipeline.py collector/silver.py collector/sources.py collector/spool.py collector/test_collection.py collector/schema.sql /app/src/collector/
-COPY collector/ticket_schema.sql collector/settings_schema.sql collector/followup_schema.sql /app/src/collector/
+COPY collector/ticket_schema.sql collector/channel_intake_schema.sql collector/settings_schema.sql collector/followup_schema.sql /app/src/collector/
 ENTRYPOINT ["python", "-m", "collector"]

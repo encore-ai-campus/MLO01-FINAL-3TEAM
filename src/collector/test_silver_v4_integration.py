@@ -136,6 +136,45 @@ def seed_v1():
                       VALUES ('voc.standardize.review.v1',0,1,%s,'legacy review')""", (event["event_id"],))
 
 
+def check_automatic_intake(cn, submit, outputs, wait_worker_offsets):
+    """Plain inbound messages become tickets through Kafka and Flink on enabled routes."""
+    from collector.events import COMPANY
+
+    with cn.transaction():
+        domain = cn.execute("INSERT INTO public.domain(name) VALUES ('QA') RETURNING domain_uuid").fetchone()
+        company = cn.execute("""INSERT INTO public.company(name,email_domain,domain_uuid)
+                                VALUES ('Route QA','route-qa.example.test',%s) RETURNING company_uuid""",
+                             (domain["domain_uuid"],)).fetchone()["company_uuid"]
+        for channel, connection, room in (("discord", "555", "444"), ("gmail", MAILBOX, "")):
+            destination = cn.execute("""INSERT INTO public.channel(company_uuid,name,type)
+                                        VALUES (%s,%s,%s) RETURNING channel_uuid""",
+                                     (company, channel, channel)).fetchone()["channel_uuid"]
+            cn.execute("""INSERT INTO voc.ticket_source_connection
+                              (company_id,channel,connection_id,source_channel_id,company_uuid,channel_uuid,auto_customer_from)
+                          VALUES (%s,%s,%s,%s,%s,%s,clock_timestamp())""",
+                       (COMPANY, channel, connection, room, company, destination))
+
+    discord = discord_event("991")
+    discord["context"]["channel_id"] = "444"
+    gmail = gmail_event("b991", ["INBOX", "Label_42"])
+    events = (discord, gmail)
+    ids = [event["event_id"] for event in events]
+    for event in events:
+        submit(event)
+    confirmed = outputs(set(ids), kind="customer_inquiry")
+    assert all(record["body_text"] == BODY for _, record in confirmed.values())
+    wait_worker_offsets("voc.standardized.v4")
+    for event in events:
+        submit(event)  # A redelivery must reuse the same ticket and two analysis jobs.
+    wait_worker_offsets("voc.raw.discord", "voc.raw.gmail")
+    counts = cn.execute("""SELECT
+          (SELECT count(*) FROM public.visible_ticket WHERE company_uuid=%s AND source_event_id=ANY(%s::uuid[])) AS tickets,
+          (SELECT count(*) FROM voc.ticket_analysis_outbox WHERE company_uuid=%s AND event_id=ANY(%s::uuid[])) AS jobs""",
+                        (company, ids, company, ids)).fetchone()
+    assert counts == {"tickets": 2, "jobs": 4}, counts
+    print("PASS: ordinary Discord and labeled Gmail inputs -> Flink -> two visible tickets and four jobs.", flush=True)
+
+
 def check_pipeline(migrated):
     from confluent_kafka import Consumer, TopicPartition
     from collector.pipeline import BROKERS, REVIEW, STANDARD, db, init, producer, send
@@ -317,6 +356,7 @@ def check_pipeline(migrated):
             wait_worker_offsets(STANDARD)
             assert silver(first)["message_kind"] == "unknown" and silver(second)["message_kind"] == "customer_inquiry"
             assert cn.execute("SELECT count(*) AS n FROM voc.silver_messages WHERE schema_version=4").fetchone()["n"] == initial_count
+            check_automatic_intake(cn, submit, outputs, wait_worker_offsets)
         print("PASS: 19-field Kafka/SQL parity, distinct Gmail messages, role confirmation and withdrawal, "
               "late Discord parent, raw envelope and body replay, and Silver conflict review.", flush=True)
     finally:

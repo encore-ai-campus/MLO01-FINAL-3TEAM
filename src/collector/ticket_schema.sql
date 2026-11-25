@@ -358,7 +358,8 @@ BEGIN
     RETURN NEW;
 END $$;
 CREATE OR REPLACE TRIGGER ticket_source_registered
-    AFTER INSERT OR UPDATE ON voc.ticket_source_connection FOR EACH ROW EXECUTE FUNCTION voc.project_source_trigger();
+    AFTER INSERT OR UPDATE OF company_id,channel,connection_id,source_channel_id,company_uuid,channel_uuid
+    ON voc.ticket_source_connection FOR EACH ROW EXECUTE FUNCTION voc.project_source_trigger();
 
 -- Cover confirmed v4 records that predate this migration or were held for configuration.
 SELECT voc.project_ticket(s.event_id)
