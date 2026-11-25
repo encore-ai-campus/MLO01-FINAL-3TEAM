@@ -1,12 +1,23 @@
 const storeName = 'reviewReplies';
 let connection;
 
-function openStore() {
+export function openStore() {
   if (!connection) {
     connection = new Promise((resolve, reject) => {
-      const request = indexedDB.open('voc-inbox-preview', 1);
-      request.onupgradeneeded = () => request.result.createObjectStore(storeName, { keyPath: 'requestId' });
-      request.onsuccess = () => resolve(request.result);
+      const request = indexedDB.open('voc-inbox-preview', 2);
+      request.onupgradeneeded = () => {
+        const database = request.result;
+        if (!database.objectStoreNames.contains(storeName)) database.createObjectStore(storeName, { keyPath: 'requestId' });
+        if (!database.objectStoreNames.contains('ticketEvents')) {
+          database.createObjectStore('ticketEvents', { keyPath: 'eventId' }).createIndex('ticketId', 'ticketId');
+        }
+      };
+      request.onblocked = () => reject(new Error('열려 있는 다른 시안 탭을 새로고침해 주세요.'));
+      request.onsuccess = () => {
+        const database = request.result;
+        database.onversionchange = () => { database.close(); connection = null; };
+        resolve(database);
+      };
       request.onerror = () => reject(request.error);
     }).catch(error => {
       connection = null;
@@ -34,7 +45,7 @@ export function saveReply(reply) {
   return transact('readwrite', store => store.add(reply));
 }
 
-export async function readReply(requestId, recipient) {
+export async function readReply(requestId, recipient, recipientId) {
   const db = await openStore();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(storeName, 'readwrite');
@@ -43,7 +54,7 @@ export async function readReply(requestId, recipient) {
     let reply;
     request.onsuccess = () => {
       reply = request.result;
-      if (reply?.recipient !== recipient) {
+      if (!reply || (reply.recipientId ? reply.recipientId !== recipientId : reply.recipient !== recipient)) {
         reply = undefined;
       } else if (!reply.read) {
         reply = { ...reply, read: true };

@@ -22,11 +22,9 @@
       </table>
     </section>
     <section class="desk-card" data-card="requests">
-      <h2>받은 요청 <span class="desk-count">2건</span></h2>
+      <h2>받은 요청</h2>
       <p>나에게 들어온 검토 요청</p>
-      <a class="desk-ticket-list-link" href="/inbox/?tab=review">전체 보기</a>
-      <a class="desk-request" href="/inbox/?tab=review&amp;request=review-1048"><strong>환불 안내 답변 검토</strong><span>박유진 · #1048</span><span class="desk-time">오늘 10:08 <svg aria-hidden="true"><use href="#desk-right"/></svg></span></a>
-      <a class="desk-request" href="/inbox/?tab=review&amp;request=review-1042"><strong>배송 지연 안내 검토</strong><span>이도윤 · #1042</span><span class="desk-time">오늘 09:36 <svg aria-hidden="true"><use href="#desk-right"/></svg></span></a>
+      <a class="desk-ticket-list-link" href="{% url 'workspace:inbox' %}?tab=review">전체 보기</a>
     </section>
     <section class="desk-card" data-card="performance">
       <h2>내 실적</h2><p>처리 건수</p>
@@ -47,9 +45,14 @@
     <div class="desk-actions">
       <button type="button" class="desk-button" id="desk-reset">기본 배치로 되돌리기</button>
       <a href="#02-01" class="desk-button">취소</a>
-      <button type="button" class="desk-button desk-button-solid" id="desk-save">저장</button>
+      <form id="desk-card-form" method="post" action="{% url 'preferences:home-cards' %}">
+        {% csrf_token %}
+        <button type="submit" class="desk-button desk-button-solid" id="desk-save">저장</button>
+      </form>
     </div>
+    <p id="desk-card-error" role="alert" hidden>화면 설정을 저장하지 못했습니다. 다시 시도해 주세요.</p>
   </section>
 </section>
+{{ actor.display_preferences.cards|json_script:"desk-saved-cards" }}
 {% endblock %}
 {% block scripts %}<script defer src="{% static 'workspace/home.js' %}"></script>{% endblock %}

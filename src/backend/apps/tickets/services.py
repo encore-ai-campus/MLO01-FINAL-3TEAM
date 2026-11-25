@@ -1,10 +1,24 @@
 from contextlib import contextmanager
 
-from apps.accounts.services import current_actor
+from django.db import connection, transaction
+
+from apps.accounts.services import TICKET_HANDLE, current_actor, require_work_permission
 from config.database import read_snapshot
 from config.http import DeskError
 
 from . import action_repository, repository
+
+
+def add_memo(token, ticket_uuid, body):
+    with transaction.atomic(), connection.cursor() as cursor:
+        actor = current_actor(token, cursor)
+        if not actor["can_read"]:
+            raise DeskError(403, "TICKET_READ_FORBIDDEN", "티켓 조회 권한이 없습니다.")
+        require_work_permission(cursor, actor, TICKET_HANDLE)
+        memo = repository.add_memo(cursor, actor["company_uuid"], actor["staff_user_uuid"], ticket_uuid, body)
+        if memo is None:
+            raise DeskError(404, "TICKET_NOT_FOUND", "티켓을 찾을 수 없습니다.")
+        return memo
 
 
 class TicketDesk:

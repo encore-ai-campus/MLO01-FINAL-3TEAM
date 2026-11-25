@@ -1,9 +1,8 @@
-import json
 from contextlib import contextmanager
 
 from django.db import connection, transaction
 
-from apps.accounts.services import current_actor
+from apps.accounts.services import TICKET_HANDLE, current_actor, require_work_permission
 from config.database import fetch_rows, read_snapshot
 from config.http import DeskError
 
@@ -11,8 +10,9 @@ from . import action_repository as repo, delivery
 
 
 def require_conduct(actor, cursor):
-    if not actor["can_read"] or not repo.can_conduct(cursor, actor):
-        raise DeskError(403, "TICKET_CONDUCT_FORBIDDEN", "티켓 상담 권한이 없습니다.")
+    if not actor["can_read"]:
+        raise DeskError(403, "TICKET_READ_FORBIDDEN", "티켓 조회 권한이 없습니다.")
+    require_work_permission(cursor, actor, TICKET_HANDLE)
 
 
 @contextmanager
@@ -40,8 +40,11 @@ def transfer(token, ticket_uuid, recipient, reason, attached_reply):
         team_uuid = target[0]
         cursor.execute("UPDATE ticket SET assignee_uuid=%s,assigned_team_uuid=%s,updated_at=now() WHERE ticket_uuid=%s",
                        (recipient, team_uuid, ticket_uuid))
-        event = repo.add_event(cursor, ticket_uuid, actor, "transfer", memo=reason, attached=attached_reply)
-        cursor.execute("INSERT INTO ticket_action_recipient VALUES (%s,%s)", (event, recipient))
+        request = repo.add_request(cursor, ticket_uuid, actor, recipient, "transfer", "accepted", reason)
+        if attached_reply:
+            repo.add_attachment(cursor, request, {"content_type": "text/plain", "content": attached_reply})
+        event = repo.add_event(cursor, ticket_uuid, actor, "ticket_transfer", request=request,
+                               recipient=recipient, reason=reason)
     return {"event_id": event, "assignee_uuid": recipient, "assigned_team_uuid": team_uuid}
 
 
@@ -51,15 +54,19 @@ def request_review(token, ticket_uuid, channel, memo, attachment):
             SELECT s.staff_user_uuid FROM ticket_review_channel_member m
             JOIN staff_user s USING (company_uuid,staff_user_uuid)
             WHERE m.company_uuid=%s AND m.review_channel_uuid=%s AND s.staff_user_uuid<>%s AND {repo.CONDUCT}
+            ORDER BY s.staff_user_uuid
         """, (actor["company_uuid"], channel, actor["staff_user_uuid"]))
         recipients = cursor.fetchall()
         if not recipients:
             raise DeskError(422, "INVALID_REVIEW_CHANNEL", "검토를 받을 상담사가 있는 공유 채널을 선택해 주세요.")
-        event = repo.add_event(cursor, ticket_uuid, actor, "review", channel=channel, memo=memo,
-                               attachment=json.dumps(attachment) if attachment else None)
-        cursor.executemany("INSERT INTO ticket_action_recipient VALUES (%s,%s)",
-                           [(event, user) for user, in recipients])
-    return {"review_request_uuid": event, "recipient_count": len(recipients)}
+        requests = []
+        for recipient, in recipients:
+            request = repo.add_request(cursor, ticket_uuid, actor, recipient, "review", "pending", memo, channel)
+            if attachment:
+                repo.add_attachment(cursor, request, attachment)
+            repo.add_event(cursor, ticket_uuid, actor, "ticket_review_requested", request=request, recipient=recipient)
+            requests.append(request)
+    return {"review_request_uuid": requests[0], "recipient_count": len(requests)}
 
 
 def received_requests(token, kind=None):
@@ -72,7 +79,8 @@ def received_requests(token, kind=None):
 def request_attachment(token, action_uuid):
     with read_snapshot() as cursor:
         actor = current_actor(token, cursor)
-        require_conduct(actor, cursor)
+        if not actor["can_read"]:
+            raise DeskError(403, "TICKET_READ_FORBIDDEN", "티켓 조회 권한이 없습니다.")
         attachment = repo.request_attachment(cursor, actor, action_uuid)
         if attachment is None:
             raise DeskError(404, "ATTACHMENT_NOT_FOUND", "첨부 자료를 찾을 수 없습니다.")
@@ -133,7 +141,8 @@ def store_message(token, ticket_uuid, message_type, body, request_key):
         """, (status, provider_id, message["ticket_message_uuid"]))
         message = fetch_rows(cursor)[0]
         if status == "sent" and ticket_status != "답변완료":
-            repo.add_event(cursor, ticket_uuid, actor, "reply_completed", from_status=ticket_status, to_status="답변완료")
+            repo.add_event(cursor, ticket_uuid, actor, "ticket_reply_completed",
+                           from_status=ticket_status, to_status="답변완료")
             ticket_status = "답변완료"
         cursor.execute("UPDATE ticket SET status=%s,updated_at=now() WHERE ticket_uuid=%s", (ticket_status, ticket_uuid))
     return {"message": message, "ticket_status": ticket_status}

@@ -1,31 +1,79 @@
 .ticket-detail {
-  position: relative;
-  min-height: max(360px, calc(100dvh - var(--bar) - 66px));
-  margin-top: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 1320px;
+  height: calc(100dvh - var(--bar) - 47px);
+  min-height: 570px;
+  color: var(--heading);
 }
-
-.ticket-detail .ticket-detail-back {
-  justify-content: flex-start;
-  width: 108px;
-  min-height: 34px;
-  padding-inline: 11px;
-  border-radius: 7px;
-  font-size: 14px;
+.detail-header { flex: none; }
+.detail-header h1 { margin: 10px 0 8px; font-size: clamp(21px, 3vw, 29px); }
+.detail-meta, .detail-actions, .detail-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.detail-meta > span { border-radius: 6px; padding: 5px 8px; background: var(--desk-soft); font-size: 12px; font-weight: 600; }
+.detail-meta > p { font-size: 13px; color: var(--desk-muted); }
+.detail-meta [data-ticket-status="할당"] { background: #fbefd9; color: #805819; }
+.detail-meta [data-ticket-status="답변완료"], .detail-meta [data-emotion="긍정"] { background: #e9f3eb; color: #2e6240; }
+.detail-meta [data-emotion="부정"], .detail-meta [data-emotion="매우 부정"], .detail-meta [data-emotion="분석 실패"] { background: #fbe9e6; color: #a6312a; }
+.detail-meta [data-emotion="중립"] { background: #fbefd9; color: #805819; }
+.detail-layout { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(245px, 31%); gap: 14px; }
+.detail-layout.detail-full { grid-template-columns: minmax(0, 1fr); }
+.detail-column { min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.detail-card { background: var(--paper); border: 1px solid var(--desk-line); border-radius: 12px; min-width: 0; }
+.detail-expand { align-self: flex-end; }
+.detail-chat { min-height: 125px; flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 14px; }
+.detail-chat > h2, .detail-tools h2 { font-size: 17px; }
+.detail-summary { padding: 8px 10px; margin-top: 8px; border-radius: 7px; background: var(--desk-soft); font-size: 13px; }
+.detail-summary strong { margin-right: 7px; }
+.detail-messages { min-height: 0; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 9px; list-style: none; margin: 0; padding: 11px 2px; }
+.detail-message { display: grid; justify-items: end; align-self: flex-end; max-width: min(82%, 700px); }
+.detail-message.customer { justify-items: start; align-self: flex-start; }
+.detail-message p { color: var(--desk-muted); font-size: 12px; overflow-wrap: anywhere; }
+.detail-message div { width: fit-content; max-width: 100%; margin-top: 5px; padding: 8px 11px; border-radius: 8px; background: #fbf0d7; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
+.detail-message.customer div { background: var(--desk-soft); }
+.detail-message.transfer div, .detail-message.csv div { background: #eee; }
+.detail-tools { min-height: 0; overflow: auto; padding: 14px; }
+.detail-heading { justify-content: space-between; margin-bottom: 10px; }
+.detail-tools details { margin-top: 12px; padding: 10px; border-radius: 8px; background: var(--desk-soft); font-size: 13px; }
+.detail-tools summary { cursor: pointer; font-weight: 600; }
+.detail-tools details p { margin-top: 8px; }
+.detail-tools ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.detail-tools li + li { margin-top: 8px; }
+.detail-tools li small { display: block; color: var(--desk-muted); }
+.detail-tools li a:hover { text-decoration: underline; }
+.detail-closed { flex: none; min-height: 54px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding: 10px 14px; }
+.detail-closed time { color: var(--desk-muted); font-size: 13px; }
+.detail-composer { min-height: 190px; flex: none; height: min(var(--composer-size), 62%); padding: 0 12px 9px; display: flex; flex-direction: column; gap: 7px; }
+.detail-composer textarea, .detail-origin select, .detail-dialog :is(input, textarea, select) {
+  border: 1px solid var(--desk-line); border-radius: 8px; background: var(--paper); color: var(--heading); padding: 7px 9px; font: inherit;
 }
-
-.ticket-detail h1 {
-  margin-top: 15px;
-  color: var(--primary);
-  line-height: 1.2;
-}
-
-.ticket-detail-placeholder {
-  position: absolute;
-  inset: max(135px, calc(50dvh - var(--bar) - 27px)) 0 auto;
-  transform: translateY(-50%);
-  color: #595959;
-  text-align: center;
-  font-size: 20px;
-  font-weight: 600;
-  line-height: 28px;
+.detail-composer textarea { flex: 1; min-height: 28px; width: 100%; resize: none; }
+.detail-modes button[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); color: var(--paper); }
+.detail-composer .desk-button, .detail-tools .desk-button { min-height: 32px; }
+.detail-grip { flex: none; height: 13px; width: 96px; margin-inline: auto; display: grid; place-content: center; cursor: ns-resize; touch-action: none; }
+.detail-grip span { display: block; width: 40px; height: 4px; border-radius: 4px; background: #aaa; }
+.detail-origin, .detail-help { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.detail-commit { justify-content: space-between; }
+.detail-notice, .detail-error { margin-top: 5px; color: #2e6240; font-size: 13px; }
+.detail-error { color: #a6312a; }
+.detail-dialog { width: min(530px, calc(100% - 30px)); max-height: 84dvh; overflow: auto; padding: 22px; border: 1px solid var(--desk-line); border-radius: 13px; color: var(--heading); }
+.detail-dialog::backdrop { background: #0005; }
+.detail-dialog form { display: grid; gap: 14px; }
+.detail-dialog label { display: grid; gap: 6px; font-size: 14px; font-weight: 600; }
+.detail-dialog :is(input, textarea, select) { width: 100%; min-width: 0; }
+.detail-dialog select { max-width: 100%; }
+.detail-dialog .detail-actions { justify-content: flex-end; }
+.detail-recipient { position: relative; display: grid; gap: 6px; }
+.detail-recipient-menu { position: absolute; top: calc(100% + 4px); inset-inline: 0; z-index: 1; max-height: 177px; overflow: auto; background: var(--paper); border: 1px solid var(--desk-line); border-radius: 8px; box-shadow: 0 6px 15px #0002; }
+.detail-recipient-menu button { display: grid; gap: 4px; width: 100%; border: 0; padding: 8px 12px; text-align: left; background: var(--paper); }
+.detail-recipient-menu button:hover, .detail-recipient-menu button[aria-selected="true"] { background: var(--desk-soft); }
+.detail-recipient-menu span, .detail-recipient-menu p { color: var(--desk-muted); font-size: 13px; }
+.detail-recipient-menu p { padding: 10px; }
+.detail-attachments ul { padding: 0; margin: 6px 0 0; list-style: none; }
+.detail-attachments li { display: flex; align-items: center; justify-content: space-between; gap: 9px; margin-top: 6px; overflow-wrap: anywhere; }
+@media (max-width: 870px) {
+  .ticket-detail { height: auto; min-height: 0; }
+  .detail-layout { grid-template-columns: minmax(0, 1fr); }
+  .detail-column { min-height: 590px; }
+  .detail-chat { max-height: 460px; }
 }

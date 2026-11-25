@@ -1,13 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { demoTicketSubject, homeTickets } from '../00-Shared/00-DemoTicketSubjects.js';
-import { withStaffPreview } from '../00-Shared/00-StaffAccess.js';
+import { categories, demoTicketCatalog, emotions, statuses } from '../00-Shared/00-DemoTicketCatalog.js';
+import { loadTicketEvents, subscribeTicketEvents, ticketState } from '../00-Shared/00-TicketWorkflow.js';
+import { currentStaff, withStaffPreview } from '../00-Shared/00-StaffAccess.js';
 import { DeskLayout } from '../00-Shared/00-DeskLayout.jsx';
 
-const agent = '한서윤';
-const categories = ['결제', '예약', '배송', '환불', '주문', '교환', '계정 관리', '이용 문의'];
-const statuses = ['미할당', '할당', '답변완료'];
-const emotions = ['긍정', '중립', '부정', '매우 부정'];
 const periods = [1, 3, 7, 30];
 const sortOptions = {
   default: { label: '기본', key: 'received', descending: false },
@@ -29,25 +26,7 @@ const previousDays = days => {
   return dateKey(date);
 };
 const initialFilters = () => ({ status: [], category: [], emotion: [], period: 'all', start: '', end: '' });
-const demoTickets = Array.from({ length: 1000 }, (_, index) => {
-  const id = String(1031 + index);
-  const homeTicket = homeTickets[id];
-  const status = homeTicket ? '할당' : statuses[Math.floor(index / 3) % statuses.length];
-  const received = new Date(now.getTime() - (999 - index) * 86 * 60_000);
-  const updateDelay = (index * 73 % 1100) * 60_000;
-  return {
-    id,
-    customer: 'C-' + String(821 + index % 113).padStart(4, '0'),
-    title: demoTicketSubject(id),
-    status,
-    assignee: homeTicket ? agent : status === '미할당' ? '' : [agent, '박유진', '이도윤'][index % 3],
-    category: index % 37 === 0 ? '분석 중' : index % 53 === 0 ? '분석 실패' : categories[index % categories.length],
-    emotion: index % 29 === 0 ? '분석 중' : index % 47 === 0 ? '분석 실패' : emotions[Math.floor(index / 2) % emotions.length],
-    received,
-    updated: new Date(Math.min(received.getTime() + updateDelay, now.getTime())),
-    ...homeTicket
-  };
-});
+const demoTickets = demoTicketCatalog(now);
 
 function receivedLabel(date) {
   if (dateKey(date) === today) return pad(date.getHours()) + ':' + pad(date.getMinutes());
@@ -67,7 +46,7 @@ function updatedLabel(date) {
   return '지난주';
 }
 
-const badgeClass = { 미할당: 'neutral', 할당: 'amber', 답변완료: 'green', 긍정: 'green', 중립: 'amber', 부정: 'red', '매우 부정': 'strong-red', '분석 중': 'neutral', '분석 실패': 'red' };
+const badgeClass = { 미할당: 'neutral', 할당: 'amber', 답변완료: 'green', '문의 종료': 'neutral', 긍정: 'green', 중립: 'amber', 부정: 'red', '매우 부정': 'strong-red', '분석 중': 'neutral', '분석 실패': 'red' };
 function Badge({ value }) {
   return <span className={'ticket-badge badge-' + (badgeClass[value] || 'neutral')}>{value}</span>;
 }
@@ -186,6 +165,17 @@ function Pagination({ page, total, onPage }) {
 }
 
 function TicketListPage() {
+  const agent = currentStaff()?.name;
+  const [events, setEvents] = useState([]);
+  const [clock, setClock] = useState(Date.now);
+  useEffect(() => {
+    const refresh = () => loadTicketEvents().then(setEvents).catch(() => {});
+    const off = subscribeTicketEvents(refresh);
+    refresh();
+    const timer = setInterval(() => setClock(Date.now()), 1000);
+    return () => { clearInterval(timer); off(); };
+  }, []);
+  const perTicket = Map.groupBy(events, event => event.ticketId);
   const savedList = history.state?.ticketList;
   const [mine, setMine] = useState(location.hash === '#03-02');
   const [searchType, setSearchType] = useState(savedList?.searchType ?? 'title');
@@ -210,7 +200,9 @@ function TicketListPage() {
     : filters.period !== 'all' ? '최근 ' + filters.period + '일' : '';
   const filterLabels = [...filters.status, ...filters.category, ...filters.emotion, ...(periodLabel ? [periodLabel] : [])];
 
-  const matches = demoTickets.filter(ticket => {
+  const matches = demoTickets.map(ticket => (
+    perTicket.has(ticket.id) ? { ...ticket, ...ticketState(perTicket.get(ticket.id), clock) } : ticket
+  )).filter(ticket => {
     const value = dateKey(ticket.received);
     const searchValue = search.key === 'id' ? '#' + ticket.id : ticket[search.key];
     return (!mine || ticket.assignee === agent) &&

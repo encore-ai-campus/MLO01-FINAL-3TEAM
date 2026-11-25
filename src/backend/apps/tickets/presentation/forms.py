@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from datetime import date
 from uuid import UUID
 
+from django import forms
+
 from config.http import DeskError
 
 SORTS = ("default", "updated-desc", "updated-asc", "received-desc", "received-asc")
@@ -52,3 +54,7 @@ def parse_query(data):
     except ValueError:
         raise DeskError(422, "INVALID_FILTER", "필터 값을 확인해 주세요.") from None
     return TicketQuery(scope, search_by, q.strip(), sort, page, page_size, days, start, end, filters)
+
+
+class MemoForm(forms.Form):
+    body = forms.CharField(max_length=1000)

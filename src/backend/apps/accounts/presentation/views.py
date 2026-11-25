@@ -2,6 +2,7 @@ import json
 from urllib.parse import urlencode
 
 from django.conf import settings
+from django.db import connection, transaction
 from django.http import HttpResponse, JsonResponse
 from django.middleware.csrf import rotate_token
 from django.shortcuts import redirect, render
@@ -11,9 +12,9 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
 from config.http import DeskError
-from .. import services
+from .. import repository, services
 from ..repository import SESSION_SECONDS
-from .forms import credentials
+from .forms import WorkPermissionsForm, credentials
 
 # Existing API clients retain their /api cookie. The desk token covers server-rendered pages.
 COOKIE_PATHS = {"voc_desk_session": "/", "voc_session": "/api"}
@@ -115,3 +116,36 @@ def login(request):
 @require_POST
 def logout(request):
     return clear_session(request, redirect("accounts:login"))
+
+
+@require_GET
+def permissions(request):
+    with connection.cursor() as cursor:
+        actor = services.current_actor(session_token(request), cursor)
+        services.require_settings_admin(actor)
+        staff = repository.company_staff(cursor, actor["company_uuid"])
+    return render(request, "preferences/employees.html", {
+        "actor": actor, "active": "settings", "title": "업무 권한 설정", "staff": staff,
+        "employee_url": "accounts:employee-permissions",
+    })
+
+
+@require_http_methods(["GET", "POST"])
+def employee_permissions(request, staff_uuid):
+    saving = request.method == "POST"
+    with transaction.atomic(), connection.cursor() as cursor:
+        actor = services.current_actor(session_token(request), cursor)
+        services.require_settings_admin(actor)
+        company = actor["company_uuid"]
+        staff = services.settings_employee(cursor, actor, staff_uuid, lock=saving)
+        codes = services.WORK_PERMISSION_CODES
+        granted = repository.work_permissions(cursor, company, staff_uuid, codes)
+        form = WorkPermissionsForm(request.POST if saving else None, initial={"permissions": granted})
+        if saving and form.is_valid():
+            if not repository.set_work_permissions(cursor, company, staff_uuid, codes, form.cleaned_data["permissions"]):
+                raise DeskError(503, "PERMISSIONS_UNAVAILABLE", "업무 권한을 저장할 수 없습니다. 설정 스키마 적용 상태를 확인해 주세요.")
+            return redirect("accounts:employee-permissions", staff_uuid=staff_uuid)
+    return render(request, "preferences/form.html", {
+        "actor": actor, "active": "settings", "title": "업무 권한 설정", "subject": staff["name"],
+        "form": form, "back_url": "accounts:permissions",
+    }, status=400 if saving else 200)

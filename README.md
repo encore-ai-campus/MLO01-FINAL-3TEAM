@@ -56,6 +56,7 @@ VALUES (:'company_id'::uuid,lower(:'email'),:'staff_name',:'password_hash');
 | 위치 | 역할 |
 | --- | --- |
 | `src/backend/apps/accounts` | 로그인·로그아웃·직원 세션 |
+| `src/backend/apps/preferences`, `assignment` | 신속답변·개인 화면·메신저·자동 배정 설정 |
 | `src/backend/apps/tickets` | 티켓 목록·내 티켓·필터·상세·고객 대화 |
 | `src/backend/apps/workspace`, `collaboration`, `analytics` | 업무 홈·받은 요청·VoC 분석의 시연 화면 |
 | `src/backend/templates`, `src/backend/static` | 공통 레이아웃·탐색·정적 파일 |
@@ -83,6 +84,20 @@ python -m uvicorn config.asgi:application --app-dir src/backend --host 127.0.0.1
 
 웹 화면은 동일 출처에서 Django CSRF 토큰을 포함한 폼을 전송한다. JSON 클라이언트는 먼저 `GET /login/`으로 받은 CSRF 쿠키를 보관하고, 로그인·로그아웃 POST에 현재 쿠키값을 `X-CSRFToken` 헤더로 보낸다. 로그인 성공 시 CSRF 토큰이 교체된다. 세션은 8시간 동안 유효하며 로그아웃하면 폐기된다.
 
+### Task 9 설정
+
+`/settings/`에서 신속답변과 개인 화면 설정을 연다. 회사 관리자는 직원별 업무 권한, 메신저 수신 채널과 자동 배정 정책을 관리한다. `init-db-topics`가 `settings_schema.sql`을 적용한다. 이미 PostgreSQL과 Kafka가 실행 중인 환경에서는 아래 명령으로 스키마를 적용하고 Django를 갱신한다.
+
+```bash
+docker compose build init-db-topics ticket-desk
+docker compose run --rm --no-deps init-db-topics
+docker compose up -d --no-deps --no-build ticket-desk
+```
+
+DB 운영자가 회사와 직원 이메일을 확인해 첫 관리자에게 `staff_user.role = 'admin'`을 지정한다. 대시보드 접근은 설정 화면에서 직원에게 부여한다.
+
+Task 10은 배정 트랜잭션에서 `apps.assignment.services.get_policy(cursor, company_uuid, staff_uuid)`를 호출해 `enabled`, `batch_size`, `refill_mode`를 읽을 수 있다. 설정을 저장하기 전에는 자동 배정 꺼짐, 1건, 전체 소진 후 재배정이 기본값이다.
+
 | 엔드포인트 | 용도 |
 | --- | --- |
 | `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/logout` | 로그인·본인 확인·로그아웃 |
@@ -95,11 +110,28 @@ python -m uvicorn config.asgi:application --app-dir src/backend --host 127.0.0.1
 
 ### 티켓 상세·답변 설정
 
-티켓 목록에서 상세로 이동할 때 기존 티켓 UUID를 사용한다. 상담 기능에는 기존 `ticket.read`와 `ticket.conduct` 권한이 모두 필요하다. 기존 Compose 설치에서는 `docker compose build init-db-topics ticket-desk` 후 초기화 서비스로 `src/collector/ticket_schema.sql`을 적용하고, 새 이미지로 `ticket-desk`를 띄운다. 검토 요청을 받는 사내 채널과 직원은 `ticket_review_channel`, `ticket_review_channel_member`에 등록한다. 등록된 개인·팀 신속답변은 `quick_reply`, `quick_reply_team`에 저장한다.
+티켓 목록에서 상세로 이동할 때 기존 티켓 UUID를 사용한다. 상담 기능에는 `ticket.read`와 설정 화면의 `ticket.handle` 권한이 모두 필요하다. 기존 Compose 설치에서는 `docker compose build init-db-topics ticket-desk` 후 초기화 서비스로 `src/collector/ticket_schema.sql`을 적용하고, 새 이미지로 `ticket-desk`를 띄운다. 검토 요청을 받는 사내 채널과 직원은 `ticket_review_channel`, `ticket_review_channel_member`에 등록한다. 수신함은 `collab_request`를 사용하고 신속답변은 설정 화면의 `quick_reply`를 사용한다.
 
 발송 자격 증명은 배포 환경에서 `TASK3_REPLY_CONNECTIONS` JSON으로 주입한다. 키는 회사 UUID → `gmail` 또는 `discord` → 기존 Silver `connection_id`다. Gmail 사서함에는 `client_id`, `client_secret`, 발송 범위가 있는 `refresh_token`을 설정한다. Discord 연결에는 답글 권한이 있는 `bot_token`을 설정한다. 수집용 Gmail 읽기 토큰은 계속 수집에 사용한다. 회신 경로는 티켓에 연결된 Bronze·Silver에서 가져온다.
 
 JSON 메시지 요청에는 `message_type` (`reply` 또는 `memo`), `body`, 동작마다 생성한 UUID인 `request_key`를 보낸다. 재호출에는 같은 키를 쓴다. 응답의 `message.delivery_status`가 `sent`면 답변완료, `failed`면 기존 상태 유지, `unknown` 또는 `sending`이면 중복 발송 방지를 위해 채널에서 전송 여부를 확인할 때까지 추가 발송을 막는다. CSV 이관을 적재할 때는 `ticket.csv_import_kind='migration'`과 원문 메시지를 연결하면 답변 처리 결과가 `internal_only`로 저장된다. 홈페이지 CSV 샘플은 별도 값인 `homepage_sample`로 구분한다. 두 CSV 유형의 티켓 번호는 기존 수집 티켓과 같은 회사별 카운터에서 할당된다.
+
+### Task 8 팔로업 백엔드
+
+`init-db-topics`가 `followup_schema.sql`을 적용한다. 기존 Docker 환경에서는 위의 빌드·초기화 명령을 다시 실행한다. API 변경 요청에는 로그인 세션과 `X-CSRFToken`이 필요하다.
+
+| 엔드포인트 | 용도 |
+| --- | --- |
+| `GET /api/follow-up/tracks` | 내 추적 티켓 조회 |
+| `POST /api/follow-up/tracks/{ticket_uuid}`, `DELETE /api/follow-up/tracks/{ticket_uuid}` | 내 추적 등록·해제 |
+| `POST /api/tickets/{ticket_uuid}/memos` | 티켓 메모 등록. `body`를 전달한다. |
+| `GET /api/follow-up/notifications` | 추적 이후 다른 상담사의 메모와 고객 후속 문의 목록 및 알림 건수 조회 |
+| `GET /api/follow-up/contacts` | `state=scheduled\|completed`, `source=ticket\|chat`, `q`로 연락 기록 조회. 기본 상태는 `scheduled`이다. |
+| `POST /api/follow-up/contacts` | `ticket_uuid` 또는 `chat_uuid`, `assignee_uuid`, `reason`, `scheduled_at`으로 연락 등록 |
+| `GET /api/follow-up/contacts/{contact_uuid}` | 단일 연락 기록과 원본 링크 조회 |
+| `POST /api/follow-up/contacts/{contact_uuid}/complete` | `contacted_at`과 `result`로 완료 처리. 실제 처리자는 로그인한 직원으로 기록한다. |
+
+연락 시각은 ISO 8601 값을 사용한다. 연락 기록은 등록자와 지정 담당자가 조회할 수 있으며, 티켓·채팅 조회 권한을 각각 적용한다. 채팅 원본 링크는 1:1 상담과 메시지를 반환하는 `GET /api/chats/{chat_uuid}`로 연결된다. 종료된 Gmail 스레드의 후속 문의 알림 조건은 팀 합의가 필요하며, 현재는 원본 티켓이 답변완료 상태면 해당 고객 알림을 제외한다.
 
 ### 테스트
 
@@ -108,6 +140,7 @@ JSON 메시지 요청에는 `message_type` (`reply` 또는 `memo`), `body`, 동�
 ```bash
 export VOC_TICKET_TEST_ADMIN_DSN="$DATABASE_URL"
 export VOC_TEST_DATABASE_URL="$DATABASE_URL"
+export VOC_TASK9_TEST_DSN="$DATABASE_URL"
 python src/backend/manage.py test tests apps.workspace
 ```
 

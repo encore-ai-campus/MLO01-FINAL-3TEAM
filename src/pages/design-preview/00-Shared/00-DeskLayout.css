@@ -121,3 +121,25 @@
       .desk-setting-head, .desk-setting-row { grid-template-columns: minmax(0, 1fr) 58px 80px; }
       .desk-actions { flex-wrap: wrap; }
     }
+
+.desk-nav-unread {
+  margin-left: auto;
+  min-width: 22px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: #e9f3eb;
+  color: #2e6240;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.desk-bell { position: relative; }
+.desk-bell-button { display: grid; place-items: center; min-width: 36px; min-height: 36px; padding: 5px; border: 0; border-radius: 7px; background: transparent; color: inherit; }
+.desk-bell-button:hover, .desk-bell-button[aria-expanded="true"] { background: var(--desk-soft); }
+.desk-bell-history { position: absolute; inset: calc(100% + 10px) -22px auto auto; width: min(352px, 85vw); max-height: 58vh; overflow: auto; padding: 14px; border: 1px solid var(--desk-line); border-radius: 10px; background: var(--paper); box-shadow: 0 6px 18px #0002; }
+.desk-bell-history[hidden] { display: none; }
+.desk-bell-history h2 { margin-bottom: 8px; font-size: 16px; }
+.desk-bell-history ul { margin: 0; padding: 0; list-style: none; }
+.desk-bell-history li { padding: 9px 0; border-top: 1px solid var(--desk-line); }
+.desk-bell-history li p, .desk-bell-history small { margin-top: 4px; color: var(--desk-muted); font-size: 13px; }

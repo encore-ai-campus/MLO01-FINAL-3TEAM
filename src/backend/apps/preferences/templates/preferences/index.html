@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}설정{% endblock %}
+{% block content %}
+<div class="desk-heading"><h1>설정</h1></div>
+<div class="desk-stack">
+  <section class="desk-card">
+    <h2>개인 설정</h2>
+    <ul>
+      <li><a href="{% url 'preferences:replies' %}">신속답변</a></li>
+      <li><a href="{% url 'preferences:display' %}">개인 화면 설정</a></li>
+    </ul>
+  </section>
+  {% if actor.role == "admin" %}
+    <section class="desk-card">
+      <h2>관리자 설정</h2>
+      <ul>
+        <li><a href="{% url 'accounts:permissions' %}">업무 권한 설정</a></li>
+        <li><a href="{% url 'preferences:messenger' %}">메신저 연동 설정</a></li>
+        <li><a href="{% url 'assignment:index' %}">자동 배정 설정</a></li>
+      </ul>
+    </section>
+  {% endif %}
+</div>
+{% endblock %}

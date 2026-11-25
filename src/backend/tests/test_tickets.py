@@ -12,6 +12,7 @@ from uuid import uuid4
 import psycopg2
 from argon2 import PasswordHasher
 from django.test import Client
+from django.urls import reverse
 
 from tests.database import use_database
 from psycopg2 import sql
@@ -36,7 +37,7 @@ class TicketTests(unittest.TestCase):
         cls.addClassCleanup(cls.cn.close)
         cls.cur = cls.cn.cursor()
         cls.addClassCleanup(cls.cur.close)
-        for filename in ("schema.sql", "ticket_schema.sql"):
+        for filename in ("schema.sql", "ticket_schema.sql", "settings_schema.sql", "followup_schema.sql"):
             cls.cur.execute((SRC / "collector" / filename).read_text(encoding="utf-8"))
         password_hash = PasswordHasher().hash("SamplePass1!")
         cls.employees = []
@@ -95,6 +96,195 @@ class TicketTests(unittest.TestCase):
 
     def setUp(self):
         self.client = Client()
+
+    def test_followup_tracking_notifications_and_contact_completion(self):
+        base = "/api/follow-up"
+        tracked = self.tickets[0]
+        self.assertEqual(self.client.get(base + "/tracks").status_code, 401)
+        self.login()
+        track = base + "/tracks/" + tracked
+        self.assertEqual(self.client.post(base + "/tracks/" + self.tickets[-1]).status_code, 404)
+        self.assertEqual(self.client.post(track).status_code, 201)
+        self.assertEqual(self.client.post(track).status_code, 200)
+        self.assertEqual(self.client.get(base + "/tracks").json()["items"][0]["ticket_uuid"], tracked)
+        self.assertEqual(self.client.get(base + "/notifications").json()["count"], 0)
+        writer = Client()
+        self.cur.execute("""
+            INSERT INTO staff_user(company_uuid,email,name,password_hash)
+            SELECT company_uuid,'followup@qa1.test','메모 작성자',password_hash
+            FROM staff_user WHERE staff_user_uuid=%s RETURNING staff_user_uuid
+        """, (self.employees[0],))
+        staff = self.cur.fetchone()[0]
+        self.addCleanup(self.cur.execute, "DELETE FROM staff_user WHERE staff_user_uuid=%s", (staff,))
+        self.addCleanup(self.cur.execute, "DELETE FROM ticket_message WHERE staff_user_uuid IN (%s,%s)",
+                        (staff, self.employees[0]))
+        self.cur.execute("""
+            INSERT INTO staff_permission SELECT %s,permission_uuid FROM permission
+            WHERE code IN ('ticket.read','ticket.handle')
+        """, (staff,))
+        logged_in = writer.post("/api/auth/login", {"email": "followup@qa1.test", "password": "SamplePass1!"},
+                                content_type="application/json")
+        self.assertEqual(logged_in.status_code, 200)
+        self.cur.execute("""
+            INSERT INTO staff_permission SELECT %s,permission_uuid FROM permission
+            WHERE code='ticket.handle' ON CONFLICT DO NOTHING
+        """, (self.employees[0],))
+        self.addCleanup(self.cur.execute, """
+            DELETE FROM staff_permission USING permission
+            WHERE staff_permission.permission_uuid=permission.permission_uuid
+              AND staff_user_uuid=%s AND code IN ('ticket.handle','chat.handle')
+        """, (self.employees[0],))
+        for client in (self.client, writer):
+            self.assertEqual(client.post(f"/api/tickets/{tracked}/memos", {"body": "팔로업 메모"},
+                                         content_type="application/json").status_code, 201)
+        self.assertEqual(writer.post(f"/api/tickets/{self.tickets[-1]}/memos", {"body": "권한 밖 메모"},
+                                     content_type="application/json").status_code, 404)
+        event = str(uuid4())
+        message = "followup-" + event
+        self.cur.execute("""
+            INSERT INTO voc.bronze_messages VALUES(%s,'tenant-1','gmail','account',%s,'qa',now(),'{}','{}')
+        """, (event, message))
+        self.cur.execute("""
+            INSERT INTO voc.silver_messages(schema_version,event_id,company_id,channel,connection_id,
+                source_message_id,source_conversation_id,message_kind,sender_ref,
+                body_text,body_version,received_at,source_metadata)
+            VALUES (4,%s,'tenant-1','gmail','account',%s,'thread','customer_inquiry','customer_10',
+                    '배송 후속 문의',1,now(),'{"label_ids":[],"to_addresses":[]}')
+        """, (event, message))
+        self.cur.execute("SELECT ticket_uuid FROM ticket WHERE source_event_id=%s", (event,))
+        followup = str(self.cur.fetchone()[0])
+        self.addCleanup(self.cur.execute, "UPDATE voc.silver_messages SET message_kind='other' WHERE event_id=%s",
+                        (event,))
+        notifications = self.client.get(base + "/notifications").json()
+        self.assertEqual(notifications["count"], 2)
+        self.assertEqual({item["kind"] for item in notifications["items"]}, {"memo", "customer_inquiry"})
+        self.assertEqual(next(item for item in notifications["items"] if item["kind"] == "customer_inquiry")
+                         ["related_ticket_uuid"], followup)
+        self.cur.execute("UPDATE ticket SET status='답변완료' WHERE ticket_uuid=%s", (tracked,))
+        self.addCleanup(self.cur.execute, "UPDATE ticket SET status='미처리' WHERE ticket_uuid=%s", (tracked,))
+        self.assertEqual(self.client.get(base + "/notifications").json()["count"], 1)
+        self.assertEqual(writer.get(base + "/notifications").json()["count"], 0)
+
+        contacts = base + "/contacts"
+        response = self.client.post(contacts, {
+            "ticket_uuid": tracked, "assignee_uuid": self.employees[0],
+            "reason": "배송 안내", "scheduled_at": "2026-11-25T14:00:00+09:00",
+        }, content_type="application/json")
+        self.assertEqual(response.status_code, 201, response.text)
+        ident = response.json()["contact_uuid"]
+        self.assertEqual(self.client.get(contacts, {"q": "배송 안내", "source": "ticket"}).json()["items"][0]
+                         ["contact_uuid"], ident)
+        self.assertEqual(writer.get(f"{contacts}/{ident}").status_code, 404)
+        csrf_client = Client(enforce_csrf_checks=True)
+        csrf_client.cookies.update(self.client.cookies)
+        self.assertEqual(csrf_client.post(f"{contacts}/{ident}/complete").status_code, 403)
+        done = {"result": "배송 완료 확인", "contacted_at": "2026-11-25T14:12:00+09:00"}
+        for result, expected in ((done, 200), (done, 200), ({**done, "result": "다름"}, 409)):
+            response = self.client.post(f"{contacts}/{ident}/complete", result, content_type="application/json")
+            self.assertEqual(response.status_code, expected, response.text)
+        self.assertEqual(self.client.get(contacts).json()["items"], [])
+        result = self.client.get(contacts, {"state": "completed", "q": "배송 완료"}).json()["items"][0]
+        self.assertEqual(result["completed_by_uuid"], self.employees[0])
+        self.assertNotEqual(result["scheduled_at"], result["contacted_at"])
+        self.assertEqual(self.client.get(result["source_url"]).status_code, 200)
+        self.assertEqual(self.client.delete(track).status_code, 204)
+        self.assertEqual(self.client.get(base + "/tracks").json()["items"], [])
+        self.assertEqual(self.client.get(base + "/notifications").json()["count"], 0)
+
+        self.cur.execute("""
+            INSERT INTO chat(company_uuid,customer_uuid,domain_uuid,channel_uuid,status,waiting_at)
+            SELECT company_uuid,customer_uuid,domain_uuid,channel_uuid,'waiting',now()
+            FROM ticket WHERE ticket_uuid=%s RETURNING chat_uuid
+        """, (tracked,))
+        chat = str(self.cur.fetchone()[0])
+        self.cur.execute("""
+            INSERT INTO chat_message(chat_uuid,sender_type,message_type,body,sent_at)
+            VALUES (%s,'customer','inquiry','배송지 변경 상담',now())
+        """, (chat,))
+        appointment = {"chat_uuid": chat, "assignee_uuid": self.employees[0],
+                       "reason": "상담 후 연락", "scheduled_at": "2026-11-26T10:30:00+09:00"}
+        self.assertEqual(self.client.post(contacts, appointment, content_type="application/json").status_code, 403)
+        self.cur.execute("""
+            INSERT INTO staff_permission SELECT %s,permission_uuid FROM permission WHERE code='chat.handle'
+        """, (self.employees[0],))
+        response = self.client.post(contacts, appointment, content_type="application/json")
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(self.client.get(contacts, {"source": "ticket"}).json()["items"], [])
+        [consultation] = self.client.get(contacts, {"source": "chat", "q": "배송지 변경"}).json()["items"]
+        self.assertEqual(self.client.get(consultation["source_url"]).json()["messages"][0]["body"], "배송지 변경 상담")
+        self.assertEqual(writer.get(consultation["source_url"]).status_code, 403)
+        self.login(company=2)
+        self.assertEqual(self.client.get(f"{contacts}/{ident}").status_code, 404)
+
+    def test_inbox_links_received_transfers_and_reviews_to_their_own_ticket(self):
+        transfer_ticket, review_ticket = self.tickets[:2]
+        recipient, outsider = self.employees
+        self.cur.execute("""
+            INSERT INTO staff_user(company_uuid,email,name,password_hash)
+            SELECT company_uuid,'agent2@qa1.test','요청 상담사',password_hash FROM staff_user WHERE staff_user_uuid=%s
+            RETURNING staff_user_uuid
+        """, (recipient,))
+        sender = self.cur.fetchone()[0]
+        self.addCleanup(self.delete_inbox_fixture, sender)
+        self.cur.execute("INSERT INTO staff_permission SELECT %s,permission_uuid FROM permission WHERE code='ticket.read'", (sender,))
+        requests = {}
+        for kind, ticket, receiver, memo in (
+            ("transfer", transfer_ticket, recipient, "배송 담당 변경"),
+            ("review", review_ticket, recipient, "응대 문구 검토"),
+            ("outside", review_ticket, outsider, "다른 회사 요청"),
+            ("other", review_ticket, sender, "다른 상담사 요청"),
+        ):
+            self.cur.execute("""
+                INSERT INTO collab_request(ticket_uuid,requester_uuid,recipient_uuid,request_type,memo)
+                VALUES (%s,%s,%s,%s,%s) RETURNING collab_request_uuid
+            """, (ticket, sender, receiver, "transfer" if kind == "transfer" else "review", memo))
+            requests[kind] = self.cur.fetchone()[0]
+        self.cur.execute("""
+            INSERT INTO collab_request_attachment(collab_request_uuid,original_filename,content_type,storage_key,size_bytes)
+            VALUES (%s,'검토.txt','text/plain','private/fixture',12)
+        """, (requests["review"],))
+        self.login()
+        for kind, ticket, memo in (("transfer", transfer_ticket, "배송 담당 변경"), ("review", review_ticket, "응대 문구 검토")):
+            with self.subTest(kind=kind):
+                page = self.client.get("/inbox/", {"tab": kind, "request": requests[kind]})
+                self.assertContainsHTML(page, memo)
+                detail = reverse("tickets:detail", args=[ticket])
+                self.assertContainsHTML(page, f'href="{detail}">티켓 열기')
+                self.assertEqual(self.client.get(detail).status_code, 200)
+        self.assertContainsHTML(page, "검토.txt")
+        self.assertNotIn("private/fixture", page.text)
+        self.assertNotIn("다른 상담사 요청", page.text)
+        self.assertEqual(self.client.get("/inbox/", {"request": requests["other"]}).status_code, 404)
+        read = reverse("workspace:inbox-read", args=["request", requests["review"]])
+        csrf_client = Client(enforce_csrf_checks=True)
+        csrf_client.cookies.update(self.client.cookies)
+        self.assertEqual(csrf_client.post(read).status_code, 403)
+        first = csrf_client.post(read, HTTP_X_CSRFTOKEN=csrf_client.cookies["csrftoken"].value)
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(self.client.post(read).json()["read_at"], first.json()["read_at"])
+        self.assertNotIn("응대 문구 검토", self.client.get("/inbox/", {"tab": "review", "scope": "unread"}).text)
+        reply = reverse("workspace:inbox-reply", args=[requests["review"]])
+        self.assertEqual(self.client.post(reply, {"body": "확인했습니다."}).status_code, 200)
+        self.assertEqual(self.client.post(reply, {"body": "확인했습니다."}).status_code, 200)
+        self.assertEqual(self.client.post(reply, {"body": "다른 답변"}).status_code, 409)
+        self.login(2)
+        self.assertNotIn("다른 회사 요청", self.client.get("/inbox/", {"tab": "review"}).text)
+        self.assertEqual(self.client.post(read).status_code, 404)
+        self.client.post("/api/auth/login", {"email": "agent2@qa1.test", "password": "SamplePass1!"}, content_type="application/json")
+        self.cur.execute("SELECT collab_review_reply_uuid FROM collab_review_reply WHERE collab_request_uuid=%s", (requests["review"],))
+        reply_id = self.cur.fetchone()[0]
+        self.assertEqual(self.client.post(reverse("workspace:inbox-read", args=["reply", reply_id])).status_code, 200)
+        self.assertContainsHTML(self.client.get("/inbox/", {"tab": "reply", "scope": "unread"}), "확인했습니다.")
+
+    def delete_inbox_fixture(self, sender):
+        for table in ("collab_review_reply", "collab_request_attachment"):
+            self.cur.execute(sql.SQL("""
+                DELETE FROM {} WHERE collab_request_uuid IN (
+                    SELECT collab_request_uuid FROM collab_request WHERE requester_uuid=%s
+                )
+            """).format(sql.Identifier(table)), (sender,))
+        self.cur.execute("DELETE FROM collab_request WHERE requester_uuid=%s", (sender,))
+        self.cur.execute("DELETE FROM staff_user WHERE staff_user_uuid=%s", (sender,))
 
     def login(self, company=1):
         response = self.client.post("/api/auth/login", data={"email": f"agent1@qa{company}.test", "password": "SamplePass1!"}, content_type="application/json")
@@ -244,7 +434,7 @@ class TicketTests(unittest.TestCase):
         self.assertEqual(first.json()["ticket_status"], "미처리")
         self.assertContainsHTML(self.client.get(path), "내부 확인 🙂")
         self.cur.execute("DELETE FROM staff_permission WHERE staff_user_uuid=%s AND permission_uuid "
-                         "IN (SELECT permission_uuid FROM permission WHERE code='ticket.conduct')", (self.employees[0],))
+                         "IN (SELECT permission_uuid FROM permission WHERE code='ticket.handle')", (self.employees[0],))
         self.assertNotIn("내부 확인 🙂", self.client.get(path).text)
         self.assertEqual(self.client.get("/api/tickets").json()["total"], 3)
         self.cur.execute("DELETE FROM ticket_message WHERE request_key=%s", (payload["request_key"],))
@@ -327,7 +517,7 @@ class TicketTests(unittest.TestCase):
         self.cur.execute("""INSERT INTO staff_user(staff_user_uuid,company_uuid,email,password_hash,team_uuid)
                          VALUES (%s,%s,'receiver@qa1.test',%s,%s)""", (recipient, company, password_hash, self.team))
         self.cur.execute("INSERT INTO staff_permission SELECT %s,permission_uuid FROM permission WHERE code IN "
-                         "('ticket.read','ticket.conduct')", (recipient,))
+                         "('ticket.read','ticket.handle')", (recipient,))
         self.cur.execute("INSERT INTO ticket_review_channel (company_uuid,name) VALUES (%s,'배송 검토') "
                          "RETURNING review_channel_uuid", (company,))
         channel = str(self.cur.fetchone()[0])
@@ -335,7 +525,13 @@ class TicketTests(unittest.TestCase):
         self.addCleanup(self.cur.execute, "DELETE FROM staff_user WHERE staff_user_uuid=%s", (recipient,))
         self.addCleanup(self.cur.execute, "UPDATE ticket SET assignee_uuid=NULL WHERE ticket_uuid=%s", (ticket,))
         self.addCleanup(self.cur.execute, "DELETE FROM ticket_review_channel WHERE review_channel_uuid=%s", (channel,))
-        self.addCleanup(self.cur.execute, "DELETE FROM ticket_action WHERE ticket_uuid=%s AND kind IN ('transfer','review')", (ticket,))
+        self.addCleanup(self.cur.execute, "DELETE FROM collab_request WHERE ticket_uuid=%s AND recipient_uuid=%s",
+                        (ticket, recipient))
+        self.addCleanup(self.cur.execute, "DELETE FROM collab_request_attachment WHERE collab_request_uuid IN "
+                        "(SELECT collab_request_uuid FROM collab_request WHERE ticket_uuid=%s AND recipient_uuid=%s)",
+                        (ticket, recipient))
+        self.addCleanup(self.cur.execute, "DELETE FROM ticket_event WHERE ticket_uuid=%s AND recipient_uuid=%s",
+                        (ticket, recipient))
 
         options = self.client.get(f"/api/tickets/{ticket}/collaboration-options").json()
         self.assertEqual(options["transfer_recipients"][0]["staff_user_uuid"], recipient)
@@ -364,12 +560,16 @@ class TicketTests(unittest.TestCase):
         self.assertEqual(login.status_code, 200, login.text)
         received = receiver.get("/api/ticket-requests").json()["items"]
         self.assertEqual({item["kind"] for item in received}, {"transfer", "review"})
-        self.assertIn({"content_type": "image/gif"}, [item["attachment"] for item in received])
+        self.assertIn(["reference.gif"], [item["attachment_names"] for item in received])
         download = receiver.get(attachment_url)
         self.assertEqual(download.content, b64decode(image))
         self.assertEqual(download.headers["Content-Type"], "image/gif")
-        self.assertContainsHTML(receiver.get("/inbox/?tab=review"), "확인 자료")
-        self.assertContainsHTML(receiver.get("/inbox/?tab=transfer"), f"/tickets/{ticket}/")
+        self.assertEqual(receiver.get(f"/api/ticket-requests/{review.json()['review_request_uuid']}/attachment")
+                         .content.decode("utf-8"), "확인 자료")
+        self.assertContainsHTML(receiver.get("/inbox/", {"request": image_review.json()["review_request_uuid"]}),
+                                attachment_url)
+        transfer_request = next(item["id"] for item in received if item["kind"] == "transfer")
+        self.assertContainsHTML(receiver.get("/inbox/", {"request": transfer_request}), f"/tickets/{ticket}/")
 
     def test_recommendations_follow_saved_category(self):
         self.login()
@@ -382,8 +582,8 @@ class TicketTests(unittest.TestCase):
             self.cur.execute("INSERT INTO category(domain_uuid,name) VALUES (%s,%s) RETURNING category_uuid", (domain, name))
             category = self.cur.fetchone()[0]
             categories.append(category)
-            self.cur.execute("""INSERT INTO quick_reply(company_uuid,category_uuid,author_uuid,name,body,scope)
-                             VALUES (%s,%s,%s,%s,'답변 본문','personal')""", (company, category, self.employees[0], name))
+            self.cur.execute("""INSERT INTO quick_reply(company_uuid,domain_uuid,category_uuid,owner_uuid,name,body)
+                             VALUES (%s,%s,%s,%s,%s,'답변 본문')""", (company, domain, category, self.employees[0], name))
         self.addCleanup(self.cur.execute, "DELETE FROM category WHERE category_uuid IN (%s,%s)", tuple(categories))
         self.addCleanup(self.cur.execute, "DELETE FROM quick_reply WHERE category_uuid IN (%s,%s)", tuple(categories))
         self.addCleanup(self.cur.execute, "UPDATE ticket SET category_uuid=NULL,category_status='pending' WHERE ticket_uuid=%s", (ticket,))
@@ -396,10 +596,10 @@ class TicketTests(unittest.TestCase):
             self.assertEqual([item["name"] for item in result.json()["items"]], [expected])
 
     def grant_conduct(self):
-        self.cur.execute("INSERT INTO staff_permission SELECT %s,permission_uuid FROM permission WHERE code='ticket.conduct' "
+        self.cur.execute("INSERT INTO staff_permission SELECT %s,permission_uuid FROM permission WHERE code='ticket.handle' "
                          "ON CONFLICT DO NOTHING", (self.employees[0],))
         self.addCleanup(self.cur.execute, "DELETE FROM staff_permission WHERE staff_user_uuid=%s AND permission_uuid "
-                        "IN (SELECT permission_uuid FROM permission WHERE code='ticket.conduct')", (self.employees[0],))
+                        "IN (SELECT permission_uuid FROM permission WHERE code='ticket.handle')", (self.employees[0],))
 
     def assertContainsHTML(self, response, content):
         self.assertEqual(response.status_code, 200, response.text)

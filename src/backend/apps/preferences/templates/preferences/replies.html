@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}신속답변{% endblock %}
+{% block content %}
+<div class="desk-heading">
+  <h1>신속답변</h1>
+  <a class="desk-button" href="{% url 'preferences:reply-create' %}{% if form.scope.value == 'team' %}?scope=team{% endif %}">신속답변 등록</a>
+</div>
+<section class="desk-card">
+  <form method="get">
+    {{ form.as_p }}
+    <button class="desk-button" type="submit">검색</button>
+  </form>
+  <table class="desk-table">
+    <thead><tr><th scope="col">이름과 본문</th><th scope="col">카테고리</th><th scope="col">최근 수정</th><th scope="col">관리</th></tr></thead>
+    <tbody>
+      {% for reply in replies %}
+        <tr>
+          <th scope="row"><details><summary>{{ reply.name }}</summary>{{ reply.body|linebreaksbr }}</details></th>
+          <td>{{ reply.category_name }}</td><td>{{ reply.updated_at|date:"Y-m-d H:i" }}</td>
+          <td>{% if reply.scope == "personal" or can_edit_team %}<a href="{% url 'preferences:reply-edit' reply.reply_uuid %}">편집</a>{% endif %}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="4">조건에 맞는 신속답변이 없습니다.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

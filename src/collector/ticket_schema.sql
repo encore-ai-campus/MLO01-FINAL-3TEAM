@@ -26,7 +26,6 @@ CREATE TABLE IF NOT EXISTS public.permission (
     permission_uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(), code text NOT NULL UNIQUE, name text
 );
 INSERT INTO public.permission(code, name) VALUES ('ticket.read', '티켓 조회') ON CONFLICT (code) DO NOTHING;
-INSERT INTO public.permission(code, name) VALUES ('ticket.conduct', '티켓 상담') ON CONFLICT (code) DO NOTHING;
 CREATE TABLE IF NOT EXISTS public.staff_permission (
     staff_user_uuid uuid NOT NULL REFERENCES public.staff_user ON DELETE CASCADE,
     permission_uuid uuid NOT NULL REFERENCES public.permission ON DELETE CASCADE,
@@ -148,46 +147,63 @@ CREATE TABLE IF NOT EXISTS public.ticket_review_channel_member (
         REFERENCES public.ticket_review_channel(company_uuid, review_channel_uuid) ON DELETE CASCADE,
     FOREIGN KEY (company_uuid, staff_user_uuid) REFERENCES public.staff_user(company_uuid, staff_user_uuid)
 );
-CREATE TABLE IF NOT EXISTS public.ticket_action (
-    action_uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+
+CREATE TABLE IF NOT EXISTS public.collab_request (
+    collab_request_uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     ticket_uuid uuid NOT NULL REFERENCES public.ticket,
-    actor_uuid uuid NOT NULL REFERENCES public.staff_user,
-    kind text NOT NULL CHECK (kind IN ('transfer','review','reply_completed')),
-    review_channel_uuid uuid REFERENCES public.ticket_review_channel,
-    memo text,
-    attached_reply text,
-    attachment jsonb,
-    from_status text,
-    to_status text,
+    requester_uuid uuid NOT NULL REFERENCES public.staff_user,
+    recipient_uuid uuid NOT NULL REFERENCES public.staff_user,
+    request_type varchar(32) NOT NULL CHECK (request_type IN ('transfer','review')),
+    status varchar(32) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','rejected','replied')),
+    memo text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
+    decided_at timestamptz, read_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS collab_request_recipient_order
+    ON public.collab_request(recipient_uuid, created_at DESC, collab_request_uuid);
+CREATE INDEX IF NOT EXISTS collab_request_requester
+    ON public.collab_request(requester_uuid, collab_request_uuid);
+ALTER TABLE public.collab_request
+    ADD COLUMN IF NOT EXISTS review_channel_uuid uuid REFERENCES public.ticket_review_channel;
+
+CREATE TABLE IF NOT EXISTS public.collab_review_reply (
+    collab_review_reply_uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    collab_request_uuid uuid NOT NULL UNIQUE REFERENCES public.collab_request,
+    author_uuid uuid NOT NULL REFERENCES public.staff_user,
+    body text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), read_at timestamptz
+);
+
+CREATE TABLE IF NOT EXISTS public.collab_request_attachment (
+    collab_request_attachment_uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    collab_request_uuid uuid NOT NULL REFERENCES public.collab_request,
+    original_filename text NOT NULL, content_type text NOT NULL,
+    storage_key text NOT NULL, size_bytes bigint NOT NULL CHECK (size_bytes >= 0),
     created_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS public.ticket_action_recipient (
-    action_uuid uuid REFERENCES public.ticket_action ON DELETE CASCADE,
-    staff_user_uuid uuid REFERENCES public.staff_user,
-    PRIMARY KEY (action_uuid, staff_user_uuid)
-);
-CREATE INDEX IF NOT EXISTS ticket_action_inbox ON public.ticket_action_recipient(staff_user_uuid, action_uuid);
+CREATE INDEX IF NOT EXISTS collab_attachment_request
+    ON public.collab_request_attachment(collab_request_uuid);
+ALTER TABLE public.collab_request_attachment ADD COLUMN IF NOT EXISTS content bytea;
 
-CREATE TABLE IF NOT EXISTS public.quick_reply (
-    quick_reply_uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_uuid uuid NOT NULL REFERENCES public.company,
-    category_uuid uuid NOT NULL REFERENCES public.category,
-    author_uuid uuid NOT NULL,
-    name text NOT NULL,
-    body text NOT NULL,
-    scope text NOT NULL CHECK (scope IN ('personal','team')),
-    UNIQUE (company_uuid, quick_reply_uuid),
-    FOREIGN KEY (company_uuid, author_uuid) REFERENCES public.staff_user(company_uuid, staff_user_uuid)
+CREATE TABLE IF NOT EXISTS public.event_type (
+    event_type_uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(), code varchar(255) NOT NULL UNIQUE
 );
-CREATE TABLE IF NOT EXISTS public.quick_reply_team (
-    company_uuid uuid NOT NULL,
-    quick_reply_uuid uuid NOT NULL,
-    team_uuid uuid NOT NULL,
-    PRIMARY KEY (quick_reply_uuid, team_uuid),
-    FOREIGN KEY (company_uuid, quick_reply_uuid)
-        REFERENCES public.quick_reply(company_uuid, quick_reply_uuid) ON DELETE CASCADE,
-    FOREIGN KEY (company_uuid, team_uuid) REFERENCES public.team(company_uuid, team_uuid)
+INSERT INTO public.event_type(event_type_uuid, code)
+VALUES (gen_random_uuid(), 'ticket_transfer'), (gen_random_uuid(), 'ticket_review_requested'),
+       (gen_random_uuid(), 'ticket_reply_completed')
+ON CONFLICT (code) DO NOTHING;
+CREATE TABLE IF NOT EXISTS public.ticket_event (
+    ticket_event_uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    ticket_uuid uuid NOT NULL REFERENCES public.ticket,
+    event_type_uuid uuid NOT NULL REFERENCES public.event_type,
+    actor_uuid uuid REFERENCES public.staff_user, recipient_uuid uuid REFERENCES public.staff_user,
+    from_status varchar(32), to_status varchar(32),
+    created_at timestamptz NOT NULL DEFAULT now(), transfer_reason text
 );
+ALTER TABLE public.ticket_event ADD COLUMN IF NOT EXISTS collab_request_uuid uuid REFERENCES public.collab_request;
+CREATE INDEX IF NOT EXISTS ticket_transfer_recipient_order
+    ON public.ticket_event(recipient_uuid, created_at DESC, ticket_event_uuid);
+CREATE INDEX IF NOT EXISTS ticket_event_ticket_order
+    ON public.ticket_event(ticket_uuid, created_at DESC, ticket_event_uuid);
+
 -- A role correction never deletes staff work. Reconfirmation reveals the original ticket.
 CREATE OR REPLACE VIEW public.visible_ticket AS
 SELECT t.* FROM public.ticket t LEFT JOIN voc.silver_messages s

@@ -1,4 +1,7 @@
+import base64
 import json
+
+from apps.collaboration import repository as inbox_repository
 
 from config.database import fetch_rows
 
@@ -7,7 +10,7 @@ CONDUCT = """
     2 = (
         SELECT count(*)
         FROM staff_permission sp JOIN permission p USING (permission_uuid)
-        WHERE sp.staff_user_uuid=s.staff_user_uuid AND p.code IN ('ticket.read','ticket.conduct')
+        WHERE sp.staff_user_uuid=s.staff_user_uuid AND p.code IN ('ticket.read','ticket.handle')
     )
 """
 MESSAGE_FIELDS = """
@@ -80,55 +83,63 @@ def options(cursor, actor, ticket):
 
 def quick_replies(cursor, actor, ticket_uuid):
     cursor.execute("""
-        SELECT q.quick_reply_uuid,q.name,q.body,q.scope FROM visible_ticket t
-        JOIN quick_reply q USING (company_uuid,category_uuid)
+        SELECT q.reply_uuid AS quick_reply_uuid,q.name,q.body,
+               CASE WHEN q.owner_uuid IS NOT NULL THEN 'personal' ELSE 'team' END AS scope
+        FROM visible_ticket t
+        JOIN quick_reply q USING (company_uuid,domain_uuid,category_uuid)
         JOIN staff_user s ON s.staff_user_uuid=%s AND s.company_uuid=t.company_uuid
         WHERE t.ticket_uuid=%s
-          AND ((q.scope='personal' AND q.author_uuid=s.staff_user_uuid) OR
-               (q.scope='team' AND EXISTS (SELECT FROM quick_reply_team qt
-                WHERE qt.quick_reply_uuid=q.quick_reply_uuid AND qt.company_uuid=t.company_uuid
-                  AND qt.team_uuid=s.team_uuid)))
-        ORDER BY q.name,q.quick_reply_uuid
+          AND (q.owner_uuid=s.staff_user_uuid OR q.team_uuid=s.team_uuid)
+        ORDER BY q.name,q.reply_uuid
     """, (actor["staff_user_uuid"], ticket_uuid))
     return fetch_rows(cursor)
 
 
-def add_event(cursor, ticket_uuid, actor, kind, *, channel=None, memo=None, attached=None,
-              attachment=None, from_status=None, to_status=None):
+def add_event(cursor, ticket_uuid, actor, code, *, request=None, recipient=None, reason=None,
+              from_status=None, to_status=None):
     cursor.execute("""
-        INSERT INTO ticket_action
-            (ticket_uuid,actor_uuid,kind,review_channel_uuid,memo,attached_reply,attachment,from_status,to_status)
-        VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s) RETURNING action_uuid
-    """, (ticket_uuid, actor["staff_user_uuid"], kind, channel, memo, attached, attachment, from_status, to_status))
+        INSERT INTO ticket_event
+            (ticket_uuid,event_type_uuid,actor_uuid,recipient_uuid,collab_request_uuid,transfer_reason,from_status,to_status)
+        VALUES (%s,(SELECT event_type_uuid FROM event_type WHERE code=%s),%s,%s,%s,%s,%s,%s)
+        RETURNING ticket_event_uuid
+    """, (ticket_uuid, code, actor["staff_user_uuid"], recipient, request, reason, from_status, to_status))
     return cursor.fetchone()[0]
 
 
-def inbox(cursor, actor, kind=None):
+def add_request(cursor, ticket_uuid, actor, recipient, kind, status, memo, channel=None):
     cursor.execute("""
-        SELECT a.action_uuid,t.ticket_uuid,t.ticket_number,t.title,a.kind,a.memo,a.attached_reply,
-               (CASE WHEN a.attachment->>'content_type'='text/plain' THEN a.attachment
-                  ELSE a.attachment - 'content' END)::text AS attachment,
-               a.created_at,ch.name AS review_channel,COALESCE(s.name,s.email) AS sender
-        FROM ticket_action_recipient r JOIN ticket_action a USING (action_uuid)
-        JOIN visible_ticket t USING (ticket_uuid)
-        JOIN staff_user s ON s.staff_user_uuid=a.actor_uuid AND s.company_uuid=t.company_uuid
-        LEFT JOIN ticket_review_channel ch ON ch.review_channel_uuid=a.review_channel_uuid
-            AND ch.company_uuid=t.company_uuid
-        WHERE r.staff_user_uuid=%s AND t.company_uuid=%s AND a.kind=ANY(%s)
-        ORDER BY a.created_at DESC,a.action_uuid LIMIT 100
-    """, (actor["staff_user_uuid"], actor["company_uuid"], [kind] if kind else ["transfer", "review"]))
-    rows = fetch_rows(cursor)
-    for row in rows:
-        row["attachment"] = json.loads(row["attachment"] or "null")
-    return rows
+        INSERT INTO collab_request
+            (ticket_uuid,requester_uuid,recipient_uuid,request_type,status,memo,review_channel_uuid,decided_at)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,CASE WHEN %s='accepted' THEN now() END)
+        RETURNING collab_request_uuid
+    """, (ticket_uuid, actor["staff_user_uuid"], recipient, kind, status, memo, channel, status))
+    return cursor.fetchone()[0]
+
+
+def add_attachment(cursor, request, attachment):
+    content_type = attachment["content_type"]
+    content = attachment["content"]
+    data = content.encode("utf-8") if content_type == "text/plain" else base64.b64decode(content)
+    extension = "txt" if content_type == "text/plain" else content_type.split("/")[1]
+    cursor.execute("""
+        INSERT INTO collab_request_attachment
+            (collab_request_uuid,original_filename,content_type,storage_key,size_bytes,content)
+        VALUES (%s,%s,%s,%s,%s,%s)
+    """, (request, f"reference.{extension}", content_type, f"db:{request}", len(data), data))
+
+
+def inbox(cursor, actor, kind=None):
+    rows = inbox_repository.received(cursor, (actor["company_uuid"], actor["staff_user_uuid"]))
+    return [row for row in rows if row["kind"] in ("transfer", "review") and (kind is None or row["kind"] == kind)]
 
 
 def request_attachment(cursor, actor, action_uuid):
-    cursor.execute("""
-        SELECT a.attachment::text
-        FROM ticket_action_recipient r JOIN ticket_action a USING (action_uuid)
-        JOIN visible_ticket t USING (ticket_uuid)
-        WHERE r.staff_user_uuid=%s AND t.company_uuid=%s AND a.action_uuid=%s AND a.attachment IS NOT NULL
+    cursor.execute(f"""
+        SELECT a.original_filename,a.content_type,a.content
+        {inbox_repository.REQUEST_FROM}
+        JOIN collab_request_attachment a USING (collab_request_uuid)
+        WHERE r.recipient_uuid=%s AND t.company_uuid=%s AND r.collab_request_uuid=%s
+          AND a.content IS NOT NULL
+        ORDER BY a.created_at,a.collab_request_attachment_uuid LIMIT 1
     """, (actor["staff_user_uuid"], actor["company_uuid"], action_uuid))
-    row = cursor.fetchone()
-    return json.loads(row[0]) if row else None
+    return next(iter(fetch_rows(cursor)), None)

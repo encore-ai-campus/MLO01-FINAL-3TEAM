@@ -1,4 +1,3 @@
-import base64
 from uuid import UUID, uuid4
 
 from django.http import HttpResponse, JsonResponse
@@ -7,10 +6,10 @@ from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.accounts.presentation.views import session_token
-from config.http import DeskError, DeskJSONEncoder
+from config.http import DeskError, DeskJSONEncoder, validate_form
 from .. import actions, services
 from . import action_forms
-from .forms import parse_query
+from .forms import MemoForm, parse_query
 
 
 @require_GET
@@ -97,10 +96,12 @@ def ticket_requests(request):
 @require_GET
 def request_attachment(request, action_uuid):
     attachment = actions.request_attachment(session_token(request), action_uuid)
-    content_type = attachment["content_type"]
-    extension = {"text/plain": "txt", **{key: key.split("/")[1] for key in action_forms.IMAGE_SIGNATURES}}
-    content = attachment["content"]
-    response = HttpResponse(content if content_type == "text/plain" else base64.b64decode(content),
-                            content_type=content_type)
-    response.headers["Content-Disposition"] = f'attachment; filename="reference.{extension[content_type]}"'
+    response = HttpResponse(bytes(attachment["content"]), content_type=attachment["content_type"])
+    response.headers["Content-Disposition"] = "attachment"
     return response
+
+@require_POST
+def add_memo(request, ticket_uuid):
+    data = validate_form(MemoForm, request)
+    memo = services.add_memo(session_token(request), ticket_uuid, data["body"])
+    return JsonResponse(memo, status=201, encoder=DeskJSONEncoder)
