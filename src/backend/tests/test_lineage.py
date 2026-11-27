@@ -59,6 +59,15 @@ class LineageAccessTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         query.assert_called_once_with(self.actor["company_id"], "00000012", 1)
 
+    def test_settings_home_shows_lineage_card_to_both_admin_roles(self):
+        with patch("apps.preferences.presentation.views.current_actor", return_value=self.actor):
+            for role in ("admin", "super_admin", "agent"):
+                self.actor.update(role=role, is_company_admin=role in {"admin", "super_admin"})
+                response = self.client.get("/settings/")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual('<strong>데이터 리니지</strong>' in response.content.decode(),
+                                 role in {"admin", "super_admin"})
+
     def test_invalid_inputs_do_not_query_data(self):
         with patch.object(lineage, "event_trace") as query:
             for inputs in ({"q": "invalid"}, {"page": "0"}, {"q": "9" * 37}):
