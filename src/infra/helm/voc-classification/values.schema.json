@@ -22,6 +22,7 @@
       "required": ["enabled", "companyUUID", "databaseSecret", "image"],
       "properties": {
         "enabled": {"type": "boolean"},
+        "feastSecret": {"type": "string"},
         "schemaMode": {"enum": ["migrate", "verify-schema"]},
         "companyUUID": {"type": "string", "pattern": "^(|[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})$"},
         "databaseSecret": {
@@ -41,6 +42,7 @@
     "model": {
       "type": "object", "required": ["version", "image"], "additionalProperties": false,
       "properties": {
+        "customerFeatures": {"type": "boolean"},
         "backend": {"type": "string", "pattern": "^(|voc_models([.][A-Za-z][A-Za-z0-9_]*)+:[A-Za-z][A-Za-z0-9_]*)$"},
         "version": {"type": "string", "maxLength": 32, "not": {"const": "worker"}, "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"},
         "image": {"$ref": "#/definitions/image"}

@@ -59,3 +59,6 @@ ALTER TABLE voc.classification_job ADD COLUMN IF NOT EXISTS assignment_checked_a
 CREATE INDEX IF NOT EXISTS classification_assignment_queue
     ON voc.classification_job(company_uuid,model_version,finished_at)
     WHERE analysis_kind='category' AND state='succeeded' AND applied AND assignment_checked_at IS NULL;
+
+ALTER TABLE voc.classification_job ADD COLUMN IF NOT EXISTS uses_customer_features boolean NOT NULL DEFAULT false;
+ALTER TABLE voc.classification_job ADD COLUMN IF NOT EXISTS feature_uuid uuid;

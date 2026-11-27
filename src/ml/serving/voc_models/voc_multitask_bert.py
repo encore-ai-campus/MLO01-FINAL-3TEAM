@@ -6,6 +6,8 @@ from torch.nn import functional as F
 from transformers import BertConfig, BertModel, BertPreTrainedModel
 from transformers.modeling_outputs import SequenceClassifierOutput
 
+from .features import join_text, numeric_vector
+
 
 TASK_ORDER = ("sentiment", "commerce", "finance", "food_delivery")
 
@@ -46,19 +48,22 @@ class VocMultitaskBert(BertPreTrainedModel):
         self.bert = BertModel(config)
         dropout = config.classifier_dropout
         self.dropout = nn.Dropout(config.hidden_dropout_prob if dropout is None else dropout)
+        self.uses_customer_features = getattr(config, "voc_uses_customer_features", False)
+        head_width = config.hidden_size + (4 if self.uses_customer_features else 0)
         self.heads = nn.ModuleDict({
-            task: nn.Linear(config.hidden_size, len(self.task_labels[task]))
+            task: nn.Linear(head_width, len(self.task_labels[task]))
             for task in self.task_order
         })
         self.post_init()
 
     @classmethod
-    def from_base_pretrained(cls, path, task_labels, max_length=128):
+    def from_base_pretrained(cls, path, task_labels, max_length=128, *, uses_customer_features=False):
         """Load local BERT weights and initialize the new, untrained VOC heads."""
         config = BertConfig.from_pretrained(path, local_files_only=True)
         config.voc_task_labels = task_labels
         config.voc_task_order = list(task_labels)
         config.voc_max_length = max_length
+        config.voc_uses_customer_features = uses_customer_features
         model, loading_info = cls.from_pretrained(
             path, config=config, local_files_only=True, output_loading_info=True,
         )
@@ -81,6 +86,13 @@ class VocMultitaskBert(BertPreTrainedModel):
             return_dict=True,
         ).pooler_output
 
+    def _combine_features(self, encoded, customer_features):
+        if not self.uses_customer_features:
+            return encoded
+        if customer_features is None or customer_features.shape != (len(encoded), 4):
+            raise ValueError("Each ticket requires a four-value customer feature vector")
+        return torch.cat((encoded, customer_features.to(encoded)), dim=1)
+
     def forward(
         self,
         input_ids,
@@ -90,12 +102,14 @@ class VocMultitaskBert(BertPreTrainedModel):
         labels=None,
         loss_weights=None,
         task=None,
+        customer_features=None,
     ):
         """Use a uniform logit shape for batches containing examples from multiple tasks."""
         if (task is None) == (task_ids is None):
             raise ValueError("배치의 작업 이름 또는 행별 작업 번호를 지정해야 합니다.")
 
         encoded = self.dropout(self._encode(input_ids, attention_mask, token_type_ids))
+        encoded = self._combine_features(encoded, customer_features)
         if task is not None:
             if task not in self.heads:
                 raise ValueError(f"지원하지 않는 분류 작업입니다. {task}")
@@ -124,7 +138,7 @@ class VocMultitaskBert(BertPreTrainedModel):
         return SequenceClassifierOutput(loss=loss, logits=logits)
 
     @torch.inference_mode()
-    def classify(self, tokenizer, text, domain, max_length=None):
+    def classify(self, tokenizer, text, domain, max_length=None, *, title=None, customer_features=None):
         """Return sentiment and the supplied domain's issue from one encoding."""
         if not isinstance(text, str) or not text.strip():
             raise ValueError("분류할 VOC 본문을 입력해야 합니다.")
@@ -134,8 +148,13 @@ class VocMultitaskBert(BertPreTrainedModel):
         length = self.max_length if max_length is None else max_length
         self._validate_max_length(length)
         self.eval()
+        if self.uses_customer_features and customer_features is None:
+            raise ValueError("Customer features are required")
+        if self.uses_customer_features:
+            text = join_text(title, text)
+            customer_features = torch.tensor([numeric_vector(customer_features)], device=self.device)
         tokens = tokenizer(text, truncation=True, max_length=length, return_tensors="pt")
-        encoded = self._encode(**tokens.to(self.device))
+        encoded = self._combine_features(self._encode(**tokens.to(self.device)), customer_features)
 
         def prediction(task):
             score, label_id = self.heads[task](encoded).softmax(dim=-1)[0].max(dim=-1)

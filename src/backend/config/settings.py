@@ -22,6 +22,16 @@ if not SECRET_KEY:
 DEBUG = False
 VOC_POC_RANDOM_ASSIGNMENT = os.getenv("VOC_POC_RANDOM_ASSIGNMENT") == "1"
 VOC_ASSIGNMENT_WORKER_TOKEN = secret("VOC_ASSIGNMENT_WORKER_TOKEN", "voc_assignment_worker_token")
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "")
+MLFLOW_TRACKING_TOKEN = secret("MLFLOW_TRACKING_TOKEN", "mlflow_tracking_token")
+ARGO_WORKFLOWS_URL = os.getenv("ARGO_WORKFLOWS_URL", "")
+ARGO_WORKFLOWS_TOKEN = os.getenv("ARGO_WORKFLOWS_TOKEN", "")
+ARGO_WORKFLOWS_TOKEN_FILE = os.getenv("ARGO_WORKFLOWS_TOKEN_FILE", "/run/secrets/argo_workflows_token")
+ARGO_WORKFLOWS_NAMESPACE = os.getenv("ARGO_WORKFLOWS_NAMESPACE", "argo")
+ARGO_WORKFLOWS_UI_URL = os.getenv("ARGO_WORKFLOWS_UI_URL", "")
+MLFLOW_UI_URL = os.getenv("MLFLOW_UI_URL", "")
+MINIO_CONSOLE_URL = os.getenv("MINIO_CONSOLE_URL", "")
+VOC_TRAINING_MODEL_NAME = os.getenv("VOC_TRAINING_MODEL_NAME", "voc-bert")
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]").split(",")
 ROOT_URLCONF = "config.urls"
 ASGI_APPLICATION = "config.asgi.application"

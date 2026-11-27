@@ -1,0 +1,30 @@
+.training-layout { display: grid; gap: 16px; }
+.training-layout[hidden] { display: none; }
+.training-history { margin-top: 16px; }
+.training-steps { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); margin: 12px 0 2px; padding: 0; list-style: none; }
+.training-step { --progress-green: #65a30d; position: relative; min-width: 0; padding: 24px 2px 0; text-align: center; font-size: 13px; color: var(--desk-muted); overflow-wrap: anywhere; }
+.training-step::before { content: ""; position: absolute; z-index: 1; top: 2px; left: 50%; width: 12px; height: 12px; transform: translateX(-50%); border-radius: 50%; background: #d5d9d1; }
+.training-step:not(:last-child)::after { content: ""; position: absolute; top: 7px; left: 50%; width: 100%; height: 2px; background: #d5d9d1; }
+.training-step.is-done::before, .training-step.is-done::after, .training-step.is-active::before { background: var(--progress-green); }
+.training-step.is-active { color: var(--heading); font-weight: 700; }
+.training-step.is-active::before { box-shadow: 0 0 0 3px #e7f4cf; }
+.training-step.is-failed::before { background: #b91c1c; }
+.training-step.is-failed { color: #9d1c1c; font-weight: 700; }
+.training-operation { padding: 10px 0; }
+.training-operation + .training-operation, .training-summary { border-top: 1px solid var(--desk-line); }
+.training-operation h3 { margin: 0; font-size: 14px; }
+.training-operation-status { margin: 4px 0; }
+.training-overall [data-training-label] { font-weight: 700; }
+.training-steps, .training-summary, .training-links { min-width: 0; }
+.training-summary { margin-top: 12px; padding-top: 10px; }
+.training-summary p, .training-run-name { overflow-wrap: anywhere; }
+.training-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.training-links:not(:empty) { margin-top: 12px; }
+.training-history-list { list-style: none; padding: 0; margin: 0; }
+.training-history-list li { padding: 8px 0; border-top: 1px solid var(--desk-line); }
+.training-history-list a { color: var(--heading); text-decoration: underline; }
+.training-history-list p { overflow-wrap: anywhere; }
+@media (max-width: 520px) {
+  .training-step { font-size: 12px; }
+  .training-layout .desk-card { padding-inline: 12px; }
+}

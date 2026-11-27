@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views
+from . import training, views
 
 app_name = "preferences"
 urlpatterns = [
@@ -11,4 +11,9 @@ urlpatterns = [
     path("settings/replies/new/", views.reply, name="reply-create"),
     path("settings/replies/<uuid:reply_uuid>/", views.reply, name="reply-edit"),
     path("settings/messenger/", views.messenger, name="messenger"),
+    path("model-training/", training.page, name="model-training"),
+    path("model-training/runs/", training.recent, name="training-recent"),
+    path("model-training/runs/<str:workflow_name>/", training.detail, name="training-detail"),
+    path("model-training/runs/<str:workflow_name>/status/", training.status, name="training-status"),
+    path("settings/model-training/", training.page, name="legacy-model-training"),
 ]

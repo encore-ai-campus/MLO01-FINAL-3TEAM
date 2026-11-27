@@ -16,6 +16,9 @@
   <a class="desk-nav-item" href="/analytics/" {% if active == "analytics" %}aria-current="page"{% endif %}><svg aria-hidden="true"><use href="#desk-analytics"></use></svg>분석 대시보드</a>
   {% endif %}
   {% endwith %}
+  {% if actor.role == "super_admin" %}
+  <a class="desk-nav-item" href="{% url 'preferences:model-training' %}" {% if active == "model_training" %}aria-current="page"{% endif %}><svg aria-hidden="true"><use href="#desk-analytics"></use></svg>모델 학습</a>
+  {% endif %}
   <details class="desk-settings-menu"{% if active == "settings" %} open{% endif %}>
     <summary class="desk-nav-item desk-nav-settings"{% if active == "settings" %} data-active{% endif %}>
       <svg aria-hidden="true"><use href="#desk-settings"></use></svg>설정

@@ -122,7 +122,8 @@ def apply_category_result(*, company_uuid, event_id, preprocess_version, body_ve
         return assignment_result(repo.read_ticket(cursor, company_uuid, ticket_uuid), outcome)
 
 
-def change_analysis(token, ticket_uuid, *, category_uuid=None, sentiment=None, team_uuid=None, reason=""):
+def change_analysis(token, ticket_uuid, *, category_uuid=None, sentiment=None, team_uuid=None, reason="",
+                    feature_uuid=None, is_urgent=None):
     from apps.tickets.actions import require_assignee, write_ticket
 
     with write_ticket(token, ticket_uuid) as (cursor, actor, locked_ticket):
@@ -151,7 +152,7 @@ def change_analysis(token, ticket_uuid, *, category_uuid=None, sentiment=None, t
             repo.save_manual_sentiment(cursor, ticket_uuid, sentiment)
         if team_changed:
             repo.reassign_team(cursor, ticket_uuid, team_uuid)
-        if not (category_changed or sentiment_changed or team_changed):
+        if not (category_changed or sentiment_changed or team_changed or is_urgent is not None):
             return assignment_result(ticket, "already_applied")
         result = repo.read_ticket(cursor, company_uuid, ticket_uuid)
         actor_uuid = actor["staff_user_uuid"]
@@ -159,14 +160,35 @@ def change_analysis(token, ticket_uuid, *, category_uuid=None, sentiment=None, t
             "team_before": ticket["assigned_team_uuid"], "team_after": result["assigned_team_uuid"],
             "assignee_before": ticket["assignee_uuid"], "assignee_after": result["assignee_uuid"],
         }
+        if feature_uuid and (category_changed or sentiment_changed or is_urgent is not None):
+            cursor.execute("SELECT voc.ticket_feature_uuid(%s)", (ticket_uuid,))
+            current_feature = cursor.fetchone()[0]
+            if str(current_feature) != str(feature_uuid):
+                feature_uuid = None
+        if is_urgent is not None:
+            if not feature_uuid:
+                raise DeskError(409, "STALE_REVIEW_FEATURE", "입력 버전이 바뀌었습니다. 검수 화면을 다시 열어 주세요.")
+            if not reason.strip():
+                raise DeskError(422, "REVIEW_REASON_REQUIRED", "긴급 여부를 기록할 때는 검수 사유를 적어 주세요.")
+            evidence = repo.record_manual_event(
+                cursor, ticket_uuid, "ticket_training_reviewed", actor=actor_uuid, reason=reason,
+                details={"feature_uuid": feature_uuid, "is_urgent": is_urgent},
+            )
+            repo.record_training_review(
+                cursor, feature_uuid, actor_uuid, sentiment=sentiment if sentiment_changed else None,
+                category_uuid=category_uuid if category_uuid != ticket["category_uuid"] else None,
+                urgent=is_urgent, evidence=evidence,
+            )
         if category_changed:
             repo.record_event(cursor, ticket_uuid, "ticket_category_changed", actor=actor_uuid, reason=reason, details={
-                **assignment_changes, "category_before": ticket["category_uuid"], "category_after": category_uuid,
+                **assignment_changes, "feature_uuid": feature_uuid,
+                "category_before": ticket["category_uuid"], "category_after": category_uuid,
                 "review_reason": result["category_review_reason"],
             })
         if sentiment_changed:
             repo.record_manual_event(cursor, ticket_uuid, "ticket_sentiment_changed",
                                      actor=actor_uuid, reason=reason, details={
+                                         "feature_uuid": feature_uuid,
                                          "sentiment_before": ticket["sentiment"], "sentiment_after": sentiment,
                                      })
         if team_changed:

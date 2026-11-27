@@ -1,10 +1,12 @@
 models:
   stable:
     version: stub-v1
+    customerFeatures: false
     backend: "" # Optional image override, e.g. voc_models.classifier:load.
     image: {repository: voc-classifier, tag: stub-1, digest: ""}
   canary:
     version: stub-v2
+    customerFeatures: false
     backend: "" # Optional image override, e.g. voc_models.classifier:load.
     image: {repository: voc-classifier, tag: stub-1, digest: ""}
 
@@ -16,6 +18,7 @@ worker:
   enabled: false
   companyUUID: ""
   schemaMode: migrate
+  feastSecret: ""
   databaseSecret:
     name: voc-classification-db
     key: DATABASE_URL

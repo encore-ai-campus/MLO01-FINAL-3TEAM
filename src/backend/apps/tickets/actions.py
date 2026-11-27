@@ -164,9 +164,12 @@ def store_message(token, ticket_uuid, message_type, body, request_key):
                 status = "sending"
         cursor.execute(f"""
             INSERT INTO ticket_message
-                (ticket_uuid,staff_user_uuid,body,sender_type,message_type,delivery_status,created_at,request_key)
-            VALUES (%s,%s,%s,'staff',%s,%s,now(),%s) RETURNING {repo.MESSAGE_FIELDS}
-        """, (ticket_uuid, actor["staff_user_uuid"], body, message_type, status, request_key))
+                (ticket_uuid,staff_user_uuid,body,sender_type,message_type,delivery_status,created_at,request_key,
+                 reviewed_feature_uuid)
+            VALUES (%s,%s,%s,'staff',%s,%s,now(),%s,
+                    CASE WHEN %s THEN voc.ticket_feature_uuid(%s) END) RETURNING {repo.MESSAGE_FIELDS}
+        """, (ticket_uuid, actor["staff_user_uuid"], body, message_type, status, request_key,
+              status == "sending", ticket_uuid))
         message = fetch_rows(cursor)[0]
         cursor.execute("UPDATE ticket SET updated_at=now() WHERE ticket_uuid=%s", (ticket_uuid,))
 
@@ -185,9 +188,10 @@ def store_message(token, ticket_uuid, message_type, body, request_key):
         cursor.execute("SELECT status FROM ticket WHERE ticket_uuid=%s FOR UPDATE", (ticket_uuid,))
         ticket_status = cursor.fetchone()[0]
         cursor.execute(f"""
-            UPDATE ticket_message SET delivery_status=%s,provider_message_id=%s
+            UPDATE ticket_message SET delivery_status=%s,provider_message_id=%s,
+                sent_at=CASE WHEN %s THEN coalesce(sent_at,clock_timestamp()) ELSE sent_at END
             WHERE ticket_message_uuid=%s RETURNING {repo.MESSAGE_FIELDS}
-        """, (status, provider_id, message["ticket_message_uuid"]))
+        """, (status, provider_id, status == "sent", message["ticket_message_uuid"]))
         message = fetch_rows(cursor)[0]
         if status == "sent" and ticket_status != "답변완료":
             repo.add_event(cursor, ticket_uuid, actor, "ticket_reply_completed",

@@ -12,11 +12,18 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Counter, Gauge, Histogram, generate_latest
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 LOGGER = logging.getLogger(__name__)
 KINDS = {"sentiment", "category"}
 SENTIMENT_LABELS = {"긍정", "중립", "부정", "매우 부정"}
+
+
+class CustomerFeatures(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    unresolved_count: int | None = Field(ge=0)
+    avg_first_reply_7d_seconds: float | None = Field(ge=0, allow_inf_nan=False)
 
 
 class PredictRequest(BaseModel):
@@ -26,6 +33,8 @@ class PredictRequest(BaseModel):
     analysis_kind: Literal["sentiment", "category"]
     domain_id: str
     model_text: str
+    title: str | None = None
+    customer_features: CustomerFeatures | None = None
 
     @field_validator("request_id", "domain_id")
     @classmethod
@@ -156,9 +165,15 @@ def create_app() -> FastAPI:
         if kind not in state.kinds:
             count.labels(kind, "unsupported").inc()
             raise HTTPException(status_code=422, detail="Analysis kind is disabled")
+        options = {}
+        if getattr(state.predict, "requires_customer_features", False):
+            if payload.customer_features is None:
+                count.labels(kind, "unsupported").inc()
+                raise HTTPException(status_code=422, detail="Customer features are required")
+            options = {"title": payload.title, "customer_features": payload.customer_features.model_dump()}
         try:
             with latency.labels(kind).time():
-                result = state.predict(kind, payload.domain_id, payload.model_text)
+                result = state.predict(kind, payload.domain_id, payload.model_text, **options)
             prediction = _validated_prediction(kind, result)
         except Exception:
             count.labels(kind, "error").inc()

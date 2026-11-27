@@ -58,6 +58,18 @@ spec:
               value: {{ .Values.models.stable.version | quote }}
             - name: CANARY_MODEL_VERSION
               value: {{ .Values.models.canary.version | quote }}
+            {{- if or .Values.models.stable.customerFeatures .Values.models.canary.customerFeatures }}
+            - name: STABLE_CUSTOMER_FEATURES
+              value: {{ ternary "1" "0" (.Values.models.stable.customerFeatures | default false) | quote }}
+            - name: CANARY_CUSTOMER_FEATURES
+              value: {{ ternary "1" "0" (.Values.models.canary.customerFeatures | default false) | quote }}
+            - name: FEAST_REGISTRY_URL
+              valueFrom:
+                secretKeyRef: {name: {{ required "worker.feastSecret is required for customer features" .Values.worker.feastSecret | quote }}, key: FEAST_REGISTRY_URL}
+            - name: FEAST_REDIS_CONNECTION
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.worker.feastSecret | quote }}, key: FEAST_REDIS_CONNECTION}
+            {{- end }}
             - name: SENTIMENT_CANARY_PERCENT
               value: {{ .Values.routing.sentiment.canaryPercent | quote }}
           readinessProbe:

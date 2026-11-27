@@ -91,14 +91,24 @@ def reassign_team(cursor, ticket_uuid, team_uuid):
 
 def record_manual_event(cursor, ticket_uuid, code, *, actor, reason, details):
     cursor.execute("INSERT INTO event_type(code) VALUES (%s) ON CONFLICT (code) DO NOTHING", (code,))
-    record_event(cursor, ticket_uuid, code, actor=actor, reason=reason, details=details)
+    return record_event(cursor, ticket_uuid, code, actor=actor, reason=reason, details=details)
 
 
 def record_event(cursor, ticket_uuid, code, *, actor=None, recipient=None, reason=None, details=None):
     cursor.execute("""
-        INSERT INTO ticket_event(ticket_uuid,event_type_uuid,actor_uuid,recipient_uuid,transfer_reason,details)
-        SELECT %s,event_type_uuid,%s,%s,%s,%s::jsonb FROM event_type WHERE code=%s
+        INSERT INTO ticket_event(ticket_uuid,event_type_uuid,actor_uuid,recipient_uuid,transfer_reason,details,created_at)
+        SELECT %s,event_type_uuid,%s,%s,%s,%s::jsonb,clock_timestamp() FROM event_type WHERE code=%s
+        RETURNING ticket_event_uuid
     """, (ticket_uuid, actor, recipient, reason, json.dumps(details or {}, default=str), code))
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+
+def record_training_review(cursor, feature_uuid, reviewer_uuid, *, sentiment, category_uuid, urgent, evidence):
+    cursor.execute("""
+        INSERT INTO voc.counselor_review(feature_uuid,reviewer_uuid,sentiment,category_uuid,is_urgent,evidence_ref)
+        VALUES (%s,%s,%s,%s,%s,%s)
+    """, (feature_uuid, reviewer_uuid, sentiment, category_uuid, urgent, str(evidence)))
 
 
 def team_policies(cursor, company_uuid, team_uuid):

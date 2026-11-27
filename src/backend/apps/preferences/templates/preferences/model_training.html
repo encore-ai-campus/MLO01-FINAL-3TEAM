@@ -1,0 +1,48 @@
+{% extends "preferences/base.html" %}
+{% load static %}
+{% block title %}모델 학습{% endblock %}
+{% block styles %}
+  {{ block.super }}
+  <link rel="stylesheet" href="{% static 'preferences/model-training.css' %}">
+{% endblock %}
+{% block settings_content %}
+<div class="desk-heading">
+  <h1>모델 학습</h1>
+  {% if run_name %}<a class="desk-button" href="{% url 'preferences:model-training' %}">새 학습 설정</a>{% endif %}
+</div>
+{% if not run_name %}
+<section class="desk-card" data-training-setup>
+  {% if notice %}<p class="desk-sub" role="status">{{ notice }}</p>{% endif %}
+  {% if form %}
+    <form method="post" action="{% url 'preferences:model-training' %}" class="settings-form" data-training-form>
+      {% csrf_token %}
+      {{ form.as_p }}
+      <div class="settings-actions">
+        <button class="desk-button desk-button-solid" type="submit" {% if not can_submit %}disabled{% endif %}>
+          Argo 학습 실행
+        </button>
+      </div>
+    </form>
+  {% endif %}
+</section>
+<section class="desk-card training-history" data-training-history="{% url 'preferences:training-recent' %}">
+  <h2>최근 학습 실행</h2>
+  <p role="status" data-history-notice>최근 실행 불러오는 중</p>
+  <ul class="training-history-list" data-history-list></ul>
+</section>
+{% endif %}
+<div class="training-layout" data-training-progress {% if run_name %}
+     data-status-url="{% url 'preferences:training-status' run_name %}"{% else %}hidden{% endif %}>
+  <section class="desk-card training-overall">
+    <h2>전체 진행</h2>
+    {% if run_name %}<p class="training-run-name">{{ run_name }}</p>{% endif %}
+    <p role="status" data-training-label></p>
+    <p role="status" data-training-notice>{% if not training_snapshot %}상태 조회 지연{% endif %}</p>
+    <div data-training-overall></div>
+    <div class="training-links" data-training-links></div>
+  </section>
+  <div class="training-layout" data-training-cards></div>
+</div>
+{{ training_snapshot|json_script:"training-snapshot" }}
+<script type="module" src="{% static 'preferences/model-training.mjs' %}"></script>
+{% endblock %}

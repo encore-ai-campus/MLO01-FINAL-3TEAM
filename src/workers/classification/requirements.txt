@@ -1,1 +1,3 @@
-psycopg[binary]==3.3.9
+psycopg[binary]==3.2.5
+feast[postgres,redis]==0.57.0
+sqlalchemy==2.0.44
