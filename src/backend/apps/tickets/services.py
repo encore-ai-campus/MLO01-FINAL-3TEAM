@@ -41,7 +41,9 @@ class TicketDesk:
 
     def detail(self, ticket_uuid, with_controls=False):
         can_conduct = action_repository.can_conduct(self._cursor, self.actor)
-        result = repository.detail(self._cursor, self.actor["company_uuid"], ticket_uuid, can_conduct)
+        result = repository.detail(
+            self._cursor, self.actor["company_uuid"], ticket_uuid, can_conduct, for_page=with_controls,
+        )
         if result is None:
             raise DeskError(404, "TICKET_NOT_FOUND", "티켓을 찾을 수 없습니다.")
         result["can_conduct"] = can_conduct
