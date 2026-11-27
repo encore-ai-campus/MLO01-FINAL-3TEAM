@@ -10,6 +10,7 @@ urlpatterns = [
     path("api/tickets/options", views.options),
     path("api/tickets", views.ticket_list, {"as_json": True}),
     path("api/tickets/<uuid:ticket_uuid>/memos", views.add_memo, name="add-memo"),
+    path("api/tickets/<uuid:ticket_uuid>/summary", views.ticket_summary, name="summary"),
     path("api/tickets/<str:ticket_uuid>", views.detail, {"as_json": True}),
     path("api/ticket-requests", views.ticket_requests),
     path("api/ticket-requests/<uuid:action_uuid>/attachment", views.request_attachment, name="request-attachment"),

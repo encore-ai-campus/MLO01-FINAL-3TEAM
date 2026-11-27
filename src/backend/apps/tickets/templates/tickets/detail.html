@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% load static ticket_ui %}
 {% block title %}티켓 #{{ ticket.ticket_number }}{% endblock %}
-{% block styles %}<link rel="stylesheet" href="{% static 'tickets/detail.css' %}?v=2">{% endblock %}
+{% block styles %}<link rel="stylesheet" href="{% static 'tickets/detail.css' %}?v=3">{% endblock %}
 {% block content %}
 <section class="ticket-detail" aria-labelledby="ticket-detail-title">
   <div class="ticket-detail-body">
@@ -18,7 +18,6 @@
           <h1 id="ticket-detail-title">#{{ ticket.ticket_number }} {{ ticket.title }}</h1>
           <p class="detail-caption">접수 <time datetime="{{ ticket.created_at|timestamp }}">{{ ticket.created_at|detail_time }}</time></p>
         </div>
-        <p class="detail-summary"><strong>AI 요약</strong><span>요약 연결 대기</span></p>
       </header>
       <section class="detail-chat" aria-label="문의 대화">
         <ol class="detail-messages">
@@ -91,5 +90,5 @@
     </aside>
   </div>
 </section>
-{% if can_conduct %}<script src="{% static 'tickets/detail-actions.js' %}?v=2" defer></script>{% endif %}
+{% if can_conduct %}<script src="{% static 'tickets/detail-actions.js' %}?v=3" defer></script>{% endif %}
 {% endblock %}

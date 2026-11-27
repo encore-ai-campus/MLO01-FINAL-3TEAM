@@ -20,6 +20,62 @@ if (composer) {
   });
 }
 
+const summaryToggle = document.querySelector('#ticket-summary-toggle');
+if (summaryToggle && composer) {
+  const panel = document.querySelector('#ticket-summary-panel');
+  const status = panel.querySelector('[role="status"]');
+  const retry = panel.querySelector('button');
+  let pending = null;
+
+  async function requestSummary() {
+    const response = await fetch(summaryToggle.dataset.url, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {'X-CSRFToken': composer.elements.csrfmiddlewaretoken.value, 'Accept': 'application/json'},
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail?.message || '요약을 불러오지 못했습니다.');
+    if (data.partial) return '문의 앞뒤 일부에서 발췌\n' + data.text;
+    if (data.mode === 'original') return '문의 원문\n' + data.text;
+    return data.text;
+  }
+
+  async function showSummary() {
+    panel.hidden = !summaryToggle.checked;
+    retry.hidden = true;
+    if (panel.hidden) {
+      status.textContent = '';
+      return;
+    }
+    status.textContent = '문의 내용을 요약하고 있습니다…';
+    if (pending) return;
+    pending = requestSummary();
+    try {
+      const text = await pending;
+      if (summaryToggle.checked) status.textContent = text;
+    } catch (error) {
+      if (summaryToggle.checked) {
+        status.textContent = error instanceof TypeError || error instanceof SyntaxError
+          ? '요약을 불러오지 못했습니다.' : error.message;
+        retry.hidden = false;
+      }
+    } finally {
+      pending = null;
+    }
+  }
+
+  function resetSummary() {
+    summaryToggle.checked = false;
+    panel.hidden = true;
+    status.textContent = '';
+    retry.hidden = true;
+  }
+  resetSummary();
+  window.addEventListener('pageshow', event => { if (event.persisted) resetSummary(); });
+  summaryToggle.addEventListener('change', showSummary);
+  retry.addEventListener('click', showSummary);
+}
+
 const grip = document.querySelector('.detail-grip');
 if (grip && responseBody) {
   let drag = null;

@@ -77,6 +77,22 @@ def detail(cursor, company_uuid, ticket_uuid, include_memos=False, *, for_page=F
             "duplicate_candidates": fetch_rows(cursor)}
 
 
+def summary_source(cursor, company_uuid, ticket_uuid):
+    cursor.execute("""
+        SELECT t.assignee_uuid, ch.type AS channel, COALESCE(
+            (SELECT h.model_text FROM voc.model_text_history h
+             WHERE h.company_uuid=t.company_uuid AND h.event_id=t.source_event_id
+             ORDER BY h.body_version DESC, h.preprocess_version DESC LIMIT 1),
+            (SELECT string_agg(m.body, E'\\n' ORDER BY m.created_at,m.ticket_message_uuid)
+             FROM ticket_message m WHERE m.ticket_uuid=t.ticket_uuid
+               AND m.sender_type='customer' AND m.message_type='inquiry')
+        ) AS body
+        FROM visible_ticket t JOIN channel ch ON ch.channel_uuid=t.channel_uuid AND ch.company_uuid=t.company_uuid
+        WHERE t.company_uuid=%s AND t.ticket_uuid=%s
+    """, (company_uuid, ticket_uuid))
+    return next(iter(fetch_rows(cursor)), None)
+
+
 def _id_filter(conditions, params, column, entries):
     if entries:
         ids = [entry for entry in entries if entry != "unassigned"]

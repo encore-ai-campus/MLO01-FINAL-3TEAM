@@ -69,6 +69,16 @@ VALUES (:'company_id'::uuid,lower(:'email'),:'staff_name',:'password_hash');
 
 티켓 목록·상세는 PostgreSQL에서 조회한다. 업무 홈·수신함·분석 화면의 예시 데이터는 화면에 시연용으로 표시한다. [화면 설계](docs/화면설계.md)
 
+### 티켓 상세의 AI 요약
+
+상담사가 배정된 티켓에서 상담 권한이 있는 직원이 답변 작성란 위의 **AI 요약**을 선택하면 Django가 고객 문의 본문을 로컬 Ollama에 보낸다. 요약은 해당 화면에만 표시된다. Mac에서 Ollama를 실행하고 저장소 루트에서 아래 명령으로 모델을 한 번 등록한다.
+
+```sh
+ollama create voc-ticket-summary:qwen2.5-1.5b -f src/ml/ticket-summary/Modelfile
+```
+
+Mac에서 직접 실행한 Django는 기본적으로 `http://127.0.0.1:11434`에 연결한다. Docker Desktop의 Compose 및 Mac 시연 배포에서는 `http://host.docker.internal:11434`를 쓴다. 다른 구성에서는 웹 서비스의 `VOC_OLLAMA_URL`로 주소를 설정한다.
+
 ### 개발 환경
 
 저장소 루트에서 가상환경을 만들고 실행한다. `DATABASE_URL`은 업무 스키마가 초기화된 PostgreSQL 접속 문자열이다. 로컬 예시는 macOS·Linux 셸 기준이다.

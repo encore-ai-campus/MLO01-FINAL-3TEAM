@@ -78,7 +78,6 @@
 .ticket-detail .detail-header { padding: 12px 14px 8px; }
 .ticket-detail .detail-header-line { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; }
 .ticket-detail .detail-header h1 { margin: 5px 0; font-size: clamp(20px, 2.2vw, 26px); }
-.ticket-detail .detail-summary { display: flex; align-items: baseline; gap: 20px; padding: 10px 12px; background: #f7f7f7; border-radius: 7px; font-size: 13px; }
 .detail-caption { font-size: 12px; color: var(--desk-muted); }
 .detail-chat { flex: 1; margin: 0 12px; padding-bottom: 14px; border-top: 1px solid var(--desk-line); }
 .ticket-detail .detail-messages { padding: 15px 6px; }
@@ -119,6 +118,12 @@
 .detail-current-ticket { background: #efefef; border-radius: 6px; }
 .detail-compose-area { border-top: 1px solid var(--desk-line); padding: 12px 14px 14px; }
 .ticket-detail .detail-composer { margin: 0; }
+.ticket-actions .detail-summary-toggle { display: inline-flex; align-items: center; gap: 7px; min-height: 30px; margin-bottom: 4px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.detail-summary-toggle input { margin: 0; width: 16px; height: 16px; accent-color: var(--primary); }
+.detail-summary-panel { margin-bottom: 8px; padding: 8px 10px; background: var(--desk-soft); border-radius: 7px; font-size: 13px; }
+.detail-summary-panel p { margin: 0; max-height: 10rem; overflow-y: auto; }
+.detail-summary-panel button:not([hidden]) { margin-top: 6px; }
+.detail-summary-panel [hidden], .detail-summary-panel[hidden] { display: none; }
 .detail-composer textarea { height: 113px; min-height: 64px; max-height: 45vh; resize: vertical; }
 .detail-compose-tools label { display: flex; align-items: center; }
 .detail-compose-buttons { display: flex; align-items: center; gap: 4px; }

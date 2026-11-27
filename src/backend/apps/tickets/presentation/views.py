@@ -81,6 +81,11 @@ def detail_controls(request, ticket_uuid, control):
 
 
 @require_POST
+def ticket_summary(request, ticket_uuid):
+    return JsonResponse(services.summarize_ticket(session_token(request), ticket_uuid))
+
+
+@require_POST
 def ticket_action(request, ticket_uuid, action, as_json=False):
     data = action_forms.fields(request)
     token = session_token(request)
