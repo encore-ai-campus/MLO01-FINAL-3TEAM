@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).with_name("grafana") / "dashboards"
-PAGES = {"pipeline": "파이프라인", "inference": "AI 추론", "deployment": "카나리 배포"}
+PAGES = {"pipeline": "파이프라인", "inference": "AI 추론", "deployment": "카나리 배포", "model-guard": "모델 운영 기록"}
 STEPS = {
     "capture": "수집",
     "bronze": "원문 저장",
@@ -305,7 +305,7 @@ filter_variable = {
 
 def inference_query(rollout=None):
     api = "classification" if rollout else "embedding"
-    route = f"AND rollout='{rollout}' AND model_name IS NOT NULL AND model_version IS NOT NULL" if rollout else ""
+    route = f"AND rollout='{rollout}'" if rollout else ""
     timings = (
         'round(percentile_cont(0.95) WITHIN GROUP(ORDER BY extract(epoch FROM (ended_at-started_at))*1000)::numeric,1) AS "워커 처리 P95 (ms)"'
         if rollout else
@@ -434,12 +434,58 @@ DEPLOYMENT = [
         f'sum by (rollout,model_version,analysis_kind) (voc_model_predictions_total{LIVE})')),
 ]
 
+def query_variable(name, label, query):
+    return {"type": "query", "name": name, "label": label, "datasource": SQL, "query": query,
+            "definition": query, "refresh": 1, "multi": False, "includeAll": False}
+
+
+TENANT = "company_uuid::text=${company:sqlstring}"
+SCOPE = TENANT + " AND scope_key=${scope:sqlstring}"
+GUARD_VARIABLES = [
+    query_variable("company", "회사", """SELECT DISTINCT company_name AS __text,company_uuid::text AS __value
+        FROM voc_monitor.review_scopes ORDER BY 1"""),
+    query_variable("scope", "판정 업무", f"""SELECT scope_name AS __text,scope_key AS __value
+        FROM voc_monitor.review_scopes WHERE {TENANT} ORDER BY scope_key DESC"""),
+]
+GUARD = [
+    panel(1, "후보 트래픽과 자동 복귀", 0, 0, 24, 6, f"""
+SELECT candidate_version AS "후보",stable_version AS "기존", configured_percent AS "설정 (%)",
+       effective_percent AS "실제 배정 (%)",distinct_failures AS "연속 실패 문의",
+       CASE WHEN tripped_at IS NULL THEN '감시 중' ELSE '자동 복귀 완료' END AS "상태",
+       CASE reason WHEN 'consecutive_failures' THEN '서로 다른 문의 3건 연속 실패' WHEN 'candidate_error_rate' THEN '후보 오류율 초과'
+            WHEN 'candidate_p95' THEN '후보 p95 초과' END AS "복귀 사유",
+       first_failure_at AS "최초 실패",tripped_at AS "복귀 시각",recovery_ms AS "최초 실패부터 복귀 (ms)"
+FROM voc_monitor.rollout WHERE {SCOPE} ORDER BY tripped_at DESC NULLS FIRST,candidate_version"""),
+    panel(2, "저장된 회사 기준", 0, 6, 24, 5, f"""
+SELECT revision AS "개정", settings->>'min_calls' AS "최소 완료 호출",settings->>'error_limit' AS "오류율 상한 (%)",
+       settings->>'latency_limit' AS "p95 상한 (기존 대비 배)",settings->>'absolute_p95' AS "p95 절대 상한 (ms)",
+       settings->>'cost_limit' AS "비용 상한 (원/1,000건)",updated_at AS "저장 시각"
+FROM voc_monitor.review_policy WHERE {SCOPE}"""),
+    panel(3, "호출·응답시간 30분 / 비용 7일", 0, 11, 24, 6, f"""
+WITH samples AS (SELECT *,started_at>{TIME_TO}-interval '30 minutes' AS recent FROM voc_monitor.inference
+    WHERE {SCOPE} AND started_at>{TIME_TO}-interval '7 days' AND ended_at<={TIME_TO})
+SELECT rollout AS "배정 경로",assigned_version AS "배정 버전",traffic AS "출처",count(*) FILTER (WHERE recent) AS "종료 호출",
+       count(*) FILTER (WHERE recent AND error IS NOT NULL) AS "실패",
+       CASE WHEN count(response_ms) FILTER (WHERE recent)=count(*) FILTER (WHERE recent)
+            THEN round((percentile_cont(.95) WITHIN GROUP (ORDER BY response_ms) FILTER (WHERE recent))::numeric,2) END AS "HTTP p95 (ms)",
+       CASE WHEN count(cost_krw)=count(*) THEN round(avg(cost_krw)*1000,2) END AS "비용 (원/1,000건)"
+FROM samples GROUP BY 1,2,3"""),
+    panel(4, "VOC 수집과 모델 호출 기록", 0, 17, 24, 12, f"""
+SELECT i.ticket_number AS "티켓",i.event_id::text AS "수집 ID",r.channel AS "채널",r.reconciliation AS "원본·티켓 대조",
+       i.rollout AS "배정",i.assigned_version AS "배정 버전",i.model_version AS "응답 버전",i.prediction AS "분류",
+       i.error AS "오류",round(i.response_ms::numeric,2) AS "HTTP 시간 (ms)",i.started_at AS "호출 시각"
+FROM voc_monitor.inference i JOIN voc_monitor.source_reconciliation r USING(event_id)
+WHERE {SCOPE} AND {period('i.started_at')} ORDER BY i.started_at DESC LIMIT 200"""),
+]
+
+
 if __name__ == "__main__":
     payloads = [
         dashboard("pipeline", PIPELINES),
         dashboard("pipeline-stage", [STAGE_DETAIL], template=[filter_variable], title="문의 처리 단계 상세"),
         dashboard("inference", INFERENCE),
         dashboard("deployment", DEPLOYMENT),
+        dashboard("model-guard", GUARD, template=GUARD_VARIABLES, time={"from": "now-24h", "to": "now"}),
     ]
     for document in payloads:
         (ROOT / (document["uid"].removeprefix("voc-") + ".json")).write_text(

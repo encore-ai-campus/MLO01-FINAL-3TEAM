@@ -31,6 +31,7 @@ ARGO_WORKFLOWS_NAMESPACE = os.getenv("ARGO_WORKFLOWS_NAMESPACE", "argo")
 ARGO_WORKFLOWS_UI_URL = os.getenv("ARGO_WORKFLOWS_UI_URL", "")
 MLFLOW_UI_URL = os.getenv("MLFLOW_UI_URL", "")
 MINIO_CONSOLE_URL = os.getenv("MINIO_CONSOLE_URL", "")
+VOC_GRAFANA_URL = os.getenv("VOC_GRAFANA_URL", "")
 VOC_TRAINING_MODEL_NAME = os.getenv("VOC_TRAINING_MODEL_NAME", "voc-bert")
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]").split(",")
 ROOT_URLCONF = "config.urls"

@@ -13,6 +13,8 @@ models:
 routing:
   sentiment:
     canaryPercent: 0
+  category:
+    canaryPercent: 0
 
 worker:
   enabled: false

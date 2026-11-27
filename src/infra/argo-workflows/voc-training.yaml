@@ -41,7 +41,7 @@ rules:
     verbs: ["get"]
   - apiGroups: ["argoproj.io"]
     resources: ["workflows"]
-    verbs: ["create", "get", "list"]
+    verbs: ["create", "get", "list", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -61,6 +61,7 @@ metadata:
   name: voc-training
 spec:
   entrypoint: run
+  onExit: finish-run
   serviceAccountName: voc-training
   arguments:
     parameters:
@@ -150,4 +151,17 @@ spec:
         image: "{{workflow.parameters.image}}"
         imagePullPolicy: IfNotPresent
         args: [register, --workflow-ref, "{{workflow.uid}}"]
+        envFrom: *credentials
+    - name: finish-run
+      steps:
+        - - name: close-interrupted-run
+            template: close-interrupted-run
+            when: "{{workflow.status}} != Succeeded"
+    - name: close-interrupted-run
+      retryStrategy: {limit: "2"}
+      container:
+        image: "{{workflow.parameters.image}}"
+        imagePullPolicy: IfNotPresent
+        command: ["python", "-m", "ml.training.stopped_run"]
+        args: ["{{workflow.uid}}"]
         envFrom: *credentials

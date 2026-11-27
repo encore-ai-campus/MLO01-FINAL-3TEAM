@@ -108,11 +108,13 @@ def batches(items, tokenizer, model, batch_size, indices):
         yield inputs, tags, labels
 
 
-def evaluate(model, tokenizer, items, batch_size):
+def evaluate(model, tokenizer, items, batch_size, review_counts=None):
     expected = {"sentiment": [], "category": []}
     predicted = {"sentiment": [], "category": []}
     model.eval()
     offset = 0
+    label_names = {task: {index: code for code, index in labels.items()}
+                   for task, labels in model.task_labels.items()}
     with torch.inference_mode():
         for inputs, tasks, labels in batches(items, tokenizer, model, batch_size, list(range(len(items)))):
             predictions = model(**inputs).logits.argmax(dim=-1).tolist()
@@ -122,6 +124,14 @@ def evaluate(model, tokenizer, items, batch_size):
                 prefix = "" if task == "sentiment" else row["domain_uuid"]
                 expected[kind].append(f"{prefix}:{actual}")
                 predicted[kind].append(f"{prefix}:{prediction}")
+                if review_counts is not None:
+                    domain = review_counts.setdefault(str(row["domain_uuid"]), {})
+                    counts = domain.setdefault(kind, {})
+                    gold_code, predicted_code = label_names[task][actual], label_names[task][prediction]
+                    gold = counts.setdefault(gold_code, {"n": 0, "tp": 0, "predicted": 0})
+                    gold["n"] += 1
+                    gold["tp"] += int(actual == prediction)
+                    counts.setdefault(predicted_code, {"n": 0, "tp": 0, "predicted": 0})["predicted"] += 1
             offset += len(labels)
     return {
         f"{kind}_macro_f1": float(f1_score(expected[kind], predicted[kind], average="macro", zero_division=0))
@@ -160,7 +170,8 @@ def load_starting_model(base_uri, company, task_labels):
     return model, components["tokenizer"]
 
 
-def fit(base_uri, company, train_rows, evaluation_rows, config, output, *, epochs, batch_size, learning_rate, max_steps, progress=NO_PROGRESS):
+def fit(base_uri, company, train_rows, evaluation_rows, config, output, *, epochs, batch_size, learning_rate, max_steps,
+        progress=NO_PROGRESS, review_counts=None):
     if epochs < 1 or batch_size < 1 or not math.isfinite(learning_rate) or learning_rate <= 0 or max_steps < 0:
         raise ValueError("Invalid training parameters")
     torch.manual_seed(42)
@@ -189,7 +200,7 @@ def fit(base_uri, company, train_rows, evaluation_rows, config, output, *, epoch
                 break
         del optimizer
     with progress.stage("evaluation"):
-        metrics = evaluate(model, tokenizer, validation, batch_size)
+        metrics = evaluate(model, tokenizer, validation, batch_size, review_counts)
     model.save_pretrained(output, safe_serialization=True)
     tokenizer.save_pretrained(output)
     (output / "domains.json").write_text(json.dumps(domain_map, ensure_ascii=False), encoding="utf-8")

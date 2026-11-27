@@ -16,7 +16,7 @@ from tests.database import use_database
 
 class LineageAccessTests(SimpleTestCase):
     def setUp(self):
-        self.actor = {"role": "admin", "company_uuid": str(uuid4()), "visible_sidebar": [], "name": "관리자"}
+        self.actor = {"role": "admin", "is_company_admin": True, "company_uuid": str(uuid4()), "visible_sidebar": [], "name": "관리자"}
         self.enterContext(patch("apps.preferences.presentation.lineage.current_actor", return_value=self.actor))
         self.client = Client()
 
@@ -24,6 +24,7 @@ class LineageAccessTests(SimpleTestCase):
         with patch.object(lineage, "event_trace") as events, patch.object(lineage, "model_history") as models:
             for role in (None, "agent"):
                 self.actor["role"] = role
+                self.actor["is_company_admin"] = False
                 for view in ("flow", "event", "model"):
                     self.assertEqual(self.client.get("/settings/lineage/", {"view": view}).status_code, 403)
             events.assert_not_called()
@@ -143,7 +144,7 @@ class LineageDatabaseTests(TestCase):
         self.assertEqual([row["dataset_version"] for row in result["datasets"]], ["내 회사"])
         self.assertNotIn("event", lineage.event_trace(self.company, self.foreign_event, 1))
         self.assertEqual([row["title"] for row in lineage.event_trace(self.company, "", 1)["tickets"]], ["내 회사"])
-        actor = {"role": "admin", "company_uuid": self.company, "visible_sidebar": [], "name": "관리자"}
+        actor = {"role": "admin", "is_company_admin": True, "company_uuid": self.company, "visible_sidebar": [], "name": "관리자"}
         with patch("apps.preferences.presentation.lineage.current_actor", return_value=actor):
             response = Client().get("/settings/lineage/?view=event&q=12")
         self.assertEqual(response.status_code, 200)
@@ -152,7 +153,7 @@ class LineageDatabaseTests(TestCase):
 
     def test_training_runs_are_company_scoped(self):
         self.assertEqual([row["workflow_ref"] for row in lineage.model_history(self.company, 1)["runs"]], ["내 회사"])
-        actor = {"role": "admin", "company_uuid": self.company, "visible_sidebar": [], "name": "관리자"}
+        actor = {"role": "admin", "is_company_admin": True, "company_uuid": self.company, "visible_sidebar": [], "name": "관리자"}
         with patch("apps.preferences.presentation.lineage.current_actor", return_value=actor):
             response = Client().get("/settings/lineage/?view=model")
         self.assertEqual(response.status_code, 200)

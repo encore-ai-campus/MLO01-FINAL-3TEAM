@@ -174,6 +174,19 @@ class AnalyticsPageTests(TestCase):
         self.assertEqual(self.client.get("/analytics/", {"tab": "agents", "agent": self.foreign}).status_code, 404)
         self.assertEqual(self.client.get("/analytics/", {"scope": self.other_team}).status_code, 400)
 
+    def test_teamless_super_admin_uses_company_scope_only_while_granted(self):
+        operator = self.staff(self.company, None, "operator@qa.test", "최고관리자", "super_admin")
+        permission = str(uuid4())
+        self.cur.execute("INSERT INTO permission VALUES (%s,'analytics.read')", (permission,))
+        self.cur.execute("INSERT INTO staff_permission VALUES (%s,%s)", (operator, permission))
+        self.login("operator@qa.test")
+        response = self.client.get("/analytics/", {"scope": "org", "tab": "agents"})
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(operator, [row["id"] for row in response.context["agents"]])
+        self.assertEqual(self.client.get("/analytics/", {"scope": self.other_team}).status_code, 400)
+        self.cur.execute("DELETE FROM staff_permission WHERE staff_user_uuid=%s", (operator,))
+        self.assertEqual(self.client.get("/analytics/").status_code, 403)
+
     def test_non_admin_and_missing_role_fail_closed(self):
         self.assertEqual(self.client.get("/analytics/").status_code, 302)
         self.login("agent1@qa.test")

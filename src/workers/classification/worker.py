@@ -7,6 +7,7 @@ import os
 import signal
 import time
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -49,18 +50,120 @@ class Config:
     percent: int
     stable: Release
     canary: Release
+    category_percent: int = 0
+    guard_replays: bool = False
 
     @classmethod
     def load(cls):
         percent = int(os.environ.get("SENTIMENT_CANARY_PERCENT", "0"))
-        if not 0 <= percent <= 100:
-            raise ValueError("SENTIMENT_CANARY_PERCENT must be 0..100")
-        return cls(UUID(os.environ["DEMO_COMPANY_UUID"]), percent, Release.load("STABLE"), Release.load("CANARY"))
+        category_percent = int(os.environ.get("CATEGORY_CANARY_PERCENT", "0"))
+        if not all(0 <= value <= 100 for value in (percent, category_percent)):
+            raise ValueError("Canary percentages must be 0..100")
+        return cls(UUID(os.environ["DEMO_COMPANY_UUID"]), percent, Release.load("STABLE"), Release.load("CANARY"),
+                   category_percent, os.environ.get("VOC_GUARD_REPLAYS") == "1")
 
 
 def bucket(company, event):
     key = f"{company}:{event}".encode("ascii")
     return int.from_bytes(hashlib.sha256(key).digest()[:8], "big") % 100
+
+
+def scope_key(kind, domain):
+    return "sentiment" if kind == "sentiment" else f"category/{domain}"
+
+
+def routing_percent(cn, config, scope, configured):
+    key = (config.company, scope, config.canary.version)
+    cn.execute("""INSERT INTO voc.classification_rollout(company_uuid,scope_key,candidate_version,stable_version,configured_percent)
+        VALUES (%s,%s,%s,%s,%s) ON CONFLICT (company_uuid,scope_key,candidate_version) DO UPDATE
+        SET stable_version=excluded.stable_version,configured_percent=excluded.configured_percent
+        WHERE (classification_rollout.stable_version,classification_rollout.configured_percent)
+              IS DISTINCT FROM (excluded.stable_version,excluded.configured_percent)""", (*key,config.stable.version,configured))
+    row = cn.execute("""SELECT tripped_at FROM voc.classification_rollout
+        WHERE company_uuid=%s AND scope_key=%s AND candidate_version=%s FOR SHARE""", key).fetchone()
+    return 0 if row["tripped_at"] else configured
+
+
+def observe_canary(cn, job, scope, failed, config):
+    if job["route"] != "canary":
+        return
+    if not config.guard_replays and cn.execute("""SELECT 1 FROM voc.bronze_messages
+            WHERE event_id=%s AND (context->>'synthetic'='true' OR origin='synthetic-canary')""",
+            (job["event_id"],)).fetchone():
+        return
+    key = (job["company_uuid"], scope, job["model_version"])
+    state = cn.execute("""SELECT tripped_at,stable_version,to_regclass('voc.model_review_policy') AS policies FROM voc.classification_rollout
+        WHERE company_uuid=%s AND scope_key=%s AND candidate_version=%s FOR UPDATE""", key).fetchone()
+    if not state or state["tripped_at"]:
+        return
+    if not failed:
+        cn.execute("""UPDATE voc.classification_rollout SET failures='{}',first_failure_at=NULL
+            WHERE company_uuid=%s AND scope_key=%s AND candidate_version=%s AND failures<>'{}'""", key)
+    else:
+        record_failure(cn, key, job["event_id"])
+    if state["policies"]:
+        enforce_saved_limits(cn, key, state["stable_version"], config.guard_replays)
+
+
+def record_failure(cn, key, event):
+    # Duplicate retries of one VOC cannot trip the circuit. Success starts a new streak.
+    cn.execute("""WITH observed AS (
+        SELECT clock_timestamp() AS at, failures FROM voc.classification_rollout
+        WHERE company_uuid=%s AND scope_key=%s AND candidate_version=%s
+    ), events AS (
+        SELECT e.key, e.value::timestamptz AS at FROM observed o,jsonb_each_text(o.failures) e
+        WHERE e.value::timestamptz > o.at-interval '30 minutes'
+        UNION ALL SELECT %s::text,at FROM observed
+    ), distinct_events AS (SELECT key,min(at) AS at FROM events GROUP BY key),
+    streak AS (SELECT jsonb_object_agg(key,at) AS events,min(at) AS first,count(*) AS n FROM distinct_events)
+    UPDATE voc.classification_rollout SET failures=s.events,first_failure_at=s.first,
+        tripped_at=CASE WHEN s.n>=3 THEN clock_timestamp() END,
+        reason=CASE WHEN s.n>=3 THEN 'consecutive_failures' END
+    FROM streak s WHERE company_uuid=%s AND scope_key=%s AND candidate_version=%s""", (*key,event,*key))
+
+
+def enforce_saved_limits(cn, key, stable_version, include_replays):
+    company, scope, candidate = key
+    policy = cn.execute("""SELECT settings FROM voc.model_review_policy WHERE company_uuid=%s AND scope_key=%s
+        AND settings->>'baseline_served'=%s AND settings->>'candidate_served'=%s""",
+        (company,scope,stable_version,candidate)).fetchone()
+    if not policy:
+        return
+    limits = policy["settings"]
+    kind, _, domain = scope.partition("/")
+    rows = cn.execute("""SELECT a.assigned_route AS route,count(*) AS calls,
+        100.0*count(*) FILTER (WHERE a.outcome IN ('failed','expired'))/count(*) AS errors,
+        CASE WHEN count(a.http_ms)=count(*) THEN percentile_cont(.95) WITHIN GROUP (ORDER BY a.http_ms) END AS p95,
+        bool_or(a.served_version IS NOT NULL AND a.served_version<>a.assigned_version OR
+            a.assigned_version<>CASE a.assigned_route WHEN 'canary' THEN %s ELSE %s END) AS mixed
+        FROM voc.classification_attempt a JOIN voc.classification_job j USING(request_id)
+        JOIN public.ticket t ON t.company_uuid=j.company_uuid AND t.source_event_id=j.event_id
+        JOIN voc.bronze_messages b ON b.event_id=j.event_id
+        WHERE j.company_uuid=%s AND j.analysis_kind=%s AND (%s::uuid IS NULL OR t.domain_uuid=%s::uuid)
+          AND a.started_at>clock_timestamp()-interval '30 minutes' AND a.finished_at IS NOT NULL
+          AND (%s OR (b.origin IS DISTINCT FROM 'synthetic-canary' AND b.context->>'synthetic' IS DISTINCT FROM 'true'))
+        GROUP BY a.assigned_route""", (candidate, stable_version, company, kind, domain or None, domain or None, include_replays)).fetchall()
+    lanes = {row["route"]: row for row in rows}
+    base, canary = lanes.get("stable"), lanes.get("canary")
+    # Existing partial policies inherit the same defaults as the administrator's review.
+    minimum = limits.get("min_calls", 100)
+    error_limit = limits.get("error_limit", 1)
+    if not canary or canary["calls"] < minimum or any(row["mixed"] for row in rows):
+        return
+    base_ready = base and base["calls"] >= minimum
+    if base_ready and base["errors"] > error_limit:
+        return
+    reason = None
+    if canary["errors"] > error_limit:
+        reason = "candidate_error_rate"
+    elif canary["p95"] is not None:
+        absolute = limits.get("absolute_p95")
+        if ((absolute is not None and canary["p95"] > absolute) or
+                (base_ready and base["p95"] and canary["p95"] > base["p95"] * limits.get("latency_limit", 1.5))):
+            reason = "candidate_p95"
+    if reason:
+        cn.execute("""UPDATE voc.classification_rollout SET tripped_at=clock_timestamp(),reason=%s
+            WHERE company_uuid=%s AND scope_key=%s AND candidate_version=%s AND tripped_at IS NULL""", (reason,*key))
 
 
 def dispatch(cn, config):
@@ -73,7 +176,11 @@ def dispatch(cn, config):
         """, (config.company,)).fetchone()
         if row is None:
             return False
-        canary = row["analysis_kind"] == "sentiment" and bucket(config.company, row["event_id"]) < config.percent
+        ticket = cn.execute("SELECT domain_uuid FROM public.ticket WHERE company_uuid=%s AND source_event_id=%s",
+                            (config.company, row["event_id"])).fetchone()
+        configured = config.percent if row["analysis_kind"] == "sentiment" else config.category_percent
+        percent = routing_percent(cn, config, scope_key(row["analysis_kind"], ticket["domain_uuid"]), configured) if ticket else 0
+        canary = bucket(config.company, row["event_id"]) < percent
         release = config.canary if canary else config.stable
         if canary and release.uses_customer_features and not config.stable.uses_customer_features:
             snapshot = cn.execute("""
@@ -179,12 +286,15 @@ def claim(cn, config):
         """, (config.company,)).fetchone()
         if job is None:
             return False, None
+        ticket = current_ticket(cn, job)
+        scope = scope_key(job["analysis_kind"], ticket["domain_uuid"]) if ticket else None
         if job["state"] == "running":
             cn.execute("""
                 UPDATE voc.classification_attempt SET finished_at=clock_timestamp(),outcome='expired',error_code='lease_expired'
                 WHERE request_id=%(request_id)s AND attempt_no=%(attempt_count)s AND finished_at IS NULL
             """, job)
-        ticket = current_ticket(cn, job)
+            if scope:
+                observe_canary(cn, job, scope, True, config)
         if ticket is None and pause_withdrawn(cn, job):
             return True, None
         if job["attempt_count"] >= MAX_ATTEMPTS:
@@ -194,14 +304,27 @@ def claim(cn, config):
         if not project(cn, job, ticket, None, "running"):
             terminate(cn, job, "skipped")
             return True, None
+        if job["route"] == "canary":
+            guard = cn.execute("""SELECT tripped_at FROM voc.classification_rollout
+                WHERE company_uuid=%s AND scope_key=%s AND candidate_version=%s FOR SHARE""",
+                (config.company,scope,job["model_version"])).fetchone()
+            if guard and guard["tripped_at"]:
+                # Old workers running during migration may have started attempts without a target snapshot.
+                cn.execute("""UPDATE voc.classification_attempt SET assigned_route=%(route)s,assigned_version=%(model_version)s
+                    WHERE request_id=%(request_id)s AND assigned_route IS NULL""",job)
+                job.update(route="stable", model_version=config.stable.version, model_url=config.stable.url,
+                           uses_customer_features=config.stable.uses_customer_features)
+                cn.execute("""UPDATE voc.classification_job SET route=%(route)s,model_version=%(model_version)s,
+                    model_url=%(model_url)s,uses_customer_features=%(uses_customer_features)s
+                    WHERE request_id=%(request_id)s""", job)
         job["attempt_count"] += 1
         cn.execute("""
             UPDATE voc.classification_job SET state='running', attempt_count=%s,
                 ready_at=clock_timestamp()+%s*interval '1 second' WHERE request_id=%s
         """, (job["attempt_count"], LEASE_SECONDS, job["request_id"]))
         cn.execute("""
-            INSERT INTO voc.classification_attempt(request_id,attempt_no) VALUES(%s,%s)
-        """, (job["request_id"], job["attempt_count"]))
+            INSERT INTO voc.classification_attempt(request_id,attempt_no,assigned_route,assigned_version) VALUES(%s,%s,%s,%s)
+        """, (job["request_id"], job["attempt_count"],job["route"],job["model_version"]))
         feature = cn.execute("""
             SELECT model_text FROM voc.model_text_history WHERE company_uuid=%(company_uuid)s AND event_id=%(event_id)s
               AND preprocess_version=%(preprocess_version)s AND body_version=%(body_version)s
@@ -229,6 +352,17 @@ class PredictionError(Exception):
         self.served_version = served_version
 
 
+def billed_cost(headers):
+    value = headers.get("X-Inference-Cost-KRW") if headers else None
+    if not value:
+        return None
+    try:
+        cost = Decimal(value)
+        return cost if cost.is_finite() and 0 <= cost <= 10**12 and cost.as_tuple().exponent >= -12 else None
+    except InvalidOperation:
+        return None
+
+
 def predict(job):
     request_id = str(job["request_id"])
     body = {"request_id": request_id, "analysis_kind": job["analysis_kind"],
@@ -244,13 +378,19 @@ def predict(job):
             raise PredictionError("feature_store_error") from None
         body.update(model_text=online.pop("body"),title=online.pop("title"),customer_features=online)
     request = Request(job["model_url"] + "/v1/predict", json.dumps(body).encode(), {"Content-Type": "application/json"})
+    started = time.perf_counter()
     try:
-        with urlopen(request, timeout=HTTP_TIMEOUT) as response:
-            raw = response.read(65537)
+        try:
+            with urlopen(request, timeout=HTTP_TIMEOUT) as response:
+                raw = response.read(65537)
+                job["cost_krw"] = billed_cost(getattr(response, "headers", None))
+        finally:
+            job["http_ms"] = (time.perf_counter() - started) * 1000
         if len(raw) > 65536:
             raise PredictionError("response_too_large")
         result = json.loads(raw)
     except HTTPError as exc:
+        job["cost_krw"] = billed_cost(exc.headers)
         raise PredictionError(f"http_{exc.code}") from None
     except (OSError, URLError) as exc:
         raise PredictionError("transport_error") from exc
@@ -273,7 +413,7 @@ def predict(job):
     return label
 
 
-def finish(cn, job, label=None, error=None):
+def finish(cn, job, label=None, error=None, *, config=None):
     with cn.transaction():
         locked = cn.execute("""
             SELECT state,attempt_count FROM voc.classification_job WHERE request_id=%s FOR UPDATE
@@ -291,10 +431,14 @@ def finish(cn, job, label=None, error=None):
             else:
                 value = mapping["category_uuid"]
         cn.execute("""
-            UPDATE voc.classification_attempt SET finished_at=clock_timestamp(), outcome=%s, error_code=%s, served_version=%s
+            UPDATE voc.classification_attempt SET finished_at=clock_timestamp(), outcome=%s, error_code=%s, served_version=%s,
+                http_ms=%s,cost_krw=%s
             WHERE request_id=%s AND attempt_no=%s
         """, ("failed" if error else "succeeded", error.code if error else None,
-              error.served_version if error else job["model_version"], job["request_id"], job["attempt_count"]))
+              error.served_version if error else job["model_version"], job.get("http_ms"), job.get("cost_krw"),
+              job["request_id"], job["attempt_count"]))
+        if config and ticket:
+            observe_canary(cn, job, scope_key(job["analysis_kind"], ticket["domain_uuid"]), error is not None, config)
         if ticket is None and pause_withdrawn(cn, job):
             return
         if error is None:
@@ -320,9 +464,9 @@ def process_one(cn, config):
             label = predict(job)
         except PredictionError as exc:
             logging.warning("Inference failed request_id=%s code=%s", job["request_id"], exc.code)
-            finish(cn, job, error=exc)
+            finish(cn, job, error=exc, config=config)
         else:
-            finish(cn, job, label=label)
+            finish(cn, job, label=label, config=config)
     return queued or claimed
 
 
@@ -332,7 +476,9 @@ def main():
     action = parser.parse_args().command
     if action == "run":
         READY.unlink(missing_ok=True)
-    with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True, row_factory=dict_row, connect_timeout=5) as cn:
+    password_file = os.getenv("PGPASSWORD_FILE")
+    credentials = {"password": Path(password_file).read_text().strip()} if password_file else {}
+    with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True, row_factory=dict_row, connect_timeout=5, **credentials) as cn:
         if action in {"migrate", "verify-schema"}:
             script = "schema.sql" if action == "migrate" else "verify-schema.sql"
             with cn.transaction():

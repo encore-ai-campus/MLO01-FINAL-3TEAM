@@ -242,7 +242,7 @@ def counselor_context(cursor, filters, history, first_answers, review_counts, se
 def analytics_context(cursor, actor, params):
     company = actor["company_uuid"]
     role = actor.get("role")
-    admin = role == "admin"
+    admin = actor["is_company_admin"]
     team_uuid = actor.get("team_uuid")
     scopes = {"org": "조직 전체"} if admin else {}
     scopes.update((team["id"], team["name"]) for team in repository.teams(cursor, company)
@@ -254,7 +254,7 @@ def analytics_context(cursor, actor, params):
     tab = params.get("tab", "summary")
     if scope not in scopes or period not in dict(PERIODS) or tab not in {"summary", "agents"}:
         raise DeskError(400, "INVALID_ANALYTICS_FILTER", "조회 조건을 확인해 주세요.")
-    can_view_agents = role in {"admin", "team_lead"}
+    can_view_agents = admin or role == "team_lead"
     if tab == "agents" and not can_view_agents:
         raise DeskError(403, "ANALYTICS_AGENTS_FORBIDDEN", "상담사별 실적을 조회할 권한이 없습니다.")
     bounds = period_bounds(period, timezone.now())

@@ -125,6 +125,45 @@ class SettingsTests(TestCase):
         self.assertEqual(self.session(self.admin, csrf=True).post(
             f"/settings/permissions/{self.agent}/", {}).status_code, 403)
 
+    def test_admin_cannot_list_open_or_save_super_admin_permissions(self):
+        operator = self.make_staff("Operator", "inside.test", self.company, None, "super_admin")
+        owner = self.session(operator)
+        path = f"/settings/permissions/{operator}/"
+        grant = {"permissions": ["analytics.read"]}
+        self.assertEqual(owner.post(path, grant).status_code, 302)
+
+        listing = self.client.get("/settings/permissions/")
+        self.assertNotContains(listing, "operator@inside.test")
+        self.assertNotContains(listing, path)
+        for staff in (self.admin, self.agent):
+            self.assertContains(listing, f"/settings/permissions/{staff}/")
+        missing = self.client.get(f"/settings/permissions/{uuid4()}/")
+        for response in (self.client.get(path), self.client.post(path, {"permissions": ["chat.handle"]})):
+            self.assertEqual(response.status_code, 404)
+            self.assertEqual(response.content, missing.content)
+        self.assertEqual(owner.get(path).context["form"].initial["permissions"], grant["permissions"])
+
+    def test_super_admin_can_list_and_edit_all_company_roles(self):
+        operator = self.make_staff("Operator", "inside.test", self.company, None, "super_admin")
+        peer = self.make_staff("Peer", "inside.test", self.company, None, "super_admin")
+        owner = self.session(operator)
+        self.assertContains(owner.get("/settings/"), 'href="/settings/permissions/"')
+        listing = owner.get("/settings/permissions/")
+        grants = ["analytics.read", "chat.handle", "quick_reply.team.edit", "ticket.handle"]
+        for staff in (operator, peer, self.admin, self.agent):
+            with self.subTest(staff=staff):
+                path = f"/settings/permissions/{staff}/"
+                self.assertContains(listing, path)
+                self.assertEqual(owner.post(path, {"permissions": grants}).status_code, 302)
+                self.assertEqual(owner.get(path).context["form"].initial["permissions"], grants)
+                self.assertEqual(owner.post(path, {}).status_code, 302)
+                self.assertEqual(owner.get(path).context["form"].initial["permissions"], [])
+
+        foreign = f"/settings/permissions/{self.foreign}/"
+        self.assertNotContains(listing, foreign)
+        self.assertEqual(owner.get(foreign).status_code, 404)
+        self.assertEqual(owner.post(foreign, {}).status_code, 404)
+
     @override_settings(MLFLOW_TRACKING_URI="http://mlflow.test", ARGO_WORKFLOWS_URL="http://argo.test")
     def test_training_form_uses_company_choices_and_reuses_workflow_on_post_retry(self):
         page = "/model-training/"
@@ -139,19 +178,23 @@ class SettingsTests(TestCase):
 
         def version(name, role, company=None):
             tags = [{"key": "voc_training_input", "value": role}]
+            if role == "encoder":
+                tags.append({"key": "source_revision", "value": "77c8b3d707df785034b4e50f2da5d37be5f0f546"})
             if company:
                 tags.append({"key": "company_uuid", "value": company})
             return {"name": name, "version": "1", "status": "READY", "tags": tags}
 
         models = {"model_versions": [
             version("base", "encoder"), version("company", "multitask", self.company),
-            version("foreign", "multitask", self.other_company), version("legacy", "legacy"),
+            version("foreign", "multitask", self.other_company), version("legacy", "legacy"), version("missing", "encoder"),
         ]}
         created = {}
         submissions = []
         tokens = []
 
         def request(url, token, data=None):
+            if "/get-download-uri?" in url:
+                return {"artifact_uri": "s3://models/missing" if "name=missing" in url else "s3://models/ready"}
             if url.startswith("http://mlflow.test/"):
                 return models
             tokens.append(token)
@@ -172,7 +215,7 @@ class SettingsTests(TestCase):
             })
             return created
 
-        with patch("apps.preferences.training.request_json", side_effect=request), patch(
+        with patch("apps.preferences.training_inputs.model_files_available", side_effect=lambda uri, role: uri.endswith("/ready")), patch("apps.preferences.training.request_json", side_effect=request), patch(
             "apps.preferences.presentation.training.evaluation_sets", return_value=[("eval-v1", "eval-v1 (1건)")],
         ) as datasets:
             opened = client.get(page)
@@ -181,6 +224,7 @@ class SettingsTests(TestCase):
             self.assertContains(opened, "models:/company/1")
             self.assertNotContains(opened, "models:/foreign/1")
             self.assertNotContains(opened, "models:/legacy/1")
+            self.assertNotContains(opened, "models:/missing/1")
             params = {"request_id": str(uuid4()), "as_of_at": "2025-11-20T10:05",
                       "model": "models:/base/1", "eval_dataset": "eval-v1"}
             for forged in ({"model": "models:/foreign/1"}, {"eval_dataset": "eval-v2"}):

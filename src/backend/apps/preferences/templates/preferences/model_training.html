@@ -4,12 +4,14 @@
 {% block styles %}
   {{ block.super }}
   <link rel="stylesheet" href="{% static 'preferences/model-training.css' %}">
+  <link rel="stylesheet" href="{% static 'preferences/model-operations.css' %}">
 {% endblock %}
 {% block settings_content %}
 <div class="desk-heading">
   <h1>모델 학습</h1>
   {% if run_name %}<a class="desk-button" href="{% url 'preferences:model-training' %}">새 학습 설정</a>{% endif %}
 </div>
+{% include "preferences/model_operation_tabs.html" with section="training" %}
 {% if not run_name %}
 <section class="desk-card" data-training-setup>
   {% if notice %}<p class="desk-sub" role="status">{{ notice }}</p>{% endif %}
@@ -39,8 +41,31 @@
     <p role="status" data-training-label></p>
     <p role="status" data-training-notice>{% if not training_snapshot %}상태 조회 지연{% endif %}</p>
     <div data-training-overall></div>
-    <div class="training-links" data-training-links></div>
+    <div class="training-footer">
+      <div class="training-links" data-training-links></div>
+      {% if run_name %}
+      <div class="training-stop" data-training-stop hidden>
+        <p class="training-stop-state" data-stop-state role="status" tabindex="-1"></p>
+        <button class="desk-button training-stop-button" type="button" data-stop-open
+                aria-haspopup="dialog" aria-controls="training-stop-dialog" hidden>이번 학습 중지</button>
+      </div>
+      {% endif %}
+    </div>
   </section>
+  {% if run_name %}
+  <dialog id="training-stop-dialog" class="training-stop-dialog" aria-labelledby="training-stop-title"
+          aria-describedby="training-stop-description">
+    <form method="dialog" data-stop-form data-stop-url="{% url 'preferences:training-stop' run_name %}">
+      {% csrf_token %}
+      <h2 id="training-stop-title">이번 학습을 중지할까요?</h2>
+      <p id="training-stop-description">이번 실행 한 건을 종료합니다. 다음 자동 재학습은 저장된 예약 조건을 따릅니다.</p>
+      <div class="training-stop-actions">
+        <button class="desk-button" type="submit" value="continue" data-stop-continue autofocus>학습 계속</button>
+        <button class="desk-button training-stop-confirm" type="button" data-stop-confirm>이번 학습 중지</button>
+      </div>
+    </form>
+  </dialog>
+  {% endif %}
   <div class="training-layout" data-training-cards></div>
 </div>
 {{ training_snapshot|json_script:"training-snapshot" }}

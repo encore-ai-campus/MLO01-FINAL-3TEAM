@@ -1,6 +1,8 @@
 name: Classification worker
 on:
+  workflow_call:
   pull_request:
+    branches-ignore: [develop]
     paths:
       - ".github/workflows/classification-worker.yml"
       - "src/workers/classification/**"

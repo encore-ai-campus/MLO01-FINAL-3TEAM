@@ -122,8 +122,7 @@ def logout(request):
 def permissions(request):
     with connection.cursor() as cursor:
         actor = services.current_actor(session_token(request), cursor)
-        services.require_settings_admin(actor)
-        staff = repository.company_staff(cursor, actor["company_uuid"])
+        staff = services.work_permission_targets(cursor, actor)
     return render(request, "preferences/employees.html", {
         "actor": actor, "active": "settings", "title": "업무 권한 설정", "staff": staff,
         "employee_url": "accounts:employee-permissions",
@@ -135,9 +134,11 @@ def employee_permissions(request, staff_uuid):
     saving = request.method == "POST"
     with transaction.atomic(), connection.cursor() as cursor:
         actor = services.current_actor(session_token(request), cursor)
-        services.require_settings_admin(actor)
         company = actor["company_uuid"]
-        staff = services.settings_employee(cursor, actor, staff_uuid, lock=saving)
+        targets = services.work_permission_targets(cursor, actor, staff_uuid=staff_uuid, lock=saving)
+        if not targets:
+            raise DeskError(404, "STAFF_NOT_FOUND", "직원을 찾을 수 없습니다.")
+        staff = targets[0]
         codes = services.WORK_PERMISSION_CODES
         granted = repository.work_permissions(cursor, company, staff_uuid, codes)
         form = WorkPermissionsForm(request.POST if saving else None, initial={"permissions": granted})

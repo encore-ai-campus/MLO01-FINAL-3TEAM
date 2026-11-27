@@ -23,6 +23,8 @@
 
 학습 작업은 모델 파일을 MinIO에서 직접 읽고 씁니다. MLflow의 PostgreSQL URL에는 `postgresql+psycopg2://`를 사용합니다. 서버는 다음 방식으로 시작합니다.
 
+관리자 웹과 재학습 스케줄러에도 같은 MLflow 주소와 모델·평가셋 버킷의 읽기 권한을 설정합니다. 시작 모델은 READY 상태, 소유 회사 또는 공통 인코더 리비전, MLmodel과 실제 체크포인트·토크나이저를 확인합니다. `VOC_TRAINING_DOMAINS_FILE`로 학습 워크플로와 동일한 도메인 설정 파일을 마운트하면 파인튜닝 모델의 분류 헤드와 라벨 순서, 평가셋 각 행의 도메인·세부유형 매핑도 확인합니다. 고정 평가셋은 회사, 파일 해시, Parquet 스키마, 행 수, 감성·세부유형 정답과 입력값을 확인합니다. 보관용 벤치마크는 모델 교체 검토에서 조회합니다.
+
 ```sh
 mlflow server --backend-store-uri "$MLFLOW_BACKEND_DB" \
   --no-serve-artifacts --default-artifact-root s3://voc-model-artifacts --host "$MLFLOW_BIND_ADDRESS"

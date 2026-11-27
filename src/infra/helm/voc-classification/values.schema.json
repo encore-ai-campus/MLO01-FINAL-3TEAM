@@ -11,6 +11,10 @@
     "routing": {
       "type": "object", "required": ["sentiment"], "additionalProperties": false,
       "properties": {
+        "category": {
+          "type": "object", "required": ["canaryPercent"], "additionalProperties": false,
+          "properties": {"canaryPercent": {"type": "integer", "minimum": 0, "maximum": 100}}
+        },
         "sentiment": {
           "type": "object", "required": ["canaryPercent"], "additionalProperties": false,
           "properties": {"canaryPercent": {"type": "integer", "minimum": 0, "maximum": 100}}

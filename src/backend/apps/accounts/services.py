@@ -50,14 +50,23 @@ def current_actor(token, cursor=None):
         else:
             actor = repository.find_staff(cursor, token)
         if actor:
+            actor["is_company_admin"] = actor.get("role") in {"admin", "super_admin"}
             actor["visible_sidebar"] = visible_sidebar(actor)
             return actor
     raise DeskError(401, "LOGIN_REQUIRED", "로그인해 주세요.")
 
 
 def require_settings_admin(actor):
-    if actor.get("role") != "admin":
+    if not actor["is_company_admin"]:
         raise DeskError(403, "SETTINGS_FORBIDDEN", "회사 관리자만 이 설정을 관리할 수 있습니다.")
+
+
+def work_permission_targets(cursor, actor, *, staff_uuid=None, lock=False):
+    require_settings_admin(actor)
+    return repository.company_staff(
+        cursor, actor["company_uuid"], include_super_admin=actor["role"] == "super_admin",
+        staff_uuid=staff_uuid, lock=lock,
+    )
 
 
 def settings_employee(cursor, actor, staff_uuid, *, lock=False):

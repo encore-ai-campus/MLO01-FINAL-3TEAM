@@ -2,6 +2,20 @@
 
 Grafana는 파이프라인, AI 추론, 카나리 배포 화면을 제공한다. 카나리 배포 화면은 팀 Prometheus에서 `job="voc-live-model"`의 준비 상태, 감성 호출 비율과 모델 연산 P95를 조회한다.
 
+### 회사별 모델 운영 기록
+
+관리자 웹에 `VOC_GRAFANA_URL`을 지정하면 모델 교체 검토 화면에서 해당 회사와 업무가 선택된 [모델 운영 기록](http://127.0.0.1:13000/d/voc-model-guard/model-guard)을 열 수 있다. Grafana 로그인이 필요하다. 이 대시보드는 운영자가 쓰며, 회사 필터는 표시 범위를 선택한다. 최근 30분의 실측 HTTP p95, 7일간의 호출당 청구 비용 집계, 실제 후보 배정률, 복귀 시각 및 수집 ID별 분류 이력을 제공한다. 비용은 모델 엔드포인트가 응답 헤더 `X-Inference-Cost-KRW`로 해당 호출의 청구 금액을 제공한 경우에 기록한다. 금액이 누락된 구간은 미수집으로 표시한다.
+
+로컬에서 실제 체크포인트로 분류하려면 기존 Compose에 `src/workers/classification/compose.classification.yaml`을 추가한다. `VOC_CLASSIFICATION_COMPANY`에는 수집 경로가 연결된 회사 UUID, `VOC_STABLE_MODEL_DIR`과 `VOC_CANARY_MODEL_DIR`에는 체크포인트 디렉터리, `VOC_DOMAIN_MAP_FILE`에는 업무 도메인 UUID와 라벨을 연결한 JSON 파일을 지정한다. 두 버전 이름은 `STABLE_MODEL_VERSION`과 `CANARY_MODEL_VERSION`에 지정한다. 아래 명령은 저장소 루트에서 실행한다.
+
+```sh
+docker compose -f compose.yaml -f src/monitoring/compose.monitoring.yaml -f src/workers/classification/compose.classification.yaml up -d --build publish db-worker jobmanager taskmanager classification-worker canary-model grafana
+```
+
+감성과 세부유형의 후보 배정 비율은 각각 `SENTIMENT_CANARY_PERCENT`와 `CATEGORY_CANARY_PERCENT`로 정한다. 세부유형을 켤 때는 후보 모델이 해당 분류를 지원하도록 `CANARY_ANALYSIS_KINDS=sentiment,category`와 도메인 매핑을 함께 지정한다. 두 배정률의 기본값은 0이다.
+
+워커는 회사·업무·후보 버전마다 최근 30분에 서로 다른 문의 3건이 연속 실패하면 후보 배정을 0%로 고정한다. 성공한 후보 호출은 이전 실패 연속 기록을 끊고, 같은 문의의 재시도는 한 건으로 센다. 실제 서빙 버전을 회사 기준과 연결하면 최소 호출량 이후의 후보 오류율·p95 상한도 적용한다. 복귀 후 새 호출과 대기 중인 재시도는 기존 모델을 사용한다. 이미 전송된 호출은 실제 시도 이력에 남는다. 같은 후보를 재시작해도 차단은 유지하며, 새 후보를 배포할 때는 고유한 릴리스 버전을 지정한다. 합성 재생은 기본적으로 운영 판정에서 제외한다. 다른 회사의 업무와 분리한 로컬 검증 워커에서만 `VOC_GUARD_REPLAYS=1`로 재생 장애 시험을 할 수 있다.
+
 ## 기존 수집 프로젝트에서 실행
 
 기존 Compose 프로젝트가 PostgreSQL 초기화를 마친 상태에서 저장소 루트에서 실행한다. 수집기가 별도 프로젝트 이름을 쓰면 모니터링 명령에도 같은 이름을 지정한다.
