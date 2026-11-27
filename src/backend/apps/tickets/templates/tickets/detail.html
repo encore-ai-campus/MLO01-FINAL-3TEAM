@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% load static ticket_ui %}
 {% block title %}티켓 #{{ ticket.ticket_number }}{% endblock %}
-{% block styles %}<link rel="stylesheet" href="{% static 'tickets/detail.css' %}">{% endblock %}
+{% block styles %}<link rel="stylesheet" href="{% static 'tickets/detail.css' %}?v=2">{% endblock %}
 {% block content %}
 <section class="ticket-detail" aria-labelledby="ticket-detail-title">
   <div class="ticket-detail-body">
@@ -91,5 +91,5 @@
     </aside>
   </div>
 </section>
-{% if can_conduct %}<script src="{% static 'tickets/detail-actions.js' %}" defer></script>{% endif %}
+{% if can_conduct %}<script src="{% static 'tickets/detail-actions.js' %}?v=2" defer></script>{% endif %}
 {% endblock %}
