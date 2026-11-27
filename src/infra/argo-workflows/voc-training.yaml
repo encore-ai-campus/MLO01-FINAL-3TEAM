@@ -1,0 +1,153 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: voc-training
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: voc-training-executor
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["workflowtaskresults"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: voc-training-executor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: voc-training-executor
+subjects:
+  - kind: ServiceAccount
+    name: voc-training
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: voc-training-web
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: voc-training-web
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["workflowtemplates"]
+    resourceNames: ["voc-training"]
+    verbs: ["get"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["workflows"]
+    verbs: ["create", "get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: voc-training-web
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: voc-training-web
+subjects:
+  - kind: ServiceAccount
+    name: voc-training-web
+---
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: voc-training
+spec:
+  entrypoint: run
+  serviceAccountName: voc-training
+  arguments:
+    parameters:
+      - name: image
+        value: voc-training:local
+      - name: company
+      - name: base-model-uri
+        value: models:/voc-bert-base/1
+      - name: model-name
+        value: voc-bert
+      - name: eval-dataset
+      - name: train-dataset
+        value: ""
+      - name: label-cutoff
+        value: ""
+      - name: epochs
+        value: "3"
+      - name: batch-size
+        value: "8"
+      - name: max-steps
+        value: "0"
+  volumes:
+    - name: domain-config
+      configMap:
+        name: voc-training-domains
+  templates:
+    - name: run
+      steps:
+        - - name: prepare-datasets
+            template: prepare
+        - - name: finetune-and-evaluate
+            template: train
+        - - name: register-model
+            template: register
+    - name: prepare
+      retryStrategy: {limit: "2"}
+      script:
+        image: "{{workflow.parameters.image}}"
+        imagePullPolicy: IfNotPresent
+        command: [sh]
+        envFrom: &credentials
+          - secretRef:
+              name: voc-training-env
+        env:
+          - {name: WORKFLOW_REF, value: "{{workflow.uid}}"}
+          - {name: COMPANY, value: "{{workflow.parameters.company}}"}
+          - {name: BASE_MODEL, value: "{{workflow.parameters.base-model-uri}}"}
+          - {name: MODEL_NAME, value: "{{workflow.parameters.model-name}}"}
+          - {name: EVAL_DATASET, value: "{{workflow.parameters.eval-dataset}}"}
+          - {name: TRAIN_DATASET, value: "{{workflow.parameters.train-dataset}}"}
+          - {name: LABEL_CUTOFF, value: "{{workflow.parameters.label-cutoff}}"}
+        source: |
+          set -eu
+          if [ -n "$TRAIN_DATASET" ]; then
+            [ -z "$LABEL_CUTOFF" ] || { echo "Provide a dataset version or a cutoff"; exit 2; }
+            set -- --train-dataset "$TRAIN_DATASET"
+          else
+            [ -n "$LABEL_CUTOFF" ] || { echo "Provide a dataset version or a cutoff"; exit 2; }
+            set -- --label-cutoff "$LABEL_CUTOFF"
+          fi
+          exec python -m ml.training.workflow prepare --workflow-ref "$WORKFLOW_REF" \
+            --company "$COMPANY" --base-model-uri "$BASE_MODEL" --model-name "$MODEL_NAME" \
+            --eval-dataset "$EVAL_DATASET" "$@"
+    - name: train
+      retryStrategy: {limit: "2"}
+      container:
+        command: ["python", "-m", "ml.training.workflow"]
+        image: "{{workflow.parameters.image}}"
+        imagePullPolicy: IfNotPresent
+        args: [train, --workflow-ref, "{{workflow.uid}}", --domain-config, /config/domains.json,
+               --epochs, "{{workflow.parameters.epochs}}", --batch-size, "{{workflow.parameters.batch-size}}",
+               --max-steps, "{{workflow.parameters.max-steps}}"]
+        envFrom: *credentials
+        env:
+          - {name: OMP_NUM_THREADS, value: "2"}
+          - {name: TOKENIZERS_PARALLELISM, value: "false"}
+          - {name: MLFLOW_ENABLE_ARTIFACTS_PROGRESS_BAR, value: "false"}
+        volumeMounts:
+          - {name: domain-config, mountPath: /config, readOnly: true}
+        resources:
+          requests: {cpu: "1", memory: 2Gi}
+          limits: {cpu: "2", memory: 5Gi}
+    - name: register
+      retryStrategy: {limit: "2"}
+      container:
+        command: ["python", "-m", "ml.training.workflow"]
+        image: "{{workflow.parameters.image}}"
+        imagePullPolicy: IfNotPresent
+        args: [register, --workflow-ref, "{{workflow.uid}}"]
+        envFrom: *credentials

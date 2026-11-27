@@ -1,0 +1,7 @@
+**
+!src/ml/training
+!src/ml/training/*.py
+!src/ml/training/requirements.txt
+!src/ml/serving/voc_models
+!src/ml/serving/voc_models/*.py
+!src/workers/classification/online_features.py
