@@ -122,8 +122,7 @@ def logout(request):
 def permissions(request):
     with connection.cursor() as cursor:
         actor = services.current_actor(session_token(request), cursor)
-        services.require_settings_admin(actor)
-        staff = repository.company_staff(cursor, actor["company_uuid"])
+        staff = services.work_permission_targets(cursor, actor)
     return render(request, "preferences/employees.html", {
         "actor": actor, "active": "settings", "title": "업무 권한 설정", "staff": staff,
         "employee_url": "accounts:employee-permissions",
@@ -135,21 +134,19 @@ def employee_permissions(request, staff_uuid):
     saving = request.method == "POST"
     with transaction.atomic(), connection.cursor() as cursor:
         actor = services.current_actor(session_token(request), cursor)
-        services.require_settings_admin(actor)
         company = actor["company_uuid"]
-        staff = services.settings_employee(cursor, actor, staff_uuid, lock=saving)
-        read_only = staff["role"] == "super_admin" and actor["role"] != "super_admin"
-        if saving and read_only:
-            raise DeskError(403, "PERMISSION_TARGET_FORBIDDEN", "최고관리자의 업무 권한은 최고관리자만 변경할 수 있습니다.")
+        targets = services.work_permission_targets(cursor, actor, staff_uuid=staff_uuid, lock=saving)
+        if not targets:
+            raise DeskError(404, "STAFF_NOT_FOUND", "직원을 찾을 수 없습니다.")
+        staff = targets[0]
         codes = services.WORK_PERMISSION_CODES
         granted = repository.work_permissions(cursor, company, staff_uuid, codes)
         form = WorkPermissionsForm(request.POST if saving else None, initial={"permissions": granted})
-        form.fields["permissions"].disabled = read_only
         if saving and form.is_valid():
             if not repository.set_work_permissions(cursor, company, staff_uuid, codes, form.cleaned_data["permissions"]):
                 raise DeskError(503, "PERMISSIONS_UNAVAILABLE", "업무 권한을 저장할 수 없습니다. 설정 스키마 적용 상태를 확인해 주세요.")
             return redirect("accounts:employee-permissions", staff_uuid=staff_uuid)
     return render(request, "preferences/form.html", {
         "actor": actor, "active": "settings", "title": "업무 권한 설정", "subject": staff["name"],
-        "form": form, "back_url": "accounts:permissions", "read_only": read_only,
+        "form": form, "back_url": "accounts:permissions",
     }, status=400 if saving else 200)
