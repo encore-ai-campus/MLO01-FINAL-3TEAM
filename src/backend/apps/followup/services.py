@@ -12,8 +12,8 @@ class FollowUpDesk:
     def __init__(self, cursor, actor):
         self.cursor = cursor
         self.actor = actor
-        self.company = actor["company_uuid"]
-        self.staff = actor["staff_user_uuid"]
+        self.company = actor["company_id"]
+        self.staff = actor["staff_user_id"]
         self.can_read = actor["can_read"]
         self.can_chat = CHAT_HANDLE in work_permissions(cursor, self.company, self.staff, (CHAT_HANDLE,))
 
@@ -44,20 +44,20 @@ class FollowUpDesk:
         return repository.track_options(self.cursor, self.company, self.staff)
 
     def track_and_schedule(self, data):
-        if not self.track(data["ticket_uuid"]):
+        if not self.track(data["ticket_id"]):
             raise DeskError(409, "ALREADY_TRACKED", "이미 추적 중인 티켓입니다.")
         return self.schedule({
-            **data, "chat_uuid": None, "reason": "추적 후속 연락", "assignee_uuid": self.staff,
+            **data, "chat_id": None, "reason": "추적 후속 연락", "assignee_id": self.staff,
         }, reminders=True)
 
     def schedule(self, data, *, reminders=False):
-        if data["chat_uuid"]:
+        if data["chat_id"]:
             self.require_chat()
         else:
             self.require_ticket_read()
-        if not repository.source_exists(self.cursor, self.company, data["ticket_uuid"], data["chat_uuid"]):
+        if not repository.source_exists(self.cursor, self.company, data["ticket_id"], data["chat_id"]):
             raise DeskError(404, "SOURCE_NOT_FOUND", "원본 문의를 찾을 수 없습니다.")
-        if not company_employee(self.cursor, self.company, data["assignee_uuid"], lock=True):
+        if not company_employee(self.cursor, self.company, data["assignee_id"], lock=True):
             raise DeskError(404, "STAFF_NOT_FOUND", "직원을 찾을 수 없습니다.")
         ident = repository.add_contact(self.cursor, self.company, self.staff, data, reminders=reminders)
         return self.contact(ident)
@@ -76,7 +76,7 @@ class FollowUpDesk:
         record = self.contact(ident, lock=True)
         contacted_at, result = data["contacted_at"], data["result"]
         if record["contacted_at"] is not None:
-            if (record["completed_by_uuid"], record["contacted_at"], record["result"]) == (
+            if (record["completed_by_id"], record["contacted_at"], record["result"]) == (
                 self.staff, contacted_at, result
             ):
                 return record

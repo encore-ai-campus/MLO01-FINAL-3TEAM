@@ -18,22 +18,22 @@ BASE = "http://127.0.0.1:8000"
 
 def seed(cursor):
     cursor.execute("""
-        INSERT INTO staff_user(staff_user_uuid, company_uuid, email, password_hash, name, role)
+        INSERT INTO staff_user(staff_user_id, company_id, email, password_hash, name, role)
         VALUES (%s,%s,%s,%s,'시연 상담사','agent')
-        ON CONFLICT (staff_user_uuid) DO UPDATE SET password_hash=excluded.password_hash
-        WHERE staff_user.company_uuid=excluded.company_uuid AND staff_user.email=excluded.email
+        ON CONFLICT (staff_user_id) DO UPDATE SET password_hash=excluded.password_hash
+        WHERE staff_user.company_id=excluded.company_id AND staff_user.email=excluded.email
           AND staff_user.role=excluded.role
-        RETURNING staff_user_uuid
+        RETURNING staff_user_id
     """, (STAFF, COMPANY, EMAIL, PasswordHasher().hash(os.environ["DEMO_STAFF_PASSWORD"])))
     if not cursor.fetchone():
         raise RuntimeError("Demo account ID already belongs to another employee.")
     cursor.execute("""
-        INSERT INTO staff_permission(staff_user_uuid,permission_uuid)
-        SELECT %s,permission_uuid FROM permission WHERE code='ticket.read' ON CONFLICT DO NOTHING
+        INSERT INTO staff_permission(staff_user_id,permission_id)
+        SELECT %s,permission_id FROM permission WHERE code='ticket.read' ON CONFLICT DO NOTHING
     """, (STAFF,))
     cursor.execute("""
-        SELECT p.code FROM staff_permission sp JOIN permission p USING(permission_uuid)
-        WHERE sp.staff_user_uuid=%s
+        SELECT p.code FROM staff_permission sp JOIN permission p USING(permission_id)
+        WHERE sp.staff_user_id=%s
     """, (STAFF,))
     if cursor.fetchall() != [("ticket.read",)]:
         raise RuntimeError("The demo account must have exactly the ticket.read permission.")
@@ -42,13 +42,13 @@ def seed(cursor):
 
 def verify(cursor):
     cursor.execute("""
-        SELECT t.ticket_uuid::text,t.ticket_number,t.sentiment,c.name FROM ticket t
-        JOIN category c ON (c.domain_uuid,c.category_uuid)=(t.domain_uuid,t.category_uuid)
-        JOIN voc.bronze_messages b ON b.event_id=t.source_event_id
-        WHERE t.company_uuid=%s AND b.origin='synthetic-canary'
+        SELECT t.ticket_id::text,t.ticket_number,t.sentiment,c.name FROM ticket t
+        JOIN category c ON (c.domain_id,c.category_id)=(t.domain_id,t.category_id)
+        JOIN voc.bronze_message b ON b.event_id=t.source_event_id
+        WHERE t.company_id=%s AND b.origin='synthetic-canary'
           AND t.sentiment_status='succeeded' AND t.category_status='succeeded'
           AND (SELECT count(DISTINCT j.analysis_kind) FROM voc.classification_job j
-               WHERE j.company_uuid=t.company_uuid AND j.event_id=t.source_event_id AND j.applied
+               WHERE j.company_id=t.company_id AND j.event_id=t.source_event_id AND j.applied
                  AND j.state='succeeded')=2
         ORDER BY t.created_at DESC,t.ticket_number DESC LIMIT 1
     """, (COMPANY,))
@@ -103,7 +103,7 @@ if __name__ == "__main__":
     if (target.hostname, target.path, target.username) != ("canary-demo-db", "/voc_canary_demo", "voc_demo"):
         raise SystemExit("This script only runs inside the isolated demo desk.")
     with psycopg2.connect(dsn) as db, db.cursor() as cursor:
-        cursor.execute("SELECT current_database(), email_domain FROM company WHERE company_uuid=%s", (COMPANY,))
+        cursor.execute("SELECT current_database(), email_domain FROM company WHERE company_id=%s", (COMPANY,))
         if cursor.fetchone() != ("voc_canary_demo", "canary.example.test"):
             raise SystemExit("Prepare the synthetic demo tenant first.")
         {"seed": seed, "verify": verify}[sys.argv[1]](cursor)

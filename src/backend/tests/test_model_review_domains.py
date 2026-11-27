@@ -24,7 +24,7 @@ class CompanyReviewDomainsTests(TestCase):
     def make_company(self):
         company = uuid4()
         self.cursor.execute(
-            "INSERT INTO public.company(company_uuid,email_domain) VALUES (%s,%s)",
+            "INSERT INTO public.company(company_id,email_domain) VALUES (%s,%s)",
             (company, f"{company.hex}.test"),
         )
         return company
@@ -32,12 +32,12 @@ class CompanyReviewDomainsTests(TestCase):
     def signed_in(self, role):
         staff, token = uuid4(), uuid4().hex
         self.cursor.execute(
-            "INSERT INTO public.staff_user(staff_user_uuid,company_uuid,email,password_hash,role) "
+            "INSERT INTO public.staff_user(staff_user_id,company_id,email,password_hash,role) "
             "VALUES (%s,%s,%s,'!',%s)",
             (staff, self.company, f"test@{self.company.hex}.test", role),
         )
         self.cursor.execute(
-            "INSERT INTO public.staff_session(token_hash,staff_user_uuid,expires_at) "
+            "INSERT INTO public.staff_session(token_hash,staff_user_id,expires_at) "
             "VALUES (%s,%s,now()+ interval '1 hour')", (token_digest(token), staff),
         )
         client = Client()
@@ -90,7 +90,7 @@ class CompanyReviewDomainsTests(TestCase):
         matrix = [[int(i == j) for j in range(4)] for i in range(4)]
         for model, model_hash in (("klue_bert_v1", "a" * 64), ("ax_encoder", "b" * 64)):
             self.cursor.execute("""
-                INSERT INTO voc.model_review_benchmark(company_uuid,task_code,model_code,model_sha256,
+                INSERT INTO voc.model_review_benchmark(company_id,task_code,model_code,model_sha256,
                     report_sha256,split_sha256,row_count,macro_f1,label_counts,label_order,confusion_matrix)
                 VALUES (%s,'finance',%s,%s,%s,%s,4,1,%s,%s,%s)
                 """, (self.company, model, model_hash, "c" * 64, "d" * 64, Json(counts), Json(codes), Json(matrix)))

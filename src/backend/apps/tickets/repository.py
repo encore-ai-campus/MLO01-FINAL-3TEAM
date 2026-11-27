@@ -10,113 +10,113 @@ SORTS = {
     "updated-desc": "t.updated_at DESC",
 }
 TICKET_COLUMNS = f"""
-    t.ticket_uuid, t.ticket_number, c.external_customer_id AS customer_id, t.title,
+    t.ticket_id, t.ticket_number, c.external_customer_id AS customer_id, t.title,
     tm.name AS team_name, COALESCE(st.name, st.email) AS assignee_name, {STATUS_SQL} AS status,
     cat.name AS category, t.category_status, t.category_review_reason, t.sentiment, t.sentiment_status,
     t.created_at, t.updated_at, ch.type AS channel
 """
 TICKET_FROM = """
     FROM visible_ticket AS t
-    JOIN customer AS c ON c.customer_uuid=t.customer_uuid AND c.company_uuid=t.company_uuid
-    JOIN channel AS ch ON ch.channel_uuid=t.channel_uuid AND ch.company_uuid=t.company_uuid
-    LEFT JOIN team AS tm ON tm.team_uuid=t.assigned_team_uuid AND tm.company_uuid=t.company_uuid
-    LEFT JOIN staff_user AS st ON st.staff_user_uuid=t.assignee_uuid AND st.company_uuid=t.company_uuid
-    LEFT JOIN category AS cat ON cat.category_uuid=t.category_uuid AND cat.domain_uuid=t.domain_uuid
+    JOIN customer AS c ON c.customer_id=t.customer_id AND c.company_id=t.company_id
+    JOIN channel AS ch ON ch.channel_id=t.channel_id AND ch.company_id=t.company_id
+    LEFT JOIN team AS tm ON tm.team_id=t.assigned_team_id AND tm.company_id=t.company_id
+    LEFT JOIN staff_user AS st ON st.staff_user_id=t.assignee_id AND st.company_id=t.company_id
+    LEFT JOIN category AS cat ON cat.category_id=t.category_id AND cat.domain_id=t.domain_id
 """
 
 
-def filter_options(cursor, company_uuid):
-    company = (company_uuid,)
-    cursor.execute("SELECT team_uuid AS id,name FROM team WHERE company_uuid=%s ORDER BY name,id", company)
+def filter_options(cursor, company_id):
+    company = (company_id,)
+    cursor.execute("SELECT team_id AS id,name FROM team WHERE company_id=%s ORDER BY name,id", company)
     teams = fetch_rows(cursor)
-    cursor.execute("""SELECT staff_user_uuid AS id,coalesce(name,email) AS name
-                      FROM staff_user WHERE company_uuid=%s ORDER BY name,id""", company)
+    cursor.execute("""SELECT staff_user_id AS id,coalesce(name,email) AS name
+                      FROM staff_user WHERE company_id=%s ORDER BY name,id""", company)
     assignees = fetch_rows(cursor)
-    cursor.execute("""SELECT category_uuid AS id,cat.name FROM category cat
-                      JOIN company c ON c.domain_uuid=cat.domain_uuid
-                      WHERE c.company_uuid=%s ORDER BY cat.name,id""", company)
+    cursor.execute("""SELECT category_id AS id,cat.name FROM category cat
+                      JOIN company c ON c.domain_id=cat.domain_id
+                      WHERE c.company_id=%s ORDER BY cat.name,id""", company)
     return {"teams": teams, "assignees": assignees, "categories": fetch_rows(cursor)}
 
 
-def detail(cursor, company_uuid, ticket_uuid, include_memos=False, *, for_page=False):
+def detail(cursor, company_id, ticket_id, include_memos=False, *, for_page=False):
     customer_fields = f", c.name AS customer_name, c.email AS customer_email, ({CLOSE_AT_SQL}) AS close_at" if for_page else ""
-    cursor.execute("SELECT " + TICKET_COLUMNS + ", t.customer_uuid,t.assignee_uuid,t.csv_import_kind"
+    cursor.execute("SELECT " + TICKET_COLUMNS + ", t.customer_id AS internal_customer_id,t.assignee_id,t.csv_import_kind"
                    + customer_fields + TICKET_FROM
-                   + " WHERE t.ticket_uuid=%s AND t.company_uuid=%s", (str(ticket_uuid), company_uuid))
+                   + " WHERE t.ticket_id=%s AND t.company_id=%s", (str(ticket_id), company_id))
     ticket = next(iter(fetch_rows(cursor)), None)
     if ticket is None:
         return None
-    customer_uuid = ticket.pop("customer_uuid")
+    customer_id = ticket.pop("internal_customer_id")
     cursor.execute(f"""
-        SELECT t.ticket_uuid,t.ticket_number,m.sender_type,m.message_type,m.body,m.created_at,m.delivery_status,
-               {"m.staff_user_uuid,m.ticket_message_uuid," if for_page else ""}
+        SELECT t.ticket_id,t.ticket_number,m.sender_type,m.message_type,m.body,m.created_at,m.delivery_status,
+               {"m.staff_user_id,m.ticket_message_id," if for_page else ""}
                CASE WHEN m.sender_type='customer' THEN c.name ELSE s.name END AS author_name
-        FROM visible_ticket t JOIN ticket_message m ON m.ticket_uuid=t.ticket_uuid
-        JOIN customer c ON c.customer_uuid=t.customer_uuid AND c.company_uuid=t.company_uuid
-        LEFT JOIN staff_user s ON s.staff_user_uuid=m.staff_user_uuid AND s.company_uuid=t.company_uuid
-        WHERE t.company_uuid=%s AND t.ticket_uuid=%s AND (%s OR m.message_type<>'memo')
-        ORDER BY m.created_at,m.ticket_message_uuid
-        """, (company_uuid, str(ticket_uuid), include_memos))
+        FROM visible_ticket t JOIN ticket_message m ON m.ticket_id=t.ticket_id
+        JOIN customer c ON c.customer_id=t.customer_id AND c.company_id=t.company_id
+        LEFT JOIN staff_user s ON s.staff_user_id=m.staff_user_id AND s.company_id=t.company_id
+        WHERE t.company_id=%s AND t.ticket_id=%s AND (%s OR m.message_type<>'memo')
+        ORDER BY m.created_at,m.ticket_message_id
+        """, (company_id, str(ticket_id), include_memos))
     messages, memos = [], []
     for message in fetch_rows(cursor):
         (memos if message["message_type"] == "memo" else messages).append(message)
     cursor.execute("SELECT " + TICKET_COLUMNS + TICKET_FROM + """
-        WHERE t.company_uuid=%s AND t.customer_uuid=%s AND t.ticket_uuid<>%s
+        WHERE t.company_id=%s AND t.customer_id=%s AND t.ticket_id<>%s
         ORDER BY t.created_at,t.ticket_number
-    """, (company_uuid, customer_uuid, str(ticket_uuid)))
+    """, (company_id, customer_id, str(ticket_id)))
     related = fetch_rows(cursor)
     cursor.execute("""
-        SELECT peer.ticket_uuid,peer.ticket_number,peer.title,ch.type AS channel
+        SELECT peer.ticket_id,peer.ticket_number,peer.title,ch.type AS channel
         FROM ticket_duplicate_candidate link
-        JOIN visible_ticket peer ON peer.ticket_uuid =
-            CASE WHEN link.ticket_uuid=%s THEN link.candidate_ticket_uuid ELSE link.ticket_uuid END
-        JOIN channel ch ON ch.channel_uuid=peer.channel_uuid AND ch.company_uuid=peer.company_uuid
-        WHERE (link.ticket_uuid=%s OR link.candidate_ticket_uuid=%s)
-            AND peer.company_uuid=%s AND ch.type<>%s
+        JOIN visible_ticket peer ON peer.ticket_id =
+            CASE WHEN link.ticket_id=%s THEN link.candidate_ticket_id ELSE link.ticket_id END
+        JOIN channel ch ON ch.channel_id=peer.channel_id AND ch.company_id=peer.company_id
+        WHERE (link.ticket_id=%s OR link.candidate_ticket_id=%s)
+            AND peer.company_id=%s AND ch.type<>%s
         ORDER BY peer.created_at,peer.ticket_number
-        """, (str(ticket_uuid), str(ticket_uuid), str(ticket_uuid), company_uuid, ticket["channel"]))
+        """, (str(ticket_id), str(ticket_id), str(ticket_id), company_id, ticket["channel"]))
     result = {"ticket": ticket, "messages": messages, "memos": memos, "customer_tickets": related,
               "duplicate_candidates": fetch_rows(cursor)}
     if for_page:
         visible_messages = messages + memos
         cursor.execute("""
-            SELECT ticket_message_uuid, attachment_uuid, filename
-            FROM ticket_message_attachment WHERE ticket_message_uuid = ANY(%s::uuid[])
-            ORDER BY attachment_uuid
-        """, ([row["ticket_message_uuid"] for row in visible_messages],))
+            SELECT ticket_message_id, attachment_id, filename
+            FROM ticket_message_attachment WHERE ticket_message_id = ANY(%s::uuid[])
+            ORDER BY attachment_id
+        """, ([row["ticket_message_id"] for row in visible_messages],))
         attachments = {}
         for row in fetch_rows(cursor):
-            attachments.setdefault(row["ticket_message_uuid"], []).append(row)
+            attachments.setdefault(row["ticket_message_id"], []).append(row)
         for row in visible_messages:
-            row["attachments"] = attachments.get(row["ticket_message_uuid"], ())
+            row["attachments"] = attachments.get(row["ticket_message_id"], ())
     if for_page and include_memos:
         cursor.execute("""
             SELECT 'staff' AS sender_type, 'transfer' AS message_type, e.transfer_reason AS body, e.created_at,
                    coalesce(st.name, st.email) AS author_name
             FROM visible_ticket t
-            JOIN ticket_event e USING (ticket_uuid)
-            JOIN event_type et USING (event_type_uuid)
-            LEFT JOIN staff_user st ON st.staff_user_uuid=e.actor_uuid AND st.company_uuid=t.company_uuid
-            WHERE t.ticket_uuid=%s AND t.company_uuid=%s AND et.code='ticket_transfer'
+            JOIN ticket_event e USING (ticket_id)
+            JOIN event_type et USING (event_type_id)
+            LEFT JOIN staff_user st ON st.staff_user_id=e.actor_id AND st.company_id=t.company_id
+            WHERE t.ticket_id=%s AND t.company_id=%s AND et.code='ticket_transfer'
               AND e.transfer_reason IS NOT NULL
-        """, (str(ticket_uuid), company_uuid))
+        """, (str(ticket_id), company_id))
         result["transfer_notes"] = fetch_rows(cursor)
     return result
 
 
-def summary_source(cursor, company_uuid, ticket_uuid):
+def summary_source(cursor, company_id, ticket_id):
     cursor.execute(f"""
         SELECT {STATUS_SQL} AS status, ch.type AS channel, COALESCE(
             (SELECT h.model_text FROM voc.model_text_history h
-             WHERE h.company_uuid=t.company_uuid AND h.event_id=t.source_event_id
+             WHERE h.company_id=t.company_id AND h.event_id=t.source_event_id
              ORDER BY h.body_version DESC, h.preprocess_version DESC LIMIT 1),
-            (SELECT string_agg(m.body, E'\\n' ORDER BY m.created_at,m.ticket_message_uuid)
-             FROM ticket_message m WHERE m.ticket_uuid=t.ticket_uuid
+            (SELECT string_agg(m.body, E'\\n' ORDER BY m.created_at,m.ticket_message_id)
+             FROM ticket_message m WHERE m.ticket_id=t.ticket_id
                AND m.sender_type='customer' AND m.message_type='inquiry')
         ) AS body
-        FROM visible_ticket t JOIN channel ch ON ch.channel_uuid=t.channel_uuid AND ch.company_uuid=t.company_uuid
-        WHERE t.company_uuid=%s AND t.ticket_uuid=%s
-    """, (company_uuid, ticket_uuid))
+        FROM visible_ticket t JOIN channel ch ON ch.channel_id=t.channel_id AND ch.company_id=t.company_id
+        WHERE t.company_id=%s AND t.ticket_id=%s
+    """, (company_id, ticket_id))
     return next(iter(fetch_rows(cursor)), None)
 
 
@@ -132,18 +132,18 @@ def _id_filter(conditions, params, column, entries):
         conditions.append("(" + " OR ".join(clauses) + ")")
 
 
-def list_tickets(cursor, company_uuid, assignee_uuid, query):
-    conditions = ["t.company_uuid=%s"]
-    params = [company_uuid]
-    if assignee_uuid:
-        conditions.append("t.assignee_uuid=%s")
-        params.append(assignee_uuid)
+def list_tickets(cursor, company_id, assignee_id, query):
+    conditions = ["t.company_id=%s"]
+    params = [company_id]
+    if assignee_id:
+        conditions.append("t.assignee_id=%s")
+        params.append(assignee_id)
     if query.q:
         search = {"title": "t.title", "customer": "c.external_customer_id", "id": "('#' || t.ticket_number)"}
         conditions.append(f"strpos(lower({search[query.search_by]}), lower(%s)) > 0")
         params.append(query.q)
-    for key, column in (("team", "t.assigned_team_uuid"), ("assignee", "t.assignee_uuid"),
-                        ("category", "t.category_uuid")):
+    for key, column in (("team", "t.assigned_team_id"), ("assignee", "t.assignee_id"),
+                        ("category", "t.category_id")):
         _id_filter(conditions, params, column, query.filters[key])
     for key in ("status", "sentiment"):
         if query.filters[key]:
@@ -171,9 +171,9 @@ def list_tickets(cursor, company_uuid, assignee_uuid, query):
 
 def add_memo(cursor, company, staff, ticket, body):
     cursor.execute("""
-        INSERT INTO ticket_message(ticket_uuid,staff_user_uuid,body,sender_type,message_type,created_at)
-        SELECT ticket_uuid,%s,%s,'staff','memo',clock_timestamp()
-        FROM visible_ticket WHERE company_uuid=%s AND ticket_uuid=%s
-        RETURNING ticket_message_uuid, ticket_uuid, staff_user_uuid, body, created_at
+        INSERT INTO ticket_message(ticket_id,staff_user_id,body,sender_type,message_type,created_at)
+        SELECT ticket_id,%s,%s,'staff','memo',clock_timestamp()
+        FROM visible_ticket WHERE company_id=%s AND ticket_id=%s
+        RETURNING ticket_message_id, ticket_id, staff_user_id, body, created_at
     """, (staff, body, company, ticket))
     return next(iter(fetch_rows(cursor)), None)

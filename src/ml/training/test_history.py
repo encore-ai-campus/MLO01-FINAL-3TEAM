@@ -25,16 +25,16 @@ class HistoryTests(unittest.TestCase):
                            (row["silver_event_id"],))
                 if first_sent:
                     cn.execute("""
-                        INSERT INTO public.ticket_message(ticket_uuid,body,sender_type,message_type,
+                        INSERT INTO public.ticket_message(ticket_id,body,sender_type,message_type,
                             delivery_status,created_at,sent_at)
                         VALUES (%s,'답변','staff','reply','sent',%s,%s)
-                    """, (row["ticket_uuid"], first_sent, first_sent))
+                    """, (row["ticket_id"], first_sent, first_sent))
                 if closed_at:
                     cn.execute("""
-                        INSERT INTO public.ticket_event(ticket_uuid,event_type_uuid,from_status,to_status,created_at)
-                        SELECT %s,event_type_uuid,'미처리','답변완료',%s FROM public.event_type
+                        INSERT INTO public.ticket_event(ticket_id,event_type_id,from_status,to_status,created_at)
+                        SELECT %s,event_type_id,'미처리','답변완료',%s FROM public.event_type
                         WHERE code='ticket_reply_completed'
-                    """, (row["ticket_uuid"],closed_at))
+                    """, (row["ticket_id"],closed_at))
                 return row
 
             valid = earlier(8, at-timedelta(days=7), at-timedelta(days=7))
@@ -43,19 +43,19 @@ class HistoryTests(unittest.TestCase):
             after = earlier(2, at+timedelta(minutes=1), at+timedelta(minutes=1))
             row = receive(cn, company, "gmail", sender, None, "새 문의", received_at=at)
             self.assertEqual(row["unresolved_count"], 2)
-            self.assertEqual(row["avg_first_reply_7d_seconds"], 86400)
+            self.assertEqual(row["avg_first_reply_7d_ms"], 86400000)
             sources = row["calculation_sources"]
             self.assertEqual({entry["ticket_uuid"] for entry in sources["unresolved"]},
-                             {str(at_boundary["ticket_uuid"]),str(after["ticket_uuid"])})
+                             {str(at_boundary["ticket_id"]),str(after["ticket_id"])})
             self.assertEqual([entry["ticket_uuid"] for entry in sources["first_replies"]],
-                             [str(valid["ticket_uuid"])])
+                             [str(valid["ticket_id"])])
 
             cn.execute("""
-                UPDATE voc.silver_messages SET body_text='수정된 정제 본문',body_version=2 WHERE event_id=%s
+                UPDATE voc.silver_message SET body_text='수정된 정제 본문',body_version=2 WHERE event_id=%s
             """, (row["silver_event_id"],))
             versions = cn.execute("""
-                SELECT * FROM voc.feature_snapshot WHERE ticket_uuid=%s ORDER BY body_version
-            """, (row["ticket_uuid"],)).fetchall()
+                SELECT * FROM voc.feature_snapshot WHERE ticket_id=%s ORDER BY body_version
+            """, (row["ticket_id"],)).fetchall()
             self.assertEqual([item["body"] for item in versions], ["새 문의", "수정된 정제 본문"])
-            self.assertNotEqual(versions[0]["feature_uuid"], versions[1]["feature_uuid"])
+            self.assertNotEqual(versions[0]["feature_snapshot_id"], versions[1]["feature_snapshot_id"])
             self.assertTrue(all(item["calculation_sources"] == sources for item in versions))

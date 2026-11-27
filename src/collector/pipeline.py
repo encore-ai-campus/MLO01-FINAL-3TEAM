@@ -70,8 +70,9 @@ def migrate_capture():
     store = CaptureStore(ROOT)
     count = 0
     with db() as cn, cn.transaction(), cn.cursor(name="capture_migration") as cursor:
-        cursor.execute("""SELECT event_id, company_id, channel, connection_id, source_message_id,
-                                 received_at FROM voc.bronze_messages""")
+        cursor.execute("""SELECT event_id, source_company_id AS company_id, source_channel_type AS channel,
+                                 source_connection_id AS connection_id, source_message_id,
+                                 received_at FROM voc.bronze_message""")
         while rows := cursor.fetchmany(500):
             store.confirm_bronze(rows)
             count += len(rows)
@@ -108,13 +109,13 @@ def store_bronze(cn, topic, event):
     values = (event["event_id"], *fields, event["origin"], event["received_at"],
               Jsonb(event["context"]), Jsonb(event["raw"]))
     saved = cn.execute("""WITH saved AS (
-        INSERT INTO voc.bronze_messages
-          (event_id,company_id,channel,connection_id,source_message_id,origin,received_at,context,raw_payload)
+        INSERT INTO voc.bronze_message
+          (event_id,source_company_id,source_channel_type,source_connection_id,source_message_id,origin,received_at,context_json,raw_payload_json)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (event_id) DO NOTHING RETURNING event_id)
         INSERT INTO voc.standardize_outbox(event_id, target_schema_version) SELECT event_id, 4 FROM saved""",values)
     if not saved.rowcount:
-        first = cn.execute("SELECT raw_payload FROM voc.bronze_messages WHERE event_id=%s", (event["event_id"],)).fetchone()
-        if source_body_changed(channel, first["raw_payload"], event["raw"]):
+        first = cn.execute("SELECT raw_payload_json FROM voc.bronze_message WHERE event_id=%s", (event["event_id"],)).fetchone()
+        if source_body_changed(channel, first["raw_payload_json"], event["raw"]):
             raise SilverError("source body differs from first Bronze record")
 
 
@@ -133,7 +134,7 @@ def relay(cn, kafka):
 
 
 def add_review(cn, msg, ident, reason):
-    cn.execute("""INSERT INTO voc.review_events(topic,partition_id,kafka_offset,event_id,reason,schema_version)
+    cn.execute("""INSERT INTO voc.review_event(topic,partition_id,kafka_offset,event_id,reason,schema_version)
                   VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
                (msg.topic(),msg.partition(),msg.offset(),ident,reason,VERSION))
 

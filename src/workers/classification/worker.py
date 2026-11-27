@@ -20,7 +20,7 @@ from psycopg.rows import dict_row
 
 
 SENTIMENTS = {"긍정", "중립", "부정", "매우 부정"}
-FIELDS = {"sentiment": ("sentiment", "sentiment_status"), "category": ("category_uuid", "category_status")}
+FIELDS = {"sentiment": ("sentiment", "sentiment_status"), "category": ("category_id", "category_status")}
 LEASE_SECONDS = 45
 HTTP_TIMEOUT = 10
 MAX_ATTEMPTS = 3
@@ -74,31 +74,31 @@ def scope_key(kind, domain):
 
 def routing_percent(cn, config, scope, configured):
     key = (config.company, scope, config.canary.version)
-    cn.execute("""INSERT INTO voc.classification_rollout(company_uuid,scope_key,candidate_version,stable_version,configured_percent)
-        VALUES (%s,%s,%s,%s,%s) ON CONFLICT (company_uuid,scope_key,candidate_version) DO UPDATE
+    cn.execute("""INSERT INTO voc.classification_rollout(company_id,scope_key,candidate_version,stable_version,configured_percent)
+        VALUES (%s,%s,%s,%s,%s) ON CONFLICT (company_id,scope_key,candidate_version) DO UPDATE
         SET stable_version=excluded.stable_version,configured_percent=excluded.configured_percent
         WHERE (classification_rollout.stable_version,classification_rollout.configured_percent)
               IS DISTINCT FROM (excluded.stable_version,excluded.configured_percent)""", (*key,config.stable.version,configured))
     row = cn.execute("""SELECT tripped_at FROM voc.classification_rollout
-        WHERE company_uuid=%s AND scope_key=%s AND candidate_version=%s FOR SHARE""", key).fetchone()
+        WHERE company_id=%s AND scope_key=%s AND candidate_version=%s FOR SHARE""", key).fetchone()
     return 0 if row["tripped_at"] else configured
 
 
 def observe_canary(cn, job, scope, failed, config):
     if job["route"] != "canary":
         return
-    if not config.guard_replays and cn.execute("""SELECT 1 FROM voc.bronze_messages
-            WHERE event_id=%s AND (context->>'synthetic'='true' OR origin='synthetic-canary')""",
+    if not config.guard_replays and cn.execute("""SELECT 1 FROM voc.bronze_message
+            WHERE event_id=%s AND (context_json->>'synthetic'='true' OR origin='synthetic-canary')""",
             (job["event_id"],)).fetchone():
         return
-    key = (job["company_uuid"], scope, job["model_version"])
+    key = (job["company_id"], scope, job["model_version"])
     state = cn.execute("""SELECT tripped_at,stable_version,to_regclass('voc.model_review_policy') AS policies FROM voc.classification_rollout
-        WHERE company_uuid=%s AND scope_key=%s AND candidate_version=%s FOR UPDATE""", key).fetchone()
+        WHERE company_id=%s AND scope_key=%s AND candidate_version=%s FOR UPDATE""", key).fetchone()
     if not state or state["tripped_at"]:
         return
     if not failed:
         cn.execute("""UPDATE voc.classification_rollout SET failures='{}',first_failure_at=NULL
-            WHERE company_uuid=%s AND scope_key=%s AND candidate_version=%s AND failures<>'{}'""", key)
+            WHERE company_id=%s AND scope_key=%s AND candidate_version=%s AND failures<>'{}'""", key)
     else:
         record_failure(cn, key, job["event_id"])
     if state["policies"]:
@@ -109,7 +109,7 @@ def record_failure(cn, key, event):
     # Duplicate retries of one VOC cannot trip the circuit. Success starts a new streak.
     cn.execute("""WITH observed AS (
         SELECT clock_timestamp() AS at, failures FROM voc.classification_rollout
-        WHERE company_uuid=%s AND scope_key=%s AND candidate_version=%s
+        WHERE company_id=%s AND scope_key=%s AND candidate_version=%s
     ), events AS (
         SELECT e.key, e.value::timestamptz AS at FROM observed o,jsonb_each_text(o.failures) e
         WHERE e.value::timestamptz > o.at-interval '30 minutes'
@@ -119,12 +119,12 @@ def record_failure(cn, key, event):
     UPDATE voc.classification_rollout SET failures=s.events,first_failure_at=s.first,
         tripped_at=CASE WHEN s.n>=3 THEN clock_timestamp() END,
         reason=CASE WHEN s.n>=3 THEN 'consecutive_failures' END
-    FROM streak s WHERE company_uuid=%s AND scope_key=%s AND candidate_version=%s""", (*key,event,*key))
+    FROM streak s WHERE company_id=%s AND scope_key=%s AND candidate_version=%s""", (*key,event,*key))
 
 
 def enforce_saved_limits(cn, key, stable_version, include_replays):
     company, scope, candidate = key
-    policy = cn.execute("""SELECT settings FROM voc.model_review_policy WHERE company_uuid=%s AND scope_key=%s
+    policy = cn.execute("""SELECT settings FROM voc.model_review_policy WHERE company_id=%s AND scope_key=%s
         AND settings->>'baseline_served'=%s AND settings->>'candidate_served'=%s""",
         (company,scope,stable_version,candidate)).fetchone()
     if not policy:
@@ -137,11 +137,11 @@ def enforce_saved_limits(cn, key, stable_version, include_replays):
         bool_or(a.served_version IS NOT NULL AND a.served_version<>a.assigned_version OR
             a.assigned_version<>CASE a.assigned_route WHEN 'canary' THEN %s ELSE %s END) AS mixed
         FROM voc.classification_attempt a JOIN voc.classification_job j USING(request_id)
-        JOIN public.ticket t ON t.company_uuid=j.company_uuid AND t.source_event_id=j.event_id
-        JOIN voc.bronze_messages b ON b.event_id=j.event_id
-        WHERE j.company_uuid=%s AND j.analysis_kind=%s AND (%s::uuid IS NULL OR t.domain_uuid=%s::uuid)
+        JOIN public.ticket t ON t.company_id=j.company_id AND t.source_event_id=j.event_id
+        JOIN voc.bronze_message b ON b.event_id=j.event_id
+        WHERE j.company_id=%s AND j.analysis_kind=%s AND (%s::uuid IS NULL OR t.domain_id=%s::uuid)
           AND a.started_at>clock_timestamp()-interval '30 minutes' AND a.finished_at IS NOT NULL
-          AND (%s OR (b.origin IS DISTINCT FROM 'synthetic-canary' AND b.context->>'synthetic' IS DISTINCT FROM 'true'))
+          AND (%s OR (b.origin IS DISTINCT FROM 'synthetic-canary' AND b.context_json->>'synthetic' IS DISTINCT FROM 'true'))
         GROUP BY a.assigned_route""", (candidate, stable_version, company, kind, domain or None, domain or None, include_replays)).fetchall()
     lanes = {row["route"]: row for row in rows}
     base, canary = lanes.get("stable"), lanes.get("canary")
@@ -163,44 +163,44 @@ def enforce_saved_limits(cn, key, stable_version, include_replays):
             reason = "candidate_p95"
     if reason:
         cn.execute("""UPDATE voc.classification_rollout SET tripped_at=clock_timestamp(),reason=%s
-            WHERE company_uuid=%s AND scope_key=%s AND candidate_version=%s AND tripped_at IS NULL""", (reason,*key))
+            WHERE company_id=%s AND scope_key=%s AND candidate_version=%s AND tripped_at IS NULL""", (reason,*key))
 
 
 def dispatch(cn, config):
     """Hand off an outbox row and mark it published atomically; never evaluate unscoped rows."""
     with cn.transaction():
         row = cn.execute("""
-            SELECT company_uuid,event_id,preprocess_version,body_version,analysis_kind,queued_at
-            FROM voc.ticket_analysis_outbox WHERE company_uuid=%s AND published_at IS NULL
+            SELECT company_id,event_id,preprocess_version,body_version,analysis_kind,queued_at
+            FROM voc.ticket_analysis_outbox WHERE company_id=%s AND published_at IS NULL
             ORDER BY queued_at,event_id,analysis_kind LIMIT 1 FOR UPDATE SKIP LOCKED
         """, (config.company,)).fetchone()
         if row is None:
             return False
-        ticket = cn.execute("SELECT domain_uuid FROM public.ticket WHERE company_uuid=%s AND source_event_id=%s",
+        ticket = cn.execute("SELECT domain_id FROM public.ticket WHERE company_id=%s AND source_event_id=%s",
                             (config.company, row["event_id"])).fetchone()
         configured = config.percent if row["analysis_kind"] == "sentiment" else config.category_percent
-        percent = routing_percent(cn, config, scope_key(row["analysis_kind"], ticket["domain_uuid"]), configured) if ticket else 0
+        percent = routing_percent(cn, config, scope_key(row["analysis_kind"], ticket["domain_id"]), configured) if ticket else 0
         canary = bucket(config.company, row["event_id"]) < percent
         release = config.canary if canary else config.stable
         if canary and release.uses_customer_features and not config.stable.uses_customer_features:
             snapshot = cn.execute("""
                 SELECT 1 FROM voc.feature_snapshot
-                WHERE company_uuid=%(company_uuid)s AND silver_event_id=%(event_id)s
+                WHERE company_id=%(company_id)s AND silver_event_id=%(event_id)s
                   AND preprocess_version=%(preprocess_version)s AND body_version=%(body_version)s
             """, row).fetchone()
             if snapshot is None:
                 canary, release = False, config.stable
         cn.execute("""
             INSERT INTO voc.classification_job
-                (company_uuid,event_id,preprocess_version,body_version,analysis_kind,queued_at,route,model_version,model_url,uses_customer_features)
-            VALUES (%(company_uuid)s,%(event_id)s,%(preprocess_version)s,%(body_version)s,%(analysis_kind)s,
+                (company_id,event_id,preprocess_version,body_version,analysis_kind,queued_at,route,model_version,model_url,uses_customer_features)
+            VALUES (%(company_id)s,%(event_id)s,%(preprocess_version)s,%(body_version)s,%(analysis_kind)s,
                     %(queued_at)s,%(route)s,%(model_version)s,%(model_url)s,%(uses_customer_features)s)
-            ON CONFLICT (company_uuid,event_id,preprocess_version,body_version,analysis_kind) DO NOTHING
+            ON CONFLICT (company_id,event_id,preprocess_version,body_version,analysis_kind) DO NOTHING
         """, {**row, "route": "canary" if canary else "stable", "model_version": release.version, "model_url": release.url,
             "uses_customer_features": release.uses_customer_features})
         cn.execute("""
             UPDATE voc.ticket_analysis_outbox SET published_at=clock_timestamp()
-            WHERE company_uuid=%(company_uuid)s AND event_id=%(event_id)s AND analysis_kind=%(analysis_kind)s
+            WHERE company_id=%(company_id)s AND event_id=%(event_id)s AND analysis_kind=%(analysis_kind)s
               AND preprocess_version=%(preprocess_version)s AND body_version=%(body_version)s
         """, row)
         return True
@@ -210,17 +210,17 @@ def current_ticket(cn, job):
     # Same lock order as Silver projection (Silver first, then ticket). Locks last
     # only until the claim/result transaction commits, never across network I/O.
     silver = cn.execute("""
-        SELECT body_version,message_kind FROM voc.silver_messages
+        SELECT body_version,message_kind FROM voc.silver_message
         WHERE event_id=%(event_id)s AND schema_version=4 FOR SHARE
     """, job).fetchone()
     if not silver or silver["body_version"] != job["body_version"] or silver["message_kind"] != "customer_inquiry":
         return None
     value, status = map(sql.Identifier, FIELDS[job["analysis_kind"]])
     return cn.execute(sql.SQL("""
-        SELECT t.ticket_uuid,t.domain_uuid,t.{}::text AS current_value,t.{} AS current_status
-        FROM public.ticket t WHERE t.company_uuid=%(company_uuid)s AND t.source_event_id=%(event_id)s
-          AND (%(analysis_kind)s <> 'category' OR NOT t.category_manually_set)
-          AND NOT EXISTS (SELECT FROM voc.model_text_history h WHERE h.company_uuid=t.company_uuid
+        SELECT t.ticket_id,t.domain_id,t.{}::text AS current_value,t.{} AS current_status
+        FROM public.ticket t WHERE t.company_id=%(company_id)s AND t.source_event_id=%(event_id)s
+          AND (%(analysis_kind)s <> 'category' OR NOT t.is_category_manual)
+          AND NOT EXISTS (SELECT FROM voc.model_text_history h WHERE h.company_id=t.company_id
                 AND h.event_id=t.source_event_id AND h.body_version=%(body_version)s
                 AND h.preprocess_version>%(preprocess_version)s)
         FOR UPDATE OF t
@@ -232,26 +232,26 @@ def project(cn, job, ticket, value, status):
         return False
     # current_ticket already holds the row lock. Read the manual event after acquiring it.
     if job["analysis_kind"] == "sentiment" and cn.execute("""
-        SELECT 1 FROM public.ticket_event e JOIN public.event_type t USING(event_type_uuid)
-        WHERE e.ticket_uuid=%s AND t.code='ticket_sentiment_changed'
-    """, (ticket["ticket_uuid"],)).fetchone():
+        SELECT 1 FROM public.ticket_event e JOIN public.event_type t USING(event_type_id)
+        WHERE e.ticket_id=%s AND t.code='ticket_sentiment_changed'
+    """, (ticket["ticket_id"],)).fetchone():
         return False
     marker = cn.execute("""
-        SELECT value,status,request_id FROM voc.classification_projection WHERE ticket_uuid=%s AND analysis_kind=%s
-    """, (ticket["ticket_uuid"], job["analysis_kind"])).fetchone()
+        SELECT value,status,request_id FROM voc.classification_projection WHERE ticket_id=%s AND analysis_kind=%s
+    """, (ticket["ticket_id"], job["analysis_kind"])).fetchone()
     expected = (marker["value"], marker["status"]) if marker else (None, "pending")
     if (ticket["current_value"], ticket["current_status"]) != expected:
         return False
     if status != "running" and (not marker or marker["request_id"] != job["request_id"]):
         return False
     field, state = map(sql.Identifier, FIELDS[job["analysis_kind"]])
-    cn.execute(sql.SQL("UPDATE public.ticket SET {}=%s, {}=%s, updated_at=clock_timestamp() WHERE ticket_uuid=%s")
-               .format(field, state), (value, status, ticket["ticket_uuid"]))
+    cn.execute(sql.SQL("UPDATE public.ticket SET {}=%s, {}=%s, updated_at=clock_timestamp() WHERE ticket_id=%s")
+               .format(field, state), (value, status, ticket["ticket_id"]))
     cn.execute("""
-        INSERT INTO voc.classification_projection(ticket_uuid,analysis_kind,request_id,value,status)
-        VALUES (%s,%s,%s,%s,%s) ON CONFLICT(ticket_uuid,analysis_kind) DO UPDATE
+        INSERT INTO voc.classification_projection(ticket_id,analysis_kind,request_id,value,status)
+        VALUES (%s,%s,%s,%s,%s) ON CONFLICT(ticket_id,analysis_kind) DO UPDATE
         SET request_id=excluded.request_id,value=excluded.value,status=excluded.status
-    """, (ticket["ticket_uuid"], job["analysis_kind"], job["request_id"], str(value) if value is not None else None, status))
+    """, (ticket["ticket_id"], job["analysis_kind"], job["request_id"], str(value) if value is not None else None, status))
     return True
 
 
@@ -266,7 +266,7 @@ def pause_withdrawn(cn, job):
     # An already-published outbox row is retained when a role changes. If the
     # same revision is later confirmed again, its original job must resume.
     withdrawn = cn.execute("""
-        SELECT 1 FROM voc.silver_messages WHERE event_id=%(event_id)s AND schema_version=4
+        SELECT 1 FROM voc.silver_message WHERE event_id=%(event_id)s AND schema_version=4
         AND body_version=%(body_version)s AND message_kind<>'customer_inquiry'
     """, job).fetchone()
     if withdrawn:
@@ -279,15 +279,15 @@ def claim(cn, config):
     """Return (did_work, job). Expired labels, roles and leases are handled before HTTP."""
     with cn.transaction():
         job = cn.execute("""
-            SELECT j.* FROM voc.classification_job j JOIN voc.silver_messages s ON s.event_id=j.event_id AND s.schema_version=4
-            WHERE j.company_uuid=%s AND j.state IN ('pending','running') AND j.ready_at<=clock_timestamp()
+            SELECT j.* FROM voc.classification_job j JOIN voc.silver_message s ON s.event_id=j.event_id AND s.schema_version=4
+            WHERE j.company_id=%s AND j.state IN ('pending','running') AND j.ready_at<=clock_timestamp()
               AND (s.message_kind='customer_inquiry' OR s.body_version<>j.body_version)
             ORDER BY j.ready_at,j.queued_at,j.request_id LIMIT 1 FOR UPDATE OF j SKIP LOCKED
         """, (config.company,)).fetchone()
         if job is None:
             return False, None
         ticket = current_ticket(cn, job)
-        scope = scope_key(job["analysis_kind"], ticket["domain_uuid"]) if ticket else None
+        scope = scope_key(job["analysis_kind"], ticket["domain_id"]) if ticket else None
         if job["state"] == "running":
             cn.execute("""
                 UPDATE voc.classification_attempt SET finished_at=clock_timestamp(),outcome='expired',error_code='lease_expired'
@@ -306,7 +306,7 @@ def claim(cn, config):
             return True, None
         if job["route"] == "canary":
             guard = cn.execute("""SELECT tripped_at FROM voc.classification_rollout
-                WHERE company_uuid=%s AND scope_key=%s AND candidate_version=%s FOR SHARE""",
+                WHERE company_id=%s AND scope_key=%s AND candidate_version=%s FOR SHARE""",
                 (config.company,scope,job["model_version"])).fetchone()
             if guard and guard["tripped_at"]:
                 # Old workers running during migration may have started attempts without a target snapshot.
@@ -326,22 +326,22 @@ def claim(cn, config):
             INSERT INTO voc.classification_attempt(request_id,attempt_no,assigned_route,assigned_version) VALUES(%s,%s,%s,%s)
         """, (job["request_id"], job["attempt_count"],job["route"],job["model_version"]))
         feature = cn.execute("""
-            SELECT model_text FROM voc.model_text_history WHERE company_uuid=%(company_uuid)s AND event_id=%(event_id)s
+            SELECT model_text FROM voc.model_text_history WHERE company_id=%(company_id)s AND event_id=%(event_id)s
               AND preprocess_version=%(preprocess_version)s AND body_version=%(body_version)s
         """, job).fetchone()
-        job.update(domain_id=str(ticket["domain_uuid"]), model_text=feature["model_text"])
+        job.update(domain_id=str(ticket["domain_id"]), model_text=feature["model_text"])
         if job["uses_customer_features"]:
             job["snapshot"] = cn.execute("""
-                SELECT feature_uuid,title,body,unresolved_count,avg_first_reply_7d_seconds,available_at
+                SELECT feature_snapshot_id,title,body,unresolved_count,avg_first_reply_7d_ms / 1000 AS avg_first_reply_7d_seconds,available_at
                 FROM voc.feature_snapshot
-                WHERE company_uuid=%(company_uuid)s AND silver_event_id=%(event_id)s
+                WHERE company_id=%(company_id)s AND silver_event_id=%(event_id)s
                   AND preprocess_version=%(preprocess_version)s AND body_version=%(body_version)s
                   AND available_at<=clock_timestamp()
             """, job).fetchone()
             if job["snapshot"]:
                 cn.execute("""
-                    UPDATE voc.classification_job SET feature_uuid=%s WHERE request_id=%s
-                """, (job["snapshot"]["feature_uuid"],job["request_id"]))
+                    UPDATE voc.classification_job SET feature_snapshot_id=%s WHERE request_id=%s
+                """, (job["snapshot"]["feature_snapshot_id"],job["request_id"]))
         return True, job
 
 
@@ -424,12 +424,12 @@ def finish(cn, job, label=None, error=None, *, config=None):
         value = label
         if error is None and job["analysis_kind"] == "category" and label is not None:
             mapping = cn.execute("""
-                SELECT category_uuid FROM voc.classification_category_map WHERE domain_uuid=%s AND label=%s
+                SELECT category_id FROM voc.classification_category_map WHERE domain_id=%s AND label=%s
             """, (job["domain_id"], label)).fetchone()
             if mapping is None:
                 error = PredictionError("unmapped_category", job["model_version"])
             else:
-                value = mapping["category_uuid"]
+                value = mapping["category_id"]
         cn.execute("""
             UPDATE voc.classification_attempt SET finished_at=clock_timestamp(), outcome=%s, error_code=%s, served_version=%s,
                 http_ms=%s,cost_krw=%s
@@ -438,7 +438,7 @@ def finish(cn, job, label=None, error=None, *, config=None):
               error.served_version if error else job["model_version"], job.get("http_ms"), job.get("cost_krw"),
               job["request_id"], job["attempt_count"]))
         if config and ticket:
-            observe_canary(cn, job, scope_key(job["analysis_kind"], ticket["domain_uuid"]), error is not None, config)
+            observe_canary(cn, job, scope_key(job["analysis_kind"], ticket["domain_id"]), error is not None, config)
         if ticket is None and pause_withdrawn(cn, job):
             return
         if error is None:

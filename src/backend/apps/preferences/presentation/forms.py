@@ -41,13 +41,13 @@ class ReplySearchForm(forms.Form):
 
 class QuickReplyForm(forms.Form):
     name = forms.CharField(label="이름", max_length=80)
-    category_uuid = forms.ChoiceField(label="카테고리")
+    category_id = forms.ChoiceField(label="카테고리")
     scope = forms.ChoiceField(label="사용 범위", choices=REPLY_SCOPES)
     body = forms.CharField(label="답변 내용", max_length=2000, widget=forms.Textarea(attrs={"rows": 6}))
 
     def __init__(self, *args, categories, editing, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["category_uuid"].choices = [("", "선택"), *categories]
+        self.fields["category_id"].choices = [("", "선택"), *categories]
         self.fields["scope"].disabled = editing
 
 

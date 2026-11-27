@@ -75,7 +75,7 @@
             <form class="follow-actions" method="post" action="{{ detail.url }}">
               {% csrf_token %}
               <input type="hidden" name="action" value="untrack">
-              <input type="hidden" name="ticket_uuid" value="{{ detail.id }}">
+              <input type="hidden" name="ticket_id" value="{{ detail.id }}">
               <button class="desk-button" type="submit">추적 해제</button>
             </form>
           {% else %}
@@ -93,7 +93,7 @@
               <button class="desk-button desk-button-solid" type="button" data-follow-dialog="follow-complete">연락 완료 처리</button>
             {% else %}<h4>연락 결과</h4><p class="follow-result">{{ detail.result }}</p>{% endif %}
           {% endif %}
-          <div class="follow-origin"><a class="desk-button" href="{{ detail.source_url }}">{% if detail.ticket_uuid %}원본 티켓 열기{% else %}원본 상담 열기{% endif %} ›</a></div>
+          <div class="follow-origin"><a class="desk-button" href="{{ detail.source_url }}">{% if detail.ticket_id %}원본 티켓 열기{% else %}원본 상담 열기{% endif %} ›</a></div>
         </div>
       </aside>
     {% endif %}
@@ -106,10 +106,10 @@
       <input type="hidden" name="action" value="register">
       <h2 id="follow-register-title">추적 등록</h2>
       <label>티켓
-        <select name="ticket_uuid" required autofocus>
+        <select name="ticket_id" required autofocus>
           <option value="">선택해 주세요</option>
           {% for ticket in track_options %}
-            <option value="{{ ticket.ticket_uuid }}"{% if submitted.ticket_uuid == ticket.ticket_uuid|stringformat:"s" %} selected{% endif %}>#{{ ticket.ticket_number }} {{ ticket.title }}</option>
+            <option value="{{ ticket.ticket_id }}"{% if submitted.ticket_id == ticket.ticket_id|stringformat:"s" %} selected{% endif %}>#{{ ticket.ticket_number }} {{ ticket.title }}</option>
           {% endfor %}
         </select>
       </label>
@@ -127,7 +127,7 @@
     <form method="post" action="{{ detail.url }}">
       {% csrf_token %}
       <input type="hidden" name="action" value="complete">
-      <input type="hidden" name="contact_uuid" value="{{ detail.id }}">
+      <input type="hidden" name="contact_id" value="{{ detail.id }}">
       <h2 id="follow-complete-title">연락 완료 처리</h2>
       <p class="follow-result">{{ detail.number }} {{ detail.title }}<br>예정 {{ detail.scheduled_at|date:"Y-m-d H:i" }} · {{ detail.assignee }}</p>
       <label>실제 연락 일시<input type="datetime-local" name="contacted_at" required value="{% if submitted.contacted_at %}{{ submitted.contacted_at }}{% else %}{{ now|date:'Y-m-d\TH:i' }}{% endif %}"></label>

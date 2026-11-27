@@ -26,7 +26,7 @@ docker compose exec ticket-desk python -c "from getpass import getpass; from arg
 docker compose exec postgres psql -U voc -d voc
 ```
 
-빈 DB에서는 psql에서 첫 회사와 산업 도메인을 등록한다. 기존 회사가 있다면 아래 INSERT를 건너뛰고 `SELECT company_uuid,name,email_domain FROM public.company;`로 소속 회사 UUID를 확인한다.
+빈 DB에서는 psql에서 첫 회사와 산업 도메인을 등록한다. 기존 회사가 있다면 아래 INSERT를 건너뛰고 `SELECT company_id,name,email_domain FROM public.company;`로 소속 회사 UUID를 확인한다.
 
 ```sql
 \set ON_ERROR_STOP on
@@ -34,9 +34,9 @@ docker compose exec postgres psql -U voc -d voc
 \prompt '회사 이름: ' company_name
 \prompt '회사 이메일 도메인(@ 제외): ' mail_domain
 BEGIN;
-INSERT INTO public.domain(name) VALUES (:'industry') RETURNING domain_uuid \gset
-INSERT INTO public.company(name,email_domain,domain_uuid)
-VALUES (:'company_name',lower(:'mail_domain'),:'domain_uuid') RETURNING company_uuid;
+INSERT INTO public.domain(name) VALUES (:'industry') RETURNING domain_id \gset
+INSERT INTO public.company(name,email_domain,domain_id)
+VALUES (:'company_name',lower(:'mail_domain'),:'domain_id') RETURNING company_id;
 COMMIT;
 ```
 
@@ -47,7 +47,7 @@ COMMIT;
 \prompt '회사 이메일: ' email
 \prompt '직원 이름: ' staff_name
 \prompt 'Argon2id 해시: ' password_hash
-INSERT INTO public.staff_user(company_uuid,email,name,password_hash)
+INSERT INTO public.staff_user(company_id,email,name,password_hash)
 VALUES (:'company_id'::uuid,lower(:'email'),:'staff_name',:'password_hash');
 ```
 
@@ -109,15 +109,15 @@ docker compose up -d --no-deps --no-build ticket-desk
 
 DB 운영자가 회사와 직원 이메일을 확인해 첫 관리자에게 `staff_user.role = 'admin'`을 지정한다. 대시보드 접근은 설정 화면에서 직원에게 부여한다.
 
-Task 10은 배정 트랜잭션에서 `apps.assignment.services.get_policy(cursor, company_uuid, staff_uuid)`를 호출해 `enabled`, `batch_size`, `refill_mode`를 읽을 수 있다. 설정을 저장하기 전에는 자동 배정 꺼짐, 1건, 전체 소진 후 재배정이 기본값이다.
+Task 10은 배정 트랜잭션에서 `apps.assignment.services.get_policy(cursor, company_id, staff_uuid)`를 호출해 `enabled`, `batch_size`, `refill_mode`를 읽을 수 있다. 설정을 저장하기 전에는 자동 배정 꺼짐, 1건, 전체 소진 후 재배정이 기본값이다.
 
 | 엔드포인트 | 용도 |
 | --- | --- |
 | `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/logout` | 로그인·본인 확인·로그아웃 |
 | `GET /api/tickets`, `GET /api/tickets/options` | 티켓 검색·복수 필터·접수 기간·정렬·페이지, 회사별 필터 선택지 |
-| `GET /api/tickets/{ticket_uuid}` | 티켓과 고객 대화 이력 조회 |
-| `GET /api/tickets/{ticket_uuid}/quick-replies`, `GET /api/tickets/{ticket_uuid}/collaboration-options` | 현재 카테고리 신속답변과 이관·검토 선택지 |
-| `POST /api/tickets/{ticket_uuid}/messages`, `POST /api/tickets/{ticket_uuid}/transfer`, `POST /api/tickets/{ticket_uuid}/review-requests` | 고객 답변·내부 메모와 상담 협업 |
+| `GET /api/tickets/{ticket_id}` | 티켓과 고객 대화 이력 조회 |
+| `GET /api/tickets/{ticket_id}/quick-replies`, `GET /api/tickets/{ticket_id}/collaboration-options` | 현재 카테고리 신속답변과 이관·검토 선택지 |
+| `POST /api/tickets/{ticket_id}/messages`, `POST /api/tickets/{ticket_id}/transfer`, `POST /api/tickets/{ticket_id}/review-requests` | 고객 답변·내부 메모와 상담 협업 |
 | `GET /api/ticket-requests?kind=transfer` 또는 `?kind=review` | 로그인한 직원이 받은 티켓 요청 |
 | `GET /api/ticket-requests/{action_uuid}/attachment` | 수신 직원의 개별 참고 자료 다운로드 |
 
@@ -138,15 +138,15 @@ JSON 메시지 요청에는 `message_type` (`reply` 또는 `memo`), `body`, 동�
 | 엔드포인트 | 용도 |
 | --- | --- |
 | `GET /api/follow-up/tracks` | 내 추적 티켓 조회 |
-| `POST /api/follow-up/tracks/{ticket_uuid}`, `DELETE /api/follow-up/tracks/{ticket_uuid}` | 내 추적 등록·해제 |
-| `POST /api/tickets/{ticket_uuid}/memos` | 티켓 메모 등록. `body`를 전달한다. |
+| `POST /api/follow-up/tracks/{ticket_id}`, `DELETE /api/follow-up/tracks/{ticket_id}` | 내 추적 등록·해제 |
+| `POST /api/tickets/{ticket_id}/memos` | 티켓 메모 등록. `body`를 전달한다. |
 | `GET /api/follow-up/notifications` | 추적 이후 다른 상담사의 메모와 고객 후속 문의 목록 및 알림 건수 조회 |
 | `GET /api/follow-up/contacts` | `state=scheduled\|completed`, `source=ticket\|chat`, `q`로 연락 기록 조회. 기본 상태는 `scheduled`이다. |
-| `POST /api/follow-up/contacts` | `ticket_uuid` 또는 `chat_uuid`, `assignee_uuid`, `reason`, `scheduled_at`으로 연락 등록 |
-| `GET /api/follow-up/contacts/{contact_uuid}` | 단일 연락 기록과 원본 링크 조회 |
-| `POST /api/follow-up/contacts/{contact_uuid}/complete` | `contacted_at`과 `result`로 완료 처리. 실제 처리자는 로그인한 직원으로 기록한다. |
+| `POST /api/follow-up/contacts` | `ticket_id` 또는 `chat_id`, `assignee_id`, `reason`, `scheduled_at`으로 연락 등록 |
+| `GET /api/follow-up/contacts/{contact_id}` | 단일 연락 기록과 원본 링크 조회 |
+| `POST /api/follow-up/contacts/{contact_id}/complete` | `contacted_at`과 `result`로 완료 처리. 실제 처리자는 로그인한 직원으로 기록한다. |
 
-연락 시각은 ISO 8601 값을 사용한다. 연락 기록은 등록자와 지정 담당자가 조회할 수 있으며, 티켓·채팅 조회 권한을 각각 적용한다. 채팅 원본 링크는 1:1 상담과 메시지를 반환하는 `GET /api/chats/{chat_uuid}`로 연결된다. 종료된 Gmail 스레드의 후속 문의 알림 조건은 팀 합의가 필요하며, 현재는 원본 티켓이 답변완료 상태면 해당 고객 알림을 제외한다.
+연락 시각은 ISO 8601 값을 사용한다. 연락 기록은 등록자와 지정 담당자가 조회할 수 있으며, 티켓·채팅 조회 권한을 각각 적용한다. 채팅 원본 링크는 1:1 상담과 메시지를 반환하는 `GET /api/chats/{chat_id}`로 연결된다. 종료된 Gmail 스레드의 후속 문의 알림 조건은 팀 합의가 필요하며, 현재는 원본 티켓이 답변완료 상태면 해당 고객 알림을 제외한다.
 
 ### 모델 추론 및 티켓 배정
 
@@ -154,9 +154,9 @@ M5의 `linux/arm64` CPU용 이미지, Stable·Canary 모델 설정과 `/v1/predi
 
 기존 설치에서는 `init-db-topics`로 `ticket_schema.sql`을 다시 적용하고 `ticket-desk`를 갱신합니다. 관리자가 `/settings/assignment/category-routes/`에서 회사의 카테고리별 담당 부서를 등록합니다. 직원별 자동 배정은 기존 `/settings/assignment/`의 활성화 여부, 배정 건수, 보충 시점을 사용합니다. 상담 담당자는 티켓 상세의 카테고리 변경 화면에서 분류를 수정할 수 있습니다.
 
-분류 워커는 카테고리 응답의 업무 코드를 먼저 `category_uuid`로 변환합니다. 카테고리 결과는 `POST /api/internal/ticket-assignments/category-result`에 `company_uuid`, `event_id`, `preprocess_version`, `body_version`, `category_uuid`를 보내 적용합니다. 판단을 보류하면 `category_uuid`에 JSON `null`을 보냅니다. 분류 결과 저장과 배정을 한 트랜잭션으로 처리하므로 카테고리 열을 별도로 갱신하는 처리는 이 호출로 교체합니다. 감성 결과는 워커가 기존 계약대로 저장합니다.
+분류 워커는 카테고리 응답의 업무 코드를 먼저 `category_id`로 변환합니다. 카테고리 결과는 `POST /api/internal/ticket-assignments/category-result`에 `company_id`, `event_id`, `preprocess_version`, `body_version`, `category_id`를 보내 적용합니다. 판단을 보류하면 `category_id`에 JSON `null`을 보냅니다. 분류 결과 저장과 배정을 한 트랜잭션으로 처리하므로 카테고리 열을 별도로 갱신하는 처리는 이 호출로 교체합니다. 감성 결과는 워커가 기존 계약대로 저장합니다.
 
-정상 응답의 `outcome`은 `applied` 또는 `review_required`입니다. 같은 작업 버전과 카테고리를 재전송하면 `already_applied`를 반환합니다. 이전 버전이나 수동 수정된 카테고리에는 각각 `stale_result`, `manual_preserved`를 반환합니다. 같은 작업 버전에 이미 적용한 값과 다른 카테고리가 들어오면 `409`를 반환합니다. 워커가 `running`이나 `failed` 상태를 따로 기록할 때는 현재 작업 버전과 `category_manually_set=false` 조건을 지킵니다.
+정상 응답의 `outcome`은 `applied` 또는 `review_required`입니다. 같은 작업 버전과 카테고리를 재전송하면 `already_applied`를 반환합니다. 이전 버전이나 수동 수정된 카테고리에는 각각 `stale_result`, `manual_preserved`를 반환합니다. 같은 작업 버전에 이미 적용한 값과 다른 카테고리가 들어오면 `409`를 반환합니다. 워커가 `running`이나 `failed` 상태를 따로 기록할 때는 현재 작업 버전과 `is_category_manual=false` 조건을 지킵니다.
 
 `ticket-desk`와 분류 워커에 같은 `VOC_ASSIGNMENT_WORKER_TOKEN`을 주입하고, 워커는 `Authorization: Bearer <token>` 헤더로 호출합니다. Compose 내부 주소는 `http://ticket-desk:8000`입니다. 별도 서비스 이름을 쓰는 환경은 그 이름을 `DJANGO_ALLOWED_HOSTS`에 포함합니다.
 

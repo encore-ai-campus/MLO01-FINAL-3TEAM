@@ -105,12 +105,12 @@ class OperatingWindowTests(TestCase):
 
         company, domain, customer, channel = (uuid4() for _ in range(4))
         with transaction.atomic(), connection.cursor() as cur:
-            cur.execute("INSERT INTO domain(domain_uuid,name) VALUES (%s,'window')", (domain,))
-            cur.execute("INSERT INTO company(company_uuid,email_domain,domain_uuid) VALUES (%s,'window.test',%s)",
+            cur.execute("INSERT INTO domain(domain_id,name) VALUES (%s,'window')", (domain,))
+            cur.execute("INSERT INTO company(company_id,email_domain,domain_id) VALUES (%s,'window.test',%s)",
                         (company, domain))
-            cur.execute("INSERT INTO customer(customer_uuid,company_uuid,source_type,external_customer_id) "
+            cur.execute("INSERT INTO customer(customer_id,company_id,source_type,external_customer_id) "
                         "VALUES (%s,%s,'gmail','customer')", (customer, company))
-            cur.execute("INSERT INTO channel(channel_uuid,company_uuid,name,type) VALUES (%s,%s,'test','gmail')",
+            cur.execute("INSERT INTO channel(channel_id,company_id,name,type) VALUES (%s,%s,'test','gmail')",
                         (channel, company))
             at = now()
             # A 31-minute-old, slower request counts for the seven-day cost but not for latency.
@@ -120,15 +120,15 @@ class OperatingWindowTests(TestCase):
                 event, request = uuid4(), uuid4()
                 started = at - timedelta(minutes=age)
                 version = "v1" if lane == "stable" else "v2"
-                cur.execute("INSERT INTO voc.bronze_messages(event_id,company_id,channel,connection_id,"
-                            "source_message_id,origin,received_at,context,raw_payload) VALUES "
+                cur.execute("INSERT INTO voc.bronze_message(event_id,source_company_id,source_channel_type,source_connection_id,"
+                            "source_message_id,origin,received_at,context_json,raw_payload_json) VALUES "
                             "(%s,%s,'gmail','local',%s,'test',%s,'{}','{}')", (event, str(company), str(event), started))
-                cur.execute("INSERT INTO ticket(source_event_id,company_uuid,domain_uuid,channel_uuid,customer_uuid,"
+                cur.execute("INSERT INTO ticket(source_event_id,company_id,domain_id,channel_id,customer_id,"
                             "ticket_number,title,created_at,updated_at) VALUES (%s,%s,%s,%s,%s,%s,'test',%s,%s)",
                             (event, company, domain, channel, customer, f"{i:08d}", started, started))
-                cur.execute("INSERT INTO voc.model_text_history(company_uuid,event_id,preprocess_version,body_version,"
+                cur.execute("INSERT INTO voc.model_text_history(company_id,event_id,preprocess_version,body_version,"
                             "silver_schema_version,model_text) VALUES (%s,%s,1,1,4,'test')", (company, event))
-                cur.execute("INSERT INTO voc.classification_job(request_id,company_uuid,event_id,preprocess_version,"
+                cur.execute("INSERT INTO voc.classification_job(request_id,company_id,event_id,preprocess_version,"
                             "body_version,analysis_kind,route,model_version,model_url) "
                             "VALUES (%s,%s,%s,1,1,'sentiment',%s,%s,'http://local')",
                             (request, company, event, lane, version))

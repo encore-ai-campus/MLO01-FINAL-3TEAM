@@ -2,7 +2,7 @@
 {% block title %}업무 홈{% endblock %}
 {% block styles %}<link rel="stylesheet" href="{% static 'workspace/home.css' %}">{% endblock %}
 {% block content %}
-<section id="desk-home-view" data-owner="{{ actor.company_uuid }}:{{ actor.staff_user_uuid }}" aria-labelledby="desk-home-title">
+<section id="desk-home-view" data-owner="{{ actor.company_id }}:{{ actor.staff_user_id }}" aria-labelledby="desk-home-title">
   <div class="desk-heading">
     <div><h1 id="desk-home-title">업무 홈</h1><p class="desk-sub">{{ actor.name|default:actor.email }}님의 오늘 업무를 확인하세요. · 예시 데이터</p></div>
     <a id="desk-display-link" class="desk-button" href="{% url 'preferences:display' %}?from=home"><svg aria-hidden="true"><use href="#desk-settings"/></svg>화면 설정</a>
@@ -33,6 +33,6 @@
   </div>
   <p id="desk-empty" class="desk-card" hidden>표시할 카드가 없습니다. 화면 설정에서 카드를 추가할 수 있습니다.</p>
 </section>
-{{ actor.display_preferences.cards|json_script:"desk-saved-cards" }}
+{{ actor.display_preferences_json.cards|json_script:"desk-saved-cards" }}
 {% endblock %}
 {% block scripts %}<script defer src="{% static 'workspace/home.js' %}"></script>{% endblock %}

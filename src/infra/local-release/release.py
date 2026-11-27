@@ -271,7 +271,7 @@ def verify():
 from apps.preferences.training import available_models,recent_workflows
 from apps.preferences.presentation.training import evaluation_sets
 with connection.cursor() as c:
-    c.execute("SELECT DISTINCT company_uuid FROM public.staff_user WHERE role='super_admin'")
+    c.execute("SELECT DISTINCT company_id FROM public.staff_user WHERE role='super_admin'")
     companies=c.fetchall()
     c.execute("SELECT count(*) FROM public.ticket")
     print("tickets",c.fetchone()[0])
@@ -286,8 +286,8 @@ print('MLflow, evaluation set and Argo API OK')"""
         raise RuntimeError("Retraining scheduler is not running")
     # Check both live routes directly, using synthetic text without creating a ticket.
     domain = read("docker", "exec", "encore-voc-collector-postgres-1", "psql", "-XAt", "-U", "voc", "-d", "voc",
-                  "-c", "SELECT c.domain_uuid FROM public.company c JOIN public.staff_user s USING(company_uuid) "
-                        "WHERE s.role='super_admin' ORDER BY c.company_uuid LIMIT 1")
+                  "-c", "SELECT c.domain_id FROM public.company c JOIN public.staff_user s USING(company_id) "
+                        "WHERE s.role='super_admin' ORDER BY c.company_id LIMIT 1")
     probe_model = """import json,os,sys,uuid
 from urllib.request import Request,urlopen
 for lane,kind in [('STABLE','sentiment'),('STABLE','category'),('CANARY','sentiment')]:
@@ -325,6 +325,15 @@ def main(previous, sha):
     changed_paths = read("git","diff","--name-only",previous,sha).splitlines()
     def changed(*paths):
         return any(f == p or f.startswith(p + "/") for f in changed_paths for p in paths)
+    if changed("src/collector/rename_schema.sql"):
+        legacy_schema = read(
+            "docker", "exec", "encore-voc-collector-postgres-1", "psql", "-XAt", "-v", "ON_ERROR_STOP=1",
+            "-U", "voc", "-d", "voc", "-c",
+            "SELECT EXISTS (SELECT FROM pg_attribute WHERE attrelid=to_regclass('public.company') "
+            "AND attname='company_uuid' AND NOT attisdropped)",
+        )
+        if legacy_schema == "t":
+            raise RuntimeError("Apply the PostgreSQL maintenance upgrade in src/collector/README.md before releasing")
     if any(w.get("status", {}).get("phase") not in ("Succeeded","Failed","Error")
            for w in kube(TRAIN, "workflows").get("items",[])):
         raise RuntimeError("Training in progress; retry next poll")

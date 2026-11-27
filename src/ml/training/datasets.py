@@ -65,7 +65,7 @@ def load_snapshot(dataset):
 def find_dataset(cn, company, version, purpose):
     dataset = cn.execute("""
         SELECT * FROM voc.training_dataset
-        WHERE company_uuid=%s AND dataset_version=%s AND purpose=%s AND finalized_at IS NOT NULL
+        WHERE company_id=%s AND dataset_version=%s AND purpose=%s AND finalized_at IS NOT NULL
     """, (company, version, purpose)).fetchone()
     if dataset is None:
         raise ValueError("No finalized dataset with this version for the company")
@@ -83,25 +83,32 @@ def select_labels(cn, company, *, cutoff=None, reviewed=None):
             if gold_id in reviews or not review["evidence_ref"].strip():
                 raise ValueError("Each evaluation label requires distinct review evidence")
             if not cn.execute("""
-                SELECT 1 FROM public.staff_user WHERE company_uuid=%s AND staff_user_uuid=%s
+                SELECT 1 FROM public.staff_user WHERE company_id=%s AND staff_user_id=%s
             """, (company, reviewer)).fetchone():
                 raise ValueError("Evaluation reviewer does not belong to the company")
             reviews[gold_id] = review
         if not reviews:
             raise ValueError("No reviewed evaluation labels")
     condition = (
-        "l.gold_label_uuid=ANY(%s::uuid[])" if reviewed is not None else
+        "l.feature_snapshot_label_id=ANY(%s::uuid[])" if reviewed is not None else
         "l.confirmed_at<=%s AND l.label_origin IN ('counselor','seed')"
     )
     labels = cn.execute(f"""
-        SELECT f.*, l.gold_label_uuid,l.label_kind,l.sentiment_value,l.category_uuid,
-               l.label_origin,l.reviewer_uuid,l.completion_message_uuid,l.as_of_at,l.confirmed_at,l.evidence
-        FROM voc.gold_label l JOIN voc.feature_snapshot f USING(feature_uuid)
-        WHERE f.company_uuid=%s AND {condition} AND f.available_at<=l.as_of_at
+        -- Keep the published Parquet contract readable by existing runs and models.
+        SELECT f.feature_snapshot_id AS feature_uuid, f.domain_id AS domain_uuid, f.ticket_id AS ticket_uuid,
+               f.bronze_event_id,f.silver_event_id,f.source_conversation,f.seed_ref,f.title,f.body,
+               f.calculation_version,f.calculation_sources,f.received_at,f.available_at,
+               f.silver_schema_version,f.body_version,f.preprocess_version,f.unresolved_count,
+               f.avg_first_reply_7d_ms / 1000 AS avg_first_reply_7d_seconds,
+               l.feature_snapshot_label_id AS gold_label_uuid,l.label_kind,l.sentiment_value,
+               l.category_id AS category_uuid,l.label_origin,l.reviewer_id AS reviewer_uuid,
+               l.completion_message_id AS completion_message_uuid,l.as_of_at,l.confirmed_at,l.evidence
+        FROM voc.feature_snapshot_label l JOIN voc.feature_snapshot f USING(feature_snapshot_id)
+        WHERE f.company_id=%s AND {condition} AND f.available_at<=l.as_of_at
           AND (l.label_kind<>'category' OR EXISTS (
-              SELECT 1 FROM public.category c WHERE c.category_uuid=l.category_uuid AND c.domain_uuid=f.domain_uuid
+              SELECT 1 FROM public.category c WHERE c.category_id=l.category_id AND c.domain_id=f.domain_id
           ))
-        ORDER BY l.confirmed_at DESC,l.gold_label_uuid
+        ORDER BY l.confirmed_at DESC,l.feature_snapshot_label_id
     """, (company, list(reviews) if reviewed is not None else cutoff)).fetchall()
     if reviewed is not None and {str(label["gold_label_uuid"]) for label in labels} != reviews.keys():
         raise ValueError("At least one review references an unavailable or out-of-scope Gold label")
@@ -182,17 +189,17 @@ def _save_dataset(cn, company, purpose, rows):
     # Keep the UUID and object path stable even if an upload outlives a failed DB transaction.
     reservation = cn.execute("""
         WITH identity AS (SELECT gen_random_uuid() AS id, nextval('voc.training_dataset_number') AS number)
-        INSERT INTO voc.training_dataset (dataset_uuid,company_uuid,dataset_version,purpose,selection_sha256,snapshot_ref)
+        INSERT INTO voc.training_dataset (dataset_id,company_id,dataset_version,purpose,selection_sha256,snapshot_ref)
         SELECT id,%s,%s || '-v' || number,%s,%s,'s3://' || %s || '/' || id || '/data.parquet' FROM identity
-        ON CONFLICT (company_uuid,purpose,selection_sha256) DO NOTHING
-        RETURNING dataset_uuid
+        ON CONFLICT (company_id,purpose,selection_sha256) DO NOTHING
+        RETURNING dataset_id
     """, (company, purpose, purpose, fingerprint, os.environ["VOC_DATASET_BUCKET"])).fetchone()
     with cn.transaction():
         dataset = cn.execute("""
             SELECT * FROM voc.training_dataset
-            WHERE company_uuid=%s AND purpose=%s AND selection_sha256=%s FOR UPDATE
+            WHERE company_id=%s AND purpose=%s AND selection_sha256=%s FOR UPDATE
         """, (company, purpose, fingerprint)).fetchone()
-        if reservation and dataset["dataset_uuid"] != reservation["dataset_uuid"]:
+        if reservation and dataset["dataset_id"] != reservation["dataset_id"]:
             raise RuntimeError("Dataset reservation mismatch")
         if dataset["finalized_at"]:
             load_snapshot(dataset)
@@ -216,13 +223,13 @@ def _save_dataset(cn, company, purpose, rows):
         with cn.cursor() as cursor:
             cursor.executemany("""
                 INSERT INTO voc.training_dataset_item
-                (dataset_uuid,feature_uuid,as_of_at,sentiment_label_uuid,category_label_uuid)
+                (dataset_id,feature_snapshot_id,as_of_at,sentiment_label_id,category_label_id)
                 VALUES (%s,%s,%s,%s,%s)
             """, [
-                (dataset["dataset_uuid"], row["feature_uuid"], row["as_of_at"],
+                (dataset["dataset_id"], row["feature_uuid"], row["as_of_at"],
                  row["sentiment_label_uuid"], row["category_label_uuid"]) for row in rows
             ])
         return cn.execute("""
             UPDATE voc.training_dataset SET sha256=%s,row_count=%s,finalized_at=clock_timestamp()
-            WHERE dataset_uuid=%s RETURNING *
+            WHERE dataset_id=%s RETURNING *
         """, (checksum(contents), len(rows), dataset["dataset_uuid"])).fetchone(), reused

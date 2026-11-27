@@ -11,52 +11,52 @@ from .status import STATUS_SQL
 
 CONDUCT = f"""
     ({TICKET_READ} AND EXISTS (
-        SELECT FROM staff_permission sp JOIN permission p USING (permission_uuid)
-        WHERE sp.staff_user_uuid=s.staff_user_uuid AND p.code='ticket.handle'
+        SELECT FROM staff_permission sp JOIN permission p USING (permission_id)
+        WHERE sp.staff_user_id=s.staff_user_id AND p.code='ticket.handle'
     ))
 """
 MESSAGE_FIELDS = """
-    ticket_message_uuid, ticket_uuid, staff_user_uuid, sender_type,
+    ticket_message_id, ticket_id, staff_user_id, sender_type,
     message_type, body, delivery_status, created_at
 """
 
 
 def can_conduct(cursor, actor):
-    cursor.execute(f"SELECT {CONDUCT} FROM staff_user s WHERE s.staff_user_uuid=%s", (actor["staff_user_uuid"],))
+    cursor.execute(f"SELECT {CONDUCT} FROM staff_user s WHERE s.staff_user_id=%s", (actor["staff_user_id"],))
     return cursor.fetchone()[0]
 
 
-def lock_ticket(cursor, actor, ticket_uuid):
+def lock_ticket(cursor, actor, ticket_id):
     cursor.execute(f"""
-        SELECT t.ticket_uuid, {STATUS_SQL} AS status, t.assignee_uuid, t.csv_import_kind
+        SELECT t.ticket_id, {STATUS_SQL} AS status, t.assignee_id, t.csv_import_kind
         FROM ticket t
-        WHERE t.ticket_uuid=%s AND t.company_uuid=%s
-          AND EXISTS (SELECT FROM visible_ticket v WHERE v.ticket_uuid=t.ticket_uuid)
+        WHERE t.ticket_id=%s AND t.company_id=%s
+          AND EXISTS (SELECT FROM visible_ticket v WHERE v.ticket_id=t.ticket_id)
         FOR UPDATE OF t
-    """, (ticket_uuid, actor["company_uuid"]))
+    """, (ticket_id, actor["company_id"]))
     return next(iter(fetch_rows(cursor)), None)
 
 
-def has_unsettled_reply(cursor, ticket_uuid):
+def has_unsettled_reply(cursor, ticket_id):
     cursor.execute("""
-        SELECT 1 FROM ticket_message WHERE ticket_uuid=%s AND delivery_status IN ('sending','unknown')
-    """, (ticket_uuid,))
+        SELECT 1 FROM ticket_message WHERE ticket_id=%s AND delivery_status IN ('sending','unknown')
+    """, (ticket_id,))
     return cursor.fetchone() is not None
 
 
-def reply_source(cursor, ticket_uuid):
+def reply_source(cursor, ticket_id):
     cursor.execute("""
-        SELECT t.company_uuid, s.channel AS source_kind, s.connection_id, s.source_message_id,
+        SELECT t.company_id, s.source_channel_type AS source_kind, s.source_connection_id AS connection_id, s.source_message_id,
                s.source_conversation_id, s.source_channel_id, s.sender_ref AS reply_address,
-               s.title AS original_subject, (b.raw_payload #> '{payload,headers}')::text AS headers
-        FROM ticket t JOIN voc.silver_messages s ON s.event_id=t.source_event_id AND s.schema_version=4
-        JOIN voc.bronze_messages b ON b.event_id=s.event_id
+               s.title AS original_subject, (b.raw_payload_json #> '{payload,headers}')::text AS headers
+        FROM ticket t JOIN voc.silver_message s ON s.event_id=t.source_event_id AND s.schema_version=4
+        JOIN voc.bronze_message b ON b.event_id=s.event_id
         JOIN voc.ticket_source_connection route ON
-            (route.company_id, route.channel, route.connection_id, route.source_channel_id,
-             route.company_uuid, route.channel_uuid) =
-            (s.company_id, s.channel, s.connection_id, COALESCE(s.source_channel_id,''), t.company_uuid, t.channel_uuid)
-        WHERE t.ticket_uuid=%s AND s.message_kind='customer_inquiry'
-    """, (ticket_uuid,))
+            (route.source_company_id, route.source_channel_type, route.source_connection_id, route.source_channel_id,
+             route.company_id, route.channel_id) =
+            (s.source_company_id, s.source_channel_type, s.source_connection_id, COALESCE(s.source_channel_id,''), t.company_id, t.channel_id)
+        WHERE t.ticket_id=%s AND s.message_kind='customer_inquiry'
+    """, (ticket_id,))
     source = next(iter(fetch_rows(cursor)), None)
     if source and source["source_kind"] == "gmail":
         headers = json.loads(source.pop("headers") or "[]")
@@ -73,56 +73,56 @@ def reply_source(cursor, ticket_uuid):
 
 def options(cursor, actor, ticket):
     cursor.execute(f"""
-        SELECT s.staff_user_uuid, COALESCE(s.name,s.email) AS name, tm.name AS team
-        FROM staff_user s LEFT JOIN team tm USING (company_uuid, team_uuid)
-        WHERE s.company_uuid=%s AND {CONDUCT}
-        ORDER BY name,s.staff_user_uuid
-    """, (actor["company_uuid"],))
+        SELECT s.staff_user_id, COALESCE(s.name,s.email) AS name, tm.name AS team
+        FROM staff_user s LEFT JOIN team tm USING (company_id, team_id)
+        WHERE s.company_id=%s AND {CONDUCT}
+        ORDER BY name,s.staff_user_id
+    """, (actor["company_id"],))
     staff = fetch_rows(cursor)
-    excluded = {actor["staff_user_uuid"], ticket["assignee_uuid"]}
-    recipients = [person for person in staff if person["staff_user_uuid"] not in excluded]
+    excluded = {actor["staff_user_id"], ticket["assignee_id"]}
+    recipients = [person for person in staff if person["staff_user_id"] not in excluded]
     cursor.execute(f"""
-        SELECT ch.review_channel_uuid,ch.name FROM ticket_review_channel ch
-        WHERE ch.company_uuid=%s AND EXISTS (
-            SELECT FROM ticket_review_channel_member m JOIN staff_user s USING (company_uuid,staff_user_uuid)
-            WHERE m.review_channel_uuid=ch.review_channel_uuid AND s.staff_user_uuid<>%s AND {CONDUCT})
-        ORDER BY ch.name,ch.review_channel_uuid
-    """, (actor["company_uuid"], actor["staff_user_uuid"]))
+        SELECT ch.review_channel_id,ch.name FROM ticket_review_channel ch
+        WHERE ch.company_id=%s AND EXISTS (
+            SELECT FROM ticket_review_channel_member m JOIN staff_user s USING (company_id,staff_user_id)
+            WHERE m.review_channel_id=ch.review_channel_id AND s.staff_user_id<>%s AND {CONDUCT})
+        ORDER BY ch.name,ch.review_channel_id
+    """, (actor["company_id"], actor["staff_user_id"]))
     return {"assignment_recipients": staff, "transfer_recipients": recipients, "review_channels": fetch_rows(cursor)}
 
 
-def quick_replies(cursor, actor, ticket_uuid):
+def quick_replies(cursor, actor, ticket_id):
     cursor.execute("""
-        SELECT q.reply_uuid AS quick_reply_uuid,q.name,q.body,
-               CASE WHEN q.owner_uuid IS NOT NULL THEN 'personal' ELSE 'team' END AS scope
+        SELECT q.reply_id AS quick_reply_uuid,q.name,q.body,
+               CASE WHEN q.owner_id IS NOT NULL THEN 'personal' ELSE 'team' END AS scope
         FROM visible_ticket t
-        JOIN quick_reply q USING (company_uuid,domain_uuid,category_uuid)
-        JOIN staff_user s ON s.staff_user_uuid=%s AND s.company_uuid=t.company_uuid
-        WHERE t.ticket_uuid=%s
-          AND (q.owner_uuid=s.staff_user_uuid OR q.team_uuid=s.team_uuid)
-        ORDER BY q.name,q.reply_uuid
-    """, (actor["staff_user_uuid"], ticket_uuid))
+        JOIN quick_reply q USING (company_id,domain_id,category_id)
+        JOIN staff_user s ON s.staff_user_id=%s AND s.company_id=t.company_id
+        WHERE t.ticket_id=%s
+          AND (q.owner_id=s.staff_user_id OR q.team_id=s.team_id)
+        ORDER BY q.name,q.reply_id
+    """, (actor["staff_user_id"], ticket_id))
     return fetch_rows(cursor)
 
 
-def add_event(cursor, ticket_uuid, actor, code, *, request=None, recipient=None, reason=None,
+def add_event(cursor, ticket_id, actor, code, *, request=None, recipient=None, reason=None,
               from_status=None, to_status=None):
     cursor.execute("""
         INSERT INTO ticket_event
-            (ticket_uuid,event_type_uuid,actor_uuid,recipient_uuid,collab_request_uuid,transfer_reason,from_status,to_status,created_at)
-        VALUES (%s,(SELECT event_type_uuid FROM event_type WHERE code=%s),%s,%s,%s,%s,%s,%s,clock_timestamp())
-        RETURNING ticket_event_uuid
-    """, (ticket_uuid, code, actor["staff_user_uuid"], recipient, request, reason, from_status, to_status))
+            (ticket_id,event_type_id,actor_id,recipient_id,collab_request_id,transfer_reason,from_status,to_status,created_at)
+        VALUES (%s,(SELECT event_type_id FROM event_type WHERE code=%s),%s,%s,%s,%s,%s,%s,clock_timestamp())
+        RETURNING ticket_event_id
+    """, (ticket_id, code, actor["staff_user_id"], recipient, request, reason, from_status, to_status))
     return cursor.fetchone()[0]
 
 
-def add_request(cursor, ticket_uuid, actor, recipient, kind, status, memo, channel=None):
+def add_request(cursor, ticket_id, actor, recipient, kind, status, memo, channel=None):
     cursor.execute("""
         INSERT INTO collab_request
-            (ticket_uuid,requester_uuid,recipient_uuid,request_type,status,memo,review_channel_uuid,decided_at)
+            (ticket_id,requester_id,recipient_id,request_type,status,memo,review_channel_id,decided_at)
         VALUES (%s,%s,%s,%s,%s,%s,%s,CASE WHEN %s='accepted' THEN now() END)
-        RETURNING collab_request_uuid
-    """, (ticket_uuid, actor["staff_user_uuid"], recipient, kind, status, memo, channel, status))
+        RETURNING collab_request_id
+    """, (ticket_id, actor["staff_user_id"], recipient, kind, status, memo, channel, status))
     return cursor.fetchone()[0]
 
 
@@ -133,52 +133,52 @@ def add_attachment(cursor, request, attachment):
     extension = "txt" if content_type == "text/plain" else content_type.split("/")[1]
     cursor.execute("""
         INSERT INTO collab_request_attachment
-            (collab_request_uuid,original_filename,content_type,storage_key,size_bytes,content)
+            (collab_request_id,original_filename,content_type,storage_key,size_bytes,content)
         VALUES (%s,%s,%s,%s,%s,%s)
     """, (request, attachment.get("filename", f"reference.{extension}"), content_type, f"db:{request}", len(data), data))
 
 
 def inbox(cursor, actor, kind=None):
-    rows = inbox_repository.received(cursor, (actor["company_uuid"], actor["staff_user_uuid"]))
+    rows = inbox_repository.received(cursor, (actor["company_id"], actor["staff_user_id"]))
     return [row for row in rows if row["kind"] in ("transfer", "review") and (kind is None or row["kind"] == kind)]
 
 
-def request_attachment(cursor, actor, action_uuid, attachment_uuid=None):
+def request_attachment(cursor, actor, action_uuid, attachment_id=None):
     cursor.execute(f"""
         SELECT a.original_filename,a.content_type,a.content
         {inbox_repository.REQUEST_FROM}
-        JOIN collab_request_attachment a USING (collab_request_uuid)
-        WHERE r.recipient_uuid=%s AND t.company_uuid=%s AND r.collab_request_uuid=%s
-          AND a.content IS NOT NULL AND (%s::uuid IS NULL OR a.collab_request_attachment_uuid=%s)
-        ORDER BY a.created_at,a.collab_request_attachment_uuid LIMIT 1
-    """, (actor["staff_user_uuid"], actor["company_uuid"], action_uuid, attachment_uuid, attachment_uuid))
+        JOIN collab_request_attachment a USING (collab_request_id)
+        WHERE r.recipient_id=%s AND t.company_id=%s AND r.collab_request_id=%s
+          AND a.content IS NOT NULL AND (%s::uuid IS NULL OR a.collab_request_attachment_id=%s)
+        ORDER BY a.created_at,a.collab_request_attachment_id LIMIT 1
+    """, (actor["staff_user_id"], actor["company_id"], action_uuid, attachment_id, attachment_id))
     return next(iter(fetch_rows(cursor)), None)
 
 
-def retry_attachments(cursor, ticket_uuid, staff_uuid, message_uuid):
+def retry_attachments(cursor, ticket_id, staff_uuid, message_uuid):
     cursor.execute("""
         SELECT a.filename, a.content_type, a.content
-        FROM ticket_message_attachment a JOIN ticket_message m USING(ticket_message_uuid)
-        WHERE m.ticket_message_uuid=%s AND m.ticket_uuid=%s AND m.staff_user_uuid=%s
+        FROM ticket_message_attachment a JOIN ticket_message m USING(ticket_message_id)
+        WHERE m.ticket_message_id=%s AND m.ticket_id=%s AND m.staff_user_id=%s
           AND m.message_type='reply' AND m.delivery_status='failed'
-        ORDER BY a.attachment_uuid
-    """, (message_uuid, ticket_uuid, staff_uuid))
+        ORDER BY a.attachment_id
+    """, (message_uuid, ticket_id, staff_uuid))
     return [dict(row, content=bytes(row["content"])) for row in fetch_rows(cursor)]
 
 
 def save_message_attachment(cursor, message_uuid, file):
     cursor.execute("""
-        INSERT INTO ticket_message_attachment(ticket_message_uuid,filename,content_type,content)
+        INSERT INTO ticket_message_attachment(ticket_message_id,filename,content_type,content)
         VALUES (%s,%s,%s,%s)
     """, (message_uuid, file["filename"], file["content_type"], file["content"]))
 
 
-def visible_message_attachment(cursor, actor, ticket_uuid, attachment_uuid, include_memos):
+def visible_message_attachment(cursor, actor, ticket_id, attachment_id, include_memos):
     cursor.execute("""
         SELECT a.filename, a.content_type, a.content
-        FROM visible_ticket t JOIN ticket_message m USING(ticket_uuid)
-        JOIN ticket_message_attachment a USING(ticket_message_uuid)
-        WHERE t.company_uuid=%s AND t.ticket_uuid=%s AND a.attachment_uuid=%s
+        FROM visible_ticket t JOIN ticket_message m USING(ticket_id)
+        JOIN ticket_message_attachment a USING(ticket_message_id)
+        WHERE t.company_id=%s AND t.ticket_id=%s AND a.attachment_id=%s
           AND (%s OR m.message_type<>'memo')
-    """, (actor["company_uuid"], ticket_uuid, attachment_uuid, include_memos))
+    """, (actor["company_id"], ticket_id, attachment_id, include_memos))
     return next(iter(fetch_rows(cursor)), None)

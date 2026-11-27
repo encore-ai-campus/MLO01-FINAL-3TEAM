@@ -16,7 +16,7 @@ from tests.database import use_database
 
 class LineageAccessTests(SimpleTestCase):
     def setUp(self):
-        self.actor = {"role": "admin", "is_company_admin": True, "company_uuid": str(uuid4()), "visible_sidebar": [], "name": "관리자"}
+        self.actor = {"role": "admin", "is_company_admin": True, "company_id": str(uuid4()), "visible_sidebar": [], "name": "관리자"}
         self.enterContext(patch("apps.preferences.presentation.lineage.current_actor", return_value=self.actor))
         self.client = Client()
 
@@ -57,7 +57,7 @@ class LineageAccessTests(SimpleTestCase):
         with patch.object(lineage, "event_trace", return_value={}) as query:
             response = self.client.get("/settings/lineage/", {"view": "event", "q": "#12", "company": str(uuid4())})
         self.assertEqual(response.status_code, 200)
-        query.assert_called_once_with(self.actor["company_uuid"], "00000012", 1)
+        query.assert_called_once_with(self.actor["company_id"], "00000012", 1)
 
     def test_invalid_inputs_do_not_query_data(self):
         with patch.object(lineage, "event_trace") as query:
@@ -96,35 +96,35 @@ class LineageDatabaseTests(TestCase):
         with closing(psycopg2.connect(cls.dsn)) as conn, conn.cursor() as c:
             c.execute("""
                 CREATE SCHEMA voc;
-                CREATE TABLE company(company_uuid uuid, name text, email_domain text);
-                CREATE TABLE ticket(ticket_uuid uuid, company_uuid uuid, ticket_number text, title text,
+                CREATE TABLE company(company_id uuid, name text, email_domain text);
+                CREATE TABLE ticket(ticket_id uuid, company_id uuid, ticket_number text, title text,
                     created_at timestamptz DEFAULT now(), source_event_id uuid, sentiment_status text, category_status text);
-                CREATE TABLE voc.bronze_messages(event_id uuid, company_id text, channel text, connection_id text,
-                    source_message_id text, received_at timestamptz DEFAULT now(), raw_payload jsonb DEFAULT '{}');
-                CREATE TABLE voc.silver_messages(event_id uuid, schema_version integer, body_version integer,
+                CREATE TABLE voc.bronze_message(event_id uuid, source_company_id text, source_channel_type text, source_connection_id text,
+                    source_message_id text, received_at timestamptz DEFAULT now(), raw_payload_json jsonb DEFAULT '{}');
+                CREATE TABLE voc.silver_message(event_id uuid, schema_version integer, body_version integer,
                     source_channel_id text, standardized_at timestamptz);
-                CREATE TABLE voc.ticket_source_connection(company_uuid uuid, company_id text, channel text,
-                    connection_id text, source_channel_id text);
-                CREATE TABLE voc.feature_snapshot(feature_uuid uuid, company_uuid uuid, silver_event_id uuid,
+                CREATE TABLE voc.ticket_source_connection(company_id uuid, source_company_id text, source_channel_type text,
+                    source_connection_id text, source_channel_id text);
+                CREATE TABLE voc.feature_snapshot(feature_snapshot_id uuid, company_id uuid, silver_event_id uuid,
                     body_version integer, preprocess_version integer, received_at timestamptz);
-                CREATE TABLE voc.training_dataset_item(dataset_uuid uuid, feature_uuid uuid);
-                CREATE TABLE voc.training_dataset(dataset_uuid uuid, company_uuid uuid, dataset_version text,
+                CREATE TABLE voc.training_dataset_item(dataset_id uuid, feature_snapshot_id uuid);
+                CREATE TABLE voc.training_dataset(dataset_id uuid, company_id uuid, dataset_version text,
                     purpose text, sha256 text, row_count integer, finalized_at timestamptz, created_at timestamptz DEFAULT now());
-                CREATE TABLE voc.training_run(workflow_ref text, train_dataset_uuid uuid, eval_dataset_uuid uuid,
+                CREATE TABLE voc.training_run(workflow_ref text, train_dataset_id uuid, eval_dataset_id uuid,
                     base_model_uri text, mlflow_run_id text, sentiment_macro_f1 float, category_macro_f1 float);
                 CREATE TABLE voc.model_version(workflow_ref text, model_name text, registry_version integer);
             """)
             for company, event, title in ((cls.company, cls.event, "내 회사"), (cls.foreign, cls.foreign_event, "다른 회사")):
                 c.execute("INSERT INTO company VALUES (%s,%s,'example.test')", (company, title))
-                c.execute("INSERT INTO ticket(ticket_uuid,company_uuid,ticket_number,title,source_event_id) VALUES (%s,%s,'00000012',%s,%s)",
+                c.execute("INSERT INTO ticket(ticket_id,company_id,ticket_number,title,source_event_id) VALUES (%s,%s,'00000012',%s,%s)",
                           (str(uuid4()), company, title, event))
-                c.execute("INSERT INTO voc.bronze_messages(event_id,source_message_id,channel) VALUES (%s,%s,'gmail')", (event, title))
+                c.execute("INSERT INTO voc.bronze_message(event_id,source_message_id,source_channel_type) VALUES (%s,%s,'gmail')", (event, title))
                 feature, dataset = str(uuid4()), str(uuid4())
                 c.execute("INSERT INTO voc.feature_snapshot VALUES (%s,%s,%s,1,1,now())", (feature, company, event))
-                c.execute("INSERT INTO voc.training_dataset(dataset_uuid,company_uuid,dataset_version,purpose) VALUES (%s,%s,%s,'train')",
+                c.execute("INSERT INTO voc.training_dataset(dataset_id,company_id,dataset_version,purpose) VALUES (%s,%s,%s,'train')",
                           (dataset, company, title))
                 c.execute("INSERT INTO voc.training_dataset_item VALUES (%s,%s)", (dataset, feature))
-                c.execute("INSERT INTO voc.training_run(workflow_ref,train_dataset_uuid,eval_dataset_uuid) VALUES (%s,%s,%s)",
+                c.execute("INSERT INTO voc.training_run(workflow_ref,train_dataset_id,eval_dataset_id) VALUES (%s,%s,%s)",
                           (title, dataset, dataset))
             conn.commit()
 
@@ -144,7 +144,7 @@ class LineageDatabaseTests(TestCase):
         self.assertEqual([row["dataset_version"] for row in result["datasets"]], ["내 회사"])
         self.assertNotIn("event", lineage.event_trace(self.company, self.foreign_event, 1))
         self.assertEqual([row["title"] for row in lineage.event_trace(self.company, "", 1)["tickets"]], ["내 회사"])
-        actor = {"role": "admin", "is_company_admin": True, "company_uuid": self.company, "visible_sidebar": [], "name": "관리자"}
+        actor = {"role": "admin", "is_company_admin": True, "company_id": self.company, "visible_sidebar": [], "name": "관리자"}
         with patch("apps.preferences.presentation.lineage.current_actor", return_value=actor):
             response = Client().get("/settings/lineage/?view=event&q=12")
         self.assertEqual(response.status_code, 200)
@@ -153,7 +153,7 @@ class LineageDatabaseTests(TestCase):
 
     def test_training_runs_are_company_scoped(self):
         self.assertEqual([row["workflow_ref"] for row in lineage.model_history(self.company, 1)["runs"]], ["내 회사"])
-        actor = {"role": "admin", "is_company_admin": True, "company_uuid": self.company, "visible_sidebar": [], "name": "관리자"}
+        actor = {"role": "admin", "is_company_admin": True, "company_id": self.company, "visible_sidebar": [], "name": "관리자"}
         with patch("apps.preferences.presentation.lineage.current_actor", return_value=actor):
             response = Client().get("/settings/lineage/?view=model")
         self.assertEqual(response.status_code, 200)
@@ -162,7 +162,7 @@ class LineageDatabaseTests(TestCase):
 
     def test_super_admin_can_view_each_customer_without_mixing_results(self):
         self.assertEqual({row["id"] for row in lineage.companies()}, {self.company, self.foreign})
-        actor = {"role": "super_admin", "company_uuid": self.company, "visible_sidebar": [], "name": "운영자"}
+        actor = {"role": "super_admin", "company_id": self.company, "visible_sidebar": [], "name": "운영자"}
         with patch("apps.preferences.presentation.lineage.current_actor", return_value=actor):
             for company, own, other in ((self.company, "내 회사", "다른 회사"), (self.foreign, "다른 회사", "내 회사")):
                 response = Client().get("/settings/lineage/", {"view": "model", "company": company})

@@ -116,7 +116,7 @@ def evaluation_available(uri, digest, row_count):
 def evaluation_sets(company, version=None):
     with connection.cursor() as cur:
         cur.execute("""SELECT dataset_version,row_count,snapshot_ref,sha256 FROM voc.training_dataset
-            WHERE company_uuid=%s AND purpose='eval' AND finalized_at IS NOT NULL AND row_count>0
+            WHERE company_id=%s AND purpose='eval' AND finalized_at IS NOT NULL AND row_count>0
                 AND sha256 ~ '^[0-9a-f]{64}$' AND snapshot_ref LIKE 's3://%%'
                 AND (%s::text IS NULL OR dataset_version=%s)
             ORDER BY finalized_at DESC,dataset_version DESC""", (company, version, version))

@@ -9,5 +9,5 @@ def available_sidebar_items(actor):
 
 
 def visible_sidebar(actor):
-    saved = actor["display_preferences"].get("sidebar")
+    saved = actor["display_preferences_json"].get("sidebar")
     return [key for key, _ in available_sidebar_items(actor) if saved is None or key in saved]

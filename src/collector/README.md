@@ -27,16 +27,41 @@ docker compose logs --tail=20 discord gmail
 
 init-db-topics의 종료 코드 0은 테이블 및 토픽 준비 완료를 뜻한다. discord·gmail의 healthy는 각 채널의 연결 또는 조회가 최근에 성공했다는 뜻이다. Flink 작업 상태는 로컬 브라우저에서 http://127.0.0.1:18081 로 확인한다.
 
+## 기존 PostgreSQL 업그레이드
+
+DB를 사용하는 수집 워커, 웹, 분류 워커, 학습·스케줄러를 중지하고 PostgreSQL 백업을 만든다.
+새 소스의 `src/collector/schema-order.txt`에 나온 모든 SQL을 순서대로 한 트랜잭션에서 적용한다.
+Compose의 `init-db-topics`도 같은 순서와 트랜잭션을 사용한다. Kafka 초기화 없이 SQL만 적용할 때는 저장소 루트에서 실행한다.
+
+~~~bash
+schema_sql=$(
+  while IFS= read -r file; do
+    cat "src/$file" || exit 1
+    printf '\n'
+  done < src/collector/schema-order.txt
+) &&
+printf '%s\n' "$schema_sql" |
+  docker compose exec -T postgres psql -qX -1 -v ON_ERROR_STOP=1 -U voc -d voc -f -
+~~~
+
+자동 로컬 배포는 이전 스키마가 남아 있으면 이 업그레이드를 먼저 요구한다.
+업그레이드가 성공하면 새 버전의 서비스와 모니터링 조회를 배포한다.
+이전 버전으로 돌아갈 때는 서비스와 함께 전환 직전 DB 백업을 복원한다.
+
+`rename_schema.sql`은 기존 행과 참조 키를 유지하며 테이블과 컬럼 이름을 바꾼다.
+응답 시간만 초에서 밀리초로 한 번 변환한다.
+Kafka v4 메시지, 티켓 API, Parquet 학습 스냅샷은 기존 필드를 사용한다. 기존 모델 요청에는 응답 시간을 초 단위로 전달한다.
+
 ## 처리와 저장
 
 | 단계 | 실행 서비스 | 동작 |
 | --- | --- | --- |
 | 수집 | discord, gmail | Discord Gateway의 새 메시지 이벤트와 Gmail API의 full Message를 채널별 원형으로 받는다. 다른 채널, Discord 봇·웹훅·시스템 알림은 제외한다. Gmail 메일 본문은 VOC 라벨로 조회한 대상에서 가져온다. |
 | 원본 발행 | publish | SQLite capture_outbox에서 미발행 원본을 가져와 voc.raw.discord 또는 voc.raw.gmail에 발행한다. Kafka ACK 뒤 published_at을 기록하고 대기열 본문을 비운다. 메시지 식별자는 중복 판정을 위해 남긴다. |
-| Bronze | db-worker, PostgreSQL | voc.bronze_messages.raw_payload에 원본 JSONB를 보존한다. 최초 적재와 voc.standardize_outbox의 발행 대기 기록을 한 트랜잭션으로 저장하고 Kafka 위치를 커밋한다. |
+| Bronze | db-worker, PostgreSQL | voc.bronze_message.raw_payload_json에 원본 JSONB를 보존한다. 최초 적재와 voc.standardize_outbox의 발행 대기 기록을 한 트랜잭션으로 저장하고 Kafka 위치를 커밋한다. |
 | 표준화 요청 | db-worker | Bronze 원본, 최초 수신 시각, 확인된 역할과 본문 버전을 `voc.standardize.request.v4`에 발행한다. Kafka ACK 후 해당 이벤트·스키마 버전의 발행 시각을 기록한다. |
 | 정제 | Flink JobManager, TaskManager | 정상 메시지는 19개 키의 JSON으로 `voc.standardized.v4`에 발행한다. 빈 본문, 잘못된 시각, 해석할 수 없는 MIME 등은 `voc.standardize.review.v4`로 보낸다. |
-| Silver | db-worker, PostgreSQL | `voc.silver_messages`에 표준 필드를 컬럼별로 저장한다. `event_id`로 Bronze 원본을 찾고 `voc.review_events`에서 검토 사유를 확인한다. |
+| Silver | db-worker, PostgreSQL | `voc.silver_message`에 표준 필드를 컬럼별로 저장한다. `event_id`로 Bronze 원본을 찾고 `voc.review_event`에서 검토 사유를 확인한다. |
 | 업무 티켓 | PostgreSQL | 확인된 고객 문의와 업무 채널이 연결되면 Silver 트랜잭션에서 고객, 티켓, 최초 문의 메시지, 모델 입력과 감성·카테고리 분석 대기 요청을 함께 저장한다. 수신 후에 업무 채널을 등록해도 기존 문의를 찾아 적재한다. |
 
 **메시지 식별.** 회사·채널 유형·연결 계정 또는 서버·원천 메시지 ID로 같은 event_id를 계산한다. 다른 고객이 같은 글을 써도 서로 다른 원천 메시지 ID를 가지므로 별개로 저장한다. 전달은 재시도할 수 있으며, Bronze와 Silver의 유일 키로 같은 이벤트의 중복 행을 막는다.
@@ -57,16 +82,16 @@ init-db-topics의 종료 코드 0은 테이블 및 토픽 준비 완료를 뜻�
 | `occurred_at`, `received_at` | 원문 작성 시각과 최초 수집 시각 | `internalDate`와 최초 수집 시각. 양 채널 모두 UTC 소수점 6자리, 원천 시각 누락 시 NULL |
 | `source_metadata` | 빈 객체 `{}` | `label_ids`와 `to_addresses` 문자열 배열 |
 
-Silver는 **메시지 한 건당 한 행**이다. 전체 표준 JSON은 Kafka에서 전달하고, PostgreSQL에는 19개 필드와 DB 적재 시각 `standardized_at`을 둔다. Silver에서 JSONB를 사용하는 필드는 `source_metadata`다. 원본은 Bronze의 `raw_payload`에서 조회한다. 부모 ID는 있지만 원글을 아직 확인하지 못한 Discord 답글은 `source_conversation_id = NULL`로 저장한다. 나중에 같은 회사·연결·채널에서 부모가 들어오면 후속 답글까지 연결한다.
+Silver는 **메시지 한 건당 한 행**이다. 전체 표준 JSON은 Kafka에서 전달하고, PostgreSQL에는 19개 필드와 DB 적재 시각 `standardized_at`을 둔다. Silver에서 JSONB를 사용하는 컬럼은 `source_metadata_json`이다. 원본은 Bronze의 `raw_payload_json`에서 조회한다. 부모 ID는 있지만 원글을 아직 확인하지 못한 Discord 답글은 `source_conversation_id = NULL`로 저장한다. 나중에 같은 회사·연결·채널에서 부모가 들어오면 후속 답글까지 연결한다.
 
 `customer_inquiry` 한 건이 업무 티켓 하나가 된다. 같은 Gmail 스레드에서 온 후속 문의에도 새 번호를 발급한다. `voc.model_text_history`에는 `body_text`를 그대로 `model_text`로 저장하고, `voc.ticket_analysis_outbox`에는 본문 버전별로 감성과 카테고리 요청을 한 건씩 남긴다. 화면은 분석 결과가 준비되기 전부터 원문을 제공한다.
 
 | 업무 테이블의 컬럼 | 티켓 생성 때 저장하는 값 |
 | --- | --- |
-| `TICKET.source_event_id`, `ticket_uuid`, `ticket_number` | Silver의 `event_id`를 원본 연결 키로 한 번만 기록한다. 업무 DB가 티켓 UUID와 회사별 고유 8자리 표시 번호를 발급한다. |
-| `company_uuid`, `domain_uuid`, `channel_uuid`, `customer_uuid` | 등록된 수집 연결에서 회사·도메인·업무 채널을 확인하고, 같은 회사·채널의 `sender_ref`로 고객을 찾는다. |
+| `TICKET.source_event_id`, `ticket_id`, `ticket_number` | Silver의 `event_id`를 원본 연결 키로 한 번만 기록한다. 업무 DB가 티켓 UUID와 회사별 고유 8자리 표시 번호를 발급한다. |
+| `company_id`, `domain_id`, `channel_id`, `customer_id` | 등록된 수집 연결에서 회사·도메인·업무 채널을 확인하고, 같은 회사·채널의 `sender_ref`로 고객을 찾는다. |
 | `title`, `status`, `created_at`, `updated_at` | 표시 제목은 50자 이내다. 제목이 없으면 본문의 첫 비어 있지 않은 줄에서 최대 40자를 사용한다. 표시할 문자가 없으면 ‘문의’를 사용한다. 초기 상태는 미처리, 두 시각은 최초 `received_at`이다. |
-| `assigned_team_uuid`, `assignee_uuid`, `category_uuid`, `sentiment`, `embedding` | 초기값은 NULL이다. 감성·카테고리 분석 상태는 항목별 분류 대기로 시작한다. |
+| `assigned_team_id`, `assignee_id`, `category_id`, `sentiment`, `embedding` | 초기값은 NULL이다. 감성·카테고리 분석 상태는 항목별 분류 대기로 시작한다. |
 | `TICKET_MESSAGE.body`, `created_at` | 최초 고객 문의의 `body_text`와 `occurred_at`을 사용한다. 원천 시각이 없으면 `received_at`을 사용한다. |
 
 #### Discord 예시
@@ -111,42 +136,42 @@ DB 관리자가 저장소 루트에서 `docker compose exec postgres psql -X -U 
 
 ~~~sql
 \set ON_ERROR_STOP on
-SELECT s.staff_user_uuid,s.email,c.name AS company,c.domain_uuid
-FROM public.staff_user s JOIN public.company c USING(company_uuid) ORDER BY s.email;
+SELECT s.staff_user_id,s.email,c.name AS company,c.domain_id
+FROM public.staff_user s JOIN public.company c USING(company_id) ORDER BY s.email;
 \set employee '직원_UUID'
-SELECT company_uuid FROM public.staff_user WHERE staff_user_uuid=:'employee' \gset
-INSERT INTO public.staff_permission(staff_user_uuid,permission_uuid)
-SELECT :'employee',permission_uuid FROM public.permission WHERE code='ticket.read'
+SELECT company_id FROM public.staff_user WHERE staff_user_id=:'employee' \gset
+INSERT INTO public.staff_permission(staff_user_id,permission_id)
+SELECT :'employee',permission_id FROM public.permission WHERE code='ticket.read'
 ON CONFLICT DO NOTHING;
 ~~~
 
-회사의 도메인이 비어 있을 때만 다음 블록으로 도메인을 연결한다. 새 산업 도메인이 필요하면 `INSERT INTO public.domain(name) VALUES ('소매') RETURNING domain_uuid;`에서 이름을 실제 값으로 바꿔 등록한다.
+회사의 도메인이 비어 있을 때만 다음 블록으로 도메인을 연결한다. 새 산업 도메인이 필요하면 `INSERT INTO public.domain(name) VALUES ('소매') RETURNING domain_id;`에서 이름을 실제 값으로 바꿔 등록한다.
 
 ~~~sql
-SELECT domain_uuid,name FROM public.domain ORDER BY name;
+SELECT domain_id,name FROM public.domain ORDER BY name;
 \set domain_id '산업_도메인_UUID'
-UPDATE public.company SET domain_uuid=:'domain_id'
-WHERE company_uuid=:'company_uuid' AND domain_uuid IS NULL;
+UPDATE public.company SET domain_id=:'domain_id'
+WHERE company_id=:'company_id' AND domain_id IS NULL;
 ~~~
 
-다음으로 원천·발신자를 대조하여 해당 회사의 실제 고객 문의 한 건을 고른다. 이 문의의 수집 경로를 같은 회사의 업무 채널에 연결한다. Gmail은 사서함, Discord는 서버와 실제 방·스레드 ID로 연결된다. 업무 채널을 처음 만들 때는 아래에서 `channel_id`를 입력하기 전에 `INSERT INTO public.channel(company_uuid,name,type) VALUES (:'company_uuid','문의 접수',:'src_channel') RETURNING channel_uuid;`를 실행한다.
+다음으로 원천·발신자를 대조하여 해당 회사의 실제 고객 문의 한 건을 고른다. 이 문의의 수집 경로를 같은 회사의 업무 채널에 연결한다. Gmail은 사서함, Discord는 서버와 실제 방·스레드 ID로 연결된다. 업무 채널을 처음 만들 때는 아래에서 `channel_id`를 입력하기 전에 `INSERT INTO public.channel(company_id,name,type) VALUES (:'company_id','문의 접수',:'src_channel') RETURNING channel_id;`를 실행한다.
 
 ~~~sql
-SELECT event_id,company_id,channel,connection_id,source_channel_id,sender_ref,title,message_kind,received_at
-FROM voc.silver_messages WHERE schema_version=4 ORDER BY received_at DESC LIMIT 20;
+SELECT event_id,source_company_id,source_channel_type,source_connection_id,source_channel_id,sender_ref,title,message_kind,received_at
+FROM voc.silver_message WHERE schema_version=4 ORDER BY received_at DESC LIMIT 20;
 \set inquiry '확인한_이벤트_UUID'
-SELECT company_id,channel,connection_id,coalesce(source_channel_id,'') AS room
-FROM voc.silver_messages WHERE event_id=:'inquiry' AND schema_version=4 \gset src_
-SELECT channel_uuid,name,type FROM public.channel WHERE company_uuid=:'company_uuid';
+SELECT source_company_id AS company_id,source_channel_type AS channel,source_connection_id AS connection_id,coalesce(source_channel_id,'') AS room
+FROM voc.silver_message WHERE event_id=:'inquiry' AND schema_version=4 \gset src_
+SELECT channel_id,name,type FROM public.channel WHERE company_id=:'company_id';
 \set channel_id '업무_채널_UUID'
-INSERT INTO voc.ticket_source_connection(company_id,channel,connection_id,source_channel_id,company_uuid,channel_uuid)
-VALUES (:'src_company_id',:'src_channel',:'src_connection_id',:'src_room',:'company_uuid',:'channel_id')
+INSERT INTO voc.ticket_source_connection(source_company_id,source_channel_type,source_connection_id,source_channel_id,company_id,channel_id)
+VALUES (:'src_company_id',:'src_channel',:'src_connection_id',:'src_room',:'company_id',:'channel_id')
 ON CONFLICT DO NOTHING;
 UPDATE voc.standardize_outbox SET verified_message_kind='customer_inquiry'
 WHERE event_id=:'inquiry' AND target_schema_version=4 AND EXISTS (
-    SELECT FROM voc.ticket_source_connection WHERE company_id=:'src_company_id' AND channel=:'src_channel'
-      AND connection_id=:'src_connection_id' AND source_channel_id=:'src_room'
-      AND company_uuid=:'company_uuid' AND channel_uuid=:'channel_id'
+    SELECT FROM voc.ticket_source_connection WHERE source_company_id=:'src_company_id' AND source_channel_type=:'src_channel'
+      AND source_connection_id=:'src_connection_id' AND source_channel_id=:'src_room'
+      AND company_id=:'company_id' AND channel_id=:'channel_id'
 ) RETURNING event_id;
 ~~~
 
@@ -154,7 +179,7 @@ WHERE event_id=:'inquiry' AND target_schema_version=4 AND EXISTS (
 
 ~~~sql
 SELECT s.message_kind,t.ticket_number,t.status,i.reason
-FROM voc.silver_messages s LEFT JOIN public.visible_ticket t ON t.source_event_id=s.event_id
+FROM voc.silver_message s LEFT JOIN public.visible_ticket t ON t.source_event_id=s.event_id
 LEFT JOIN voc.ticket_projection_issue i ON i.event_id=s.event_id
 WHERE s.schema_version=4 AND s.event_id=:'inquiry';
 ~~~
@@ -169,28 +194,28 @@ WHERE s.schema_version=4 AND s.event_id=:'inquiry';
 docker compose exec -T postgres psql -X -1 -v ON_ERROR_STOP=1 -U voc -d voc < src/collector/channel_intake_schema.sql
 ~~~
 
-다음 SQL을 위에서 확인한 회사와 해당 업무 채널의 정확한 수집 경로에 대해 실행한다. `auto_customer_from`은 최초 수집 시각(Bronze `received_at`) 기준이다. 받은 지 오래된 메일도 활성화 후 처음 `VOC` 라벨을 붙여 수집하면 접수될 수 있다.
+다음 SQL을 위에서 확인한 회사와 해당 업무 채널의 정확한 수집 경로에 대해 실행한다. `auto_customer_start_at`은 최초 수집 시각(Bronze `received_at`) 기준이다. 받은 지 오래된 메일도 활성화 후 처음 `VOC` 라벨을 붙여 수집하면 접수될 수 있다.
 
 ~~~sql
-UPDATE voc.ticket_source_connection SET auto_customer_from=clock_timestamp()
-WHERE company_uuid=:'company_uuid' AND channel_uuid=:'channel_id' AND auto_customer_from IS NULL
-  AND (company_id,channel,connection_id,source_channel_id)=(:'src_company_id',:'src_channel',:'src_connection_id',:'src_room')
-RETURNING channel,auto_customer_from;
+UPDATE voc.ticket_source_connection SET auto_customer_start_at=clock_timestamp()
+WHERE company_id=:'company_id' AND channel_id=:'channel_id' AND auto_customer_start_at IS NULL
+  AND (source_company_id,source_channel_type,source_connection_id,source_channel_id)=(:'src_company_id',:'src_channel',:'src_connection_id',:'src_room')
+RETURNING source_channel_type,auto_customer_start_at;
 ~~~
 
-적격 Silver가 처음 `unknown`으로 저장되면 DB가 해당 이벤트의 역할을 확인하고 기존 outbox로 Flink 재정제를 요청한다. 두 번째 결과가 `customer_inquiry`이면 같은 이벤트에 업무 티켓 한 건이 생성된다. `voc.standardize_outbox.auto_customer_confirmed_at`에는 최초 자동 결정 시각이 남는다. 운영자가 지정한 역할이 우선하며, 잘못된 결정은 그 이벤트의 `verified_message_kind`를 적절한 역할로 수정해 재정제할 수 있다. 정책을 해제할 때는 같은 경로의 `auto_customer_from`을 NULL로 바꾼다. 활성화 전 수집분은 기존 역할을 유지한다.
+적격 Silver가 처음 `unknown`으로 저장되면 DB가 해당 이벤트의 역할을 확인하고 기존 outbox로 Flink 재정제를 요청한다. 두 번째 결과가 `customer_inquiry`이면 같은 이벤트에 업무 티켓 한 건이 생성된다. `voc.standardize_outbox.auto_customer_confirmed_at`에는 최초 자동 결정 시각이 남는다. 운영자가 지정한 역할이 우선하며, 잘못된 결정은 그 이벤트의 `verified_message_kind`를 적절한 역할로 수정해 재정제할 수 있다. 정책을 해제할 때는 같은 경로의 `auto_customer_start_at`을 NULL로 바꾼다. 활성화 전 수집분은 기존 역할을 유지한다.
 
 ## 확인과 재처리
 
 ~~~bash
 docker compose exec -T postgres psql -U voc -d voc -c "
-SELECT b.channel, b.source_message_id, b.origin, o.published_at IS NOT NULL AS sent,
+SELECT b.source_channel_type, b.source_message_id, b.origin, o.published_at IS NOT NULL AS sent,
        s.schema_version, s.body_version, s.message_kind
-FROM voc.bronze_messages b
+FROM voc.bronze_message b
 JOIN voc.standardize_outbox o ON o.event_id=b.event_id AND o.target_schema_version=4
-LEFT JOIN voc.silver_messages s ON s.event_id=b.event_id AND s.schema_version=4
+LEFT JOIN voc.silver_message s ON s.event_id=b.event_id AND s.schema_version=4
 ORDER BY b.received_at DESC LIMIT 20;"
-docker compose exec -T postgres psql -U voc -d voc -c "SELECT reason, count(*) FROM voc.review_events WHERE schema_version=4 GROUP BY reason;"
+docker compose exec -T postgres psql -U voc -d voc -c "SELECT reason, count(*) FROM voc.review_event WHERE schema_version=4 GROUP BY reason;"
 docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
 docker compose exec -T discord python -m unittest infra.channel_probe.test_probe collector.test_collection
 ~~~

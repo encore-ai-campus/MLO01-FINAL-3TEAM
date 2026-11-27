@@ -67,7 +67,7 @@ class WorkerTests(unittest.TestCase):
         self.company, self.domain, channel, self.category = (uuid4() for _ in range(4))
         self.config = worker.Config(self.company, 100, worker.Release("v1","http://v1"), worker.Release("v2","http://v2"))
         self.cn.execute("INSERT INTO domain VALUES (%s,'시험')", (self.domain,))
-        self.cn.execute("INSERT INTO company(company_uuid,email_domain,domain_uuid) VALUES(%s,'qa.test',%s)",
+        self.cn.execute("INSERT INTO company(company_id,email_domain,domain_id) VALUES(%s,'qa.test',%s)",
                         (self.company,self.domain))
         self.cn.execute("INSERT INTO channel VALUES (%s,%s,'qa','gmail')", (channel,self.company))
         self.cn.execute("INSERT INTO voc.ticket_source_connection VALUES(%s,'gmail','qa','',%s,%s)",
@@ -76,16 +76,16 @@ class WorkerTests(unittest.TestCase):
         self.cn.execute("INSERT INTO voc.classification_category_map VALUES (%s,'delivery',%s)", (self.domain,self.category))
         self.event = uuid4()
         self.cn.execute("""
-            INSERT INTO voc.bronze_messages VALUES (%s,%s,'gmail','qa','m1','synthetic',now(),'{}','{}')
+            INSERT INTO voc.bronze_message VALUES (%s,%s,'gmail','qa','m1','synthetic',now(),'{}','{}')
         """, (self.event,str(self.company)))
         self.cn.execute("""
-            INSERT INTO voc.silver_messages(schema_version,event_id,company_id,channel,connection_id,source_message_id,source_conversation_id,
-                message_kind,sender_ref,body_text,body_version,received_at,source_metadata)
+            INSERT INTO voc.silver_message(schema_version,event_id,source_company_id,source_channel_type,source_connection_id,source_message_id,source_conversation_id,
+                message_kind,sender_ref,body_text,body_version,received_at,source_metadata_json)
             VALUES (4,%s,%s,'gmail','qa','m1','thread','customer_inquiry','synthetic@example.test','첫 본문',1,now(),'{"label_ids":[],"to_addresses":[]}')
         """, (self.event,str(self.company)))
 
     def jobs(self):
-        return self.cn.execute("SELECT * FROM voc.classification_job WHERE company_uuid=%s ORDER BY analysis_kind",
+        return self.cn.execute("SELECT * FROM voc.classification_job WHERE company_id=%s ORDER BY analysis_kind",
                                (self.company,)).fetchall()
 
     def test_latched_rollback_counts_distinct_events_and_reroutes_already_queued_retry(self):
@@ -97,7 +97,7 @@ class WorkerTests(unittest.TestCase):
             with self.cn.transaction():
                 worker.observe_canary(self.cn,{**job,"event_id":event},"sentiment",failed,self.config)
         def state():
-            return self.cn.execute("SELECT * FROM voc.classification_rollout WHERE company_uuid=%s AND scope_key=%s AND candidate_version=%s",key).fetchone()
+            return self.cn.execute("SELECT * FROM voc.classification_rollout WHERE company_id=%s AND scope_key=%s AND candidate_version=%s",key).fetchone()
         record(self.event); record(self.event)
         self.assertIsNone(state()["tripped_at"])
         record(uuid4()); record(uuid4(), False)
@@ -124,7 +124,7 @@ class WorkerTests(unittest.TestCase):
     def test_saved_policy_distinguishes_baseline_errors_and_candidate_latency_in_last_30_minutes(self):
         job = self.two_claims()["sentiment"]
         key = (self.company, "sentiment", "v2")
-        self.cn.execute("""INSERT INTO voc.model_review_policy(company_uuid,scope_key,revision,settings)
+        self.cn.execute("""INSERT INTO voc.model_review_policy(company_id,scope_key,revision,settings)
             VALUES (%s,'sentiment',1,'{"baseline_served":"v1","candidate_served":"v2","error_limit":2}')""", (self.company,))
         # A legacy policy omits volume and p95 fields. Its inherited limits are 100 and 1.5 times.
         self.cn.execute("""INSERT INTO voc.classification_attempt
@@ -136,7 +136,7 @@ class WorkerTests(unittest.TestCase):
             with self.cn.transaction():
                 worker.enforce_saved_limits(self.cn, key, "v1", False)
                 return self.cn.execute("""SELECT reason FROM voc.classification_rollout
-                    WHERE company_uuid=%s AND scope_key=%s AND candidate_version=%s""", key).fetchone()["reason"]
+                    WHERE company_id=%s AND scope_key=%s AND candidate_version=%s""", key).fetchone()["reason"]
         self.assertIsNone(reason())  # 3% baseline errors, 0% candidate errors.
         self.cn.execute("""UPDATE voc.classification_attempt SET outcome='succeeded' WHERE request_id=%s
             AND assigned_route='stable'""", (job["request_id"],))
@@ -164,11 +164,11 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(self.ticket()["category_status"], "running")
         worker.finish(self.cn, claimed["category"], "delivery")
         worker.finish(self.cn, claimed["sentiment"], "긍정")
-        self.cn.execute("UPDATE voc.ticket_analysis_outbox SET published_at=NULL WHERE company_uuid=%s", (self.company,))
+        self.cn.execute("UPDATE voc.ticket_analysis_outbox SET published_at=NULL WHERE company_id=%s", (self.company,))
         worker.dispatch(self.cn, replace(self.config,percent=0))
         self.assertIsNone(worker.claim(self.cn, self.config)[1])
         self.assertEqual(len(self.jobs()), 2)
-        self.assertEqual(self.ticket()["category_uuid"], self.category)
+        self.assertEqual(self.ticket()["category_id"], self.category)
         self.assertEqual(self.ticket()["sentiment"], "긍정")
         self.assertTrue(all(job["applied"] and job["state"]=="succeeded" for job in self.jobs()))
 
@@ -187,12 +187,12 @@ class WorkerTests(unittest.TestCase):
 
     def test_manual_correction_and_new_revision_are_preserved(self):
         old = self.two_claims()
-        self.cn.execute("UPDATE ticket SET category_uuid=%s,category_status='succeeded' WHERE source_event_id=%s",
+        self.cn.execute("UPDATE ticket SET category_id=%s,category_status='succeeded' WHERE source_event_id=%s",
                         (self.category,self.event))
         worker.finish(self.cn, old["category"], None)
-        self.assertEqual(self.ticket()["category_uuid"], self.category)
+        self.assertEqual(self.ticket()["category_id"], self.category)
         self.assertFalse(self.jobs()[0]["applied"])
-        self.cn.execute("UPDATE voc.silver_messages SET body_version=2,body_text='정정 본문' WHERE event_id=%s", (self.event,))
+        self.cn.execute("UPDATE voc.silver_message SET body_version=2,body_text='정정 본문' WHERE event_id=%s", (self.event,))
         worker.finish(self.cn, old["sentiment"], "부정")
         self.assertIsNone(self.ticket()["sentiment"])
         with patch.object(worker, "predict", return_value="중립") as predict:
@@ -201,15 +201,15 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(predict.call_count, 1)
         self.assertEqual(predict.call_args.args[0]["model_text"], "정정 본문")
         self.assertEqual(self.ticket()["sentiment"], "중립")
-        self.assertEqual(self.ticket()["category_uuid"], self.category)
+        self.assertEqual(self.ticket()["category_id"], self.category)
 
     def test_withdrawn_input_rechecks_role_before_write_and_resumes_on_confirmation(self):
         job = self.two_claims()["sentiment"]
-        self.cn.execute("UPDATE voc.silver_messages SET message_kind='unknown' WHERE event_id=%s", (self.event,))
+        self.cn.execute("UPDATE voc.silver_message SET message_kind='unknown' WHERE event_id=%s", (self.event,))
         worker.finish(self.cn, job, "부정")
         self.assertIsNone(self.ticket()["sentiment"])
         self.assertFalse(worker.process_one(self.cn, self.config))
-        self.cn.execute("UPDATE voc.silver_messages SET message_kind='customer_inquiry' WHERE event_id=%s", (self.event,))
+        self.cn.execute("UPDATE voc.silver_message SET message_kind='customer_inquiry' WHERE event_id=%s", (self.event,))
         _, resumed = worker.claim(self.cn, self.config)
         self.assertEqual(resumed["request_id"], job["request_id"])
         worker.finish(self.cn, resumed, "긍정")
@@ -222,10 +222,10 @@ class WorkerTests(unittest.TestCase):
         ticket = self.ticket()
         self.cn.execute("INSERT INTO event_type(code) VALUES ('ticket_sentiment_changed')")
         self.cn.execute("""
-            INSERT INTO ticket_event(ticket_uuid,event_type_uuid)
-            SELECT %s,event_type_uuid FROM event_type WHERE code='ticket_sentiment_changed'
-        """, (ticket["ticket_uuid"],))
-        self.cn.execute("UPDATE voc.silver_messages SET body_version=2 WHERE event_id=%s", (self.event,))
+            INSERT INTO ticket_event(ticket_id,event_type_id)
+            SELECT %s,event_type_id FROM event_type WHERE code='ticket_sentiment_changed'
+        """, (ticket["ticket_id"],))
+        self.cn.execute("UPDATE voc.silver_message SET body_version=2 WHERE event_id=%s", (self.event,))
         with patch.object(worker, "predict", side_effect=lambda job: "부정" if job["analysis_kind"] == "sentiment" else "delivery"):
             while worker.process_one(self.cn, self.config):
                 pass
@@ -240,13 +240,13 @@ class WorkerTests(unittest.TestCase):
                 self.cn.execute("UPDATE voc.classification_job SET ready_at=now() WHERE request_id=%s", (job["request_id"],))
                 _, job = worker.claim(self.cn, self.config)
         self.assertEqual(self.ticket()["category_status"], "failed")
-        self.cn.execute("UPDATE voc.silver_messages SET body_version=2,body_text='새 질문' WHERE event_id=%s", (self.event,))
+        self.cn.execute("UPDATE voc.silver_message SET body_version=2,body_text='새 질문' WHERE event_id=%s", (self.event,))
         worker.dispatch(self.cn, self.config)
         _, revised = worker.claim(self.cn, self.config)
         self.assertEqual(revised["analysis_kind"], "category")
         worker.finish(self.cn, revised, None)
         self.assertEqual(self.ticket()["category_status"], "succeeded")
-        self.assertIsNone(self.ticket()["category_uuid"])
+        self.assertIsNone(self.ticket()["category_id"])
 
 
 if __name__ == "__main__":

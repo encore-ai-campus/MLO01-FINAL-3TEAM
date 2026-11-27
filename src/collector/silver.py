@@ -15,10 +15,11 @@ COLUMNS = ("schema_version", "event_id", *IDENTITY, "source_conversation_id", "s
 KINDS = {"customer_inquiry", "staff_reply", "other", "unknown"}
 OPTIONAL_TEXT = ("source_conversation_id", "source_channel_id", "source_channel_name", "reply_to_message_id",
                  "sender_ref", "sender_display_name", "title")
-REQUEST_ROWS = """SELECT b.event_id::text, b.company_id, b.channel, b.connection_id, b.source_message_id,
-                         b.origin, b.received_at, b.context, b.raw_payload AS raw,
+REQUEST_ROWS = """SELECT b.event_id::text, b.source_company_id AS company_id, b.source_channel_type AS channel,
+                         b.source_connection_id AS connection_id, b.source_message_id,
+                         b.origin, b.received_at, b.context_json AS context, b.raw_payload_json AS raw,
                          o.body_version, o.verified_message_kind
-                  FROM voc.standardize_outbox o JOIN voc.bronze_messages b USING(event_id)
+                  FROM voc.standardize_outbox o JOIN voc.bronze_message b USING(event_id)
                   WHERE o.target_schema_version = 4"""
 
 
@@ -78,8 +79,8 @@ def known_root(cn, source):
         return None
     # Only small routing fields are passed to the same SQL rule used by late-parent repair.
     routing = {k: message[k] for k in ("type", "guild_id", "channel_id", "message_reference") if k in message}
-    row = cn.execute("""SELECT source_conversation_id FROM voc.silver_messages
-                        WHERE channel='discord' AND company_id=%s AND connection_id=%s AND source_channel_id=%s
+    row = cn.execute("""SELECT source_conversation_id FROM voc.silver_message
+                        WHERE source_channel_type='discord' AND source_company_id=%s AND source_connection_id=%s AND source_channel_id=%s
                           AND source_message_id=voc.discord_parent(%s, %s, %s)""",
                      (source["company_id"], source["connection_id"], message.get("channel_id"), Jsonb(routing),
                       source["connection_id"], message.get("channel_id"))).fetchone()
@@ -155,17 +156,17 @@ def attach_descendants(cn, record):
                       VALUES (%(source_message_id)s::text)
                       UNION
                       SELECT child.source_message_id FROM connected parent
-                      JOIN voc.silver_messages child ON child.reply_to_message_id=parent.source_message_id
-                      JOIN voc.bronze_messages b ON b.event_id=child.event_id
-                      WHERE child.channel='discord' AND child.company_id=%(company_id)s
-                        AND child.connection_id=%(connection_id)s AND child.source_channel_id=%(source_channel_id)s
+                      JOIN voc.silver_message child ON child.reply_to_message_id=parent.source_message_id
+                      JOIN voc.bronze_message b ON b.event_id=child.event_id
+                      WHERE child.source_channel_type='discord' AND child.source_company_id=%(company_id)s
+                        AND child.source_connection_id=%(connection_id)s AND child.source_channel_id=%(source_channel_id)s
                         AND child.source_conversation_id IS NULL
-                        AND voc.discord_parent(CASE WHEN b.origin='discord_gateway' THEN b.raw_payload->'d'
-                                                    ELSE b.raw_payload END, b.connection_id, child.source_channel_id)
+                        AND voc.discord_parent(CASE WHEN b.origin='discord_gateway' THEN b.raw_payload_json->'d'
+                                                    ELSE b.raw_payload_json END, b.source_connection_id, child.source_channel_id)
                             = parent.source_message_id
-                  ) UPDATE voc.silver_messages s SET source_conversation_id=%(source_conversation_id)s
-                    FROM connected c WHERE s.source_message_id=c.source_message_id AND s.channel='discord'
-                      AND s.company_id=%(company_id)s AND s.connection_id=%(connection_id)s
+                  ) UPDATE voc.silver_message s SET source_conversation_id=%(source_conversation_id)s
+                    FROM connected c WHERE s.source_message_id=c.source_message_id AND s.source_channel_type='discord'
+                      AND s.source_company_id=%(company_id)s AND s.source_connection_id=%(connection_id)s
                       AND s.source_channel_id=%(source_channel_id)s AND s.source_conversation_id IS NULL""", record)
 
 
@@ -180,7 +181,7 @@ def store_silver(cn, record):
     if version > source["body_version"]:
         raise SilverError("unapproved Silver body version")
     check_conversation(cn, source, record)
-    existing = cn.execute("""SELECT body_version, body_text, message_kind, source_conversation_id FROM voc.silver_messages
+    existing = cn.execute("""SELECT body_version, body_text, message_kind, source_conversation_id FROM voc.silver_message
                              WHERE event_id=%s AND schema_version=4""", (record["event_id"],)).fetchone()
     if existing and version == existing["body_version"] and record["body_text"] != existing["body_text"]:
         raise SilverError("different body for the same Silver body version")
@@ -188,7 +189,9 @@ def store_silver(cn, record):
     record["message_kind"] = kind
     if not existing:
         values = {**record, "source_metadata": Jsonb(record["source_metadata"])}
-        cn.execute("INSERT INTO voc.silver_messages (" + ", ".join(COLUMNS) + ") VALUES ("
+        names = {"company_id": "source_company_id", "channel": "source_channel_type",
+                 "connection_id": "source_connection_id", "source_metadata": "source_metadata_json"}
+        cn.execute("INSERT INTO voc.silver_message (" + ", ".join(names.get(key, key) for key in COLUMNS) + ") VALUES ("
                    + ", ".join("%(" + key + ")s" for key in COLUMNS) + ")", values)
     else:
         root = existing["source_conversation_id"] or record["source_conversation_id"]
@@ -196,7 +199,7 @@ def store_silver(cn, record):
             raise SilverError("unchanged body for a new Silver body version")
         if (version, kind, root) == (existing["body_version"], existing["message_kind"], existing["source_conversation_id"]):
             return
-        cn.execute("""UPDATE voc.silver_messages SET body_text=%s, body_version=%s, message_kind=%s, source_conversation_id=%s
+        cn.execute("""UPDATE voc.silver_message SET body_text=%s, body_version=%s, message_kind=%s, source_conversation_id=%s
                       WHERE event_id=%s AND schema_version=4""",
                    (record["body_text"], version, kind, root, record["event_id"]))
     if record["channel"] == "discord" and record["source_conversation_id"] and (not existing or not existing["source_conversation_id"]):

@@ -141,16 +141,16 @@ def check_automatic_intake(cn, submit, outputs, wait_worker_offsets):
     from collector.events import COMPANY
 
     with cn.transaction():
-        domain = cn.execute("INSERT INTO public.domain(name) VALUES ('QA') RETURNING domain_uuid").fetchone()
-        company = cn.execute("""INSERT INTO public.company(name,email_domain,domain_uuid)
-                                VALUES ('Route QA','route-qa.example.test',%s) RETURNING company_uuid""",
-                             (domain["domain_uuid"],)).fetchone()["company_uuid"]
+        domain = cn.execute("INSERT INTO public.domain(name) VALUES ('QA') RETURNING domain_id").fetchone()
+        company = cn.execute("""INSERT INTO public.company(name,email_domain,domain_id)
+                                VALUES ('Route QA','route-qa.example.test',%s) RETURNING company_id""",
+                             (domain["domain_id"],)).fetchone()["company_id"]
         for channel, connection, room in (("discord", "555", "444"), ("gmail", MAILBOX, "")):
-            destination = cn.execute("""INSERT INTO public.channel(company_uuid,name,type)
-                                        VALUES (%s,%s,%s) RETURNING channel_uuid""",
-                                     (company, channel, channel)).fetchone()["channel_uuid"]
+            destination = cn.execute("""INSERT INTO public.channel(company_id,name,type)
+                                        VALUES (%s,%s,%s) RETURNING channel_id""",
+                                     (company, channel, channel)).fetchone()["channel_id"]
             cn.execute("""INSERT INTO voc.ticket_source_connection
-                              (company_id,channel,connection_id,source_channel_id,company_uuid,channel_uuid,auto_customer_from)
+                              (source_company_id,source_channel_type,source_connection_id,source_channel_id,company_id,channel_id,auto_customer_start_at)
                           VALUES (%s,%s,%s,%s,%s,%s,clock_timestamp())""",
                        (COMPANY, channel, connection, room, company, destination))
 
@@ -168,8 +168,8 @@ def check_automatic_intake(cn, submit, outputs, wait_worker_offsets):
         submit(event)  # A redelivery must reuse the same ticket and two analysis jobs.
     wait_worker_offsets("voc.raw.discord", "voc.raw.gmail")
     counts = cn.execute("""SELECT
-          (SELECT count(*) FROM public.visible_ticket WHERE company_uuid=%s AND source_event_id=ANY(%s::uuid[])) AS tickets,
-          (SELECT count(*) FROM voc.ticket_analysis_outbox WHERE company_uuid=%s AND event_id=ANY(%s::uuid[])) AS jobs""",
+          (SELECT count(*) FROM public.visible_ticket WHERE company_id=%s AND source_event_id=ANY(%s::uuid[])) AS tickets,
+          (SELECT count(*) FROM voc.ticket_analysis_outbox WHERE company_id=%s AND event_id=ANY(%s::uuid[])) AS jobs""",
                         (company, ids, company, ids)).fetchone()
     assert counts == {"tickets": 2, "jobs": 4}, counts
     print("PASS: ordinary Discord and labeled Gmail inputs -> Flink -> two visible tickets and four jobs.", flush=True)
@@ -235,21 +235,23 @@ def check_pipeline(migrated):
     try:
         with db() as cn:
             def silver(event):
-                return cn.execute("SELECT * FROM voc.silver_messages WHERE event_id=%s AND schema_version=4",
+                return cn.execute("SELECT * FROM voc.silver_message WHERE event_id=%s AND schema_version=4",
                                   (event["event_id"],)).fetchone()
 
             def reviews(event):
-                return {row["reason"] for row in cn.execute("SELECT reason FROM voc.review_events WHERE event_id=%s",
+                return {row["reason"] for row in cn.execute("SELECT reason FROM voc.review_event WHERE event_id=%s",
                                                            (event["event_id"],))}
 
             def raw_reviews(event):
-                rows = cn.execute("SELECT reason FROM voc.review_events WHERE event_id=%s AND topic=%s",
+                rows = cn.execute("SELECT reason FROM voc.review_event WHERE event_id=%s AND topic=%s",
                                   (event["event_id"], "voc.raw." + event["channel"]))
                 return [row["reason"] for row in rows]
 
             def compare_storage(event, record):
                 row = wait_for("Silver row " + event["source_message_id"], lambda: silver(event))
-                stored = {k: row[k] for k in FIELDS}
+                columns = {"company_id": "source_company_id", "channel": "source_channel_type",
+                           "connection_id": "source_connection_id", "source_metadata": "source_metadata_json"}
+                stored = {k: row[columns.get(k, k)] for k in FIELDS}
                 stored["event_id"] = str(stored["event_id"])
                 for name in ("received_at", "occurred_at"):
                     if stored[name] is not None:
@@ -266,7 +268,7 @@ def check_pipeline(migrated):
                 assert archived["received_at"] == backfilled["received_at"] and backfilled["body_text"] == BODY
                 assert cn.execute("SELECT published_at FROM voc.standardize_outbox_v1 WHERE event_id=%s",
                                   (ident,)).fetchone()["published_at"] == backfilled["received_at"]
-                assert cn.execute("SELECT schema_version FROM voc.review_events WHERE event_id=%s AND reason=%s",
+                assert cn.execute("SELECT schema_version FROM voc.review_event WHERE event_id=%s AND reason=%s",
                                   (ident, "legacy review")).fetchone()["schema_version"] == 1
                 published = cn.execute("SELECT published_at FROM voc.standardize_outbox WHERE event_id=%s",
                                        (ident,)).fetchone()["published_at"]
@@ -319,12 +321,12 @@ def check_pipeline(migrated):
             wait_worker_offsets("voc.raw.discord", "voc.raw.gmail")
             for event in (child, first):
                 assert raw_reviews(event) == ["source body differs from first Bronze record"]
-                raw = cn.execute("SELECT origin, raw_payload, received_at FROM voc.bronze_messages WHERE event_id=%s",
+                raw = cn.execute("SELECT origin, raw_payload_json, received_at FROM voc.bronze_message WHERE event_id=%s",
                                  (event["event_id"],)).fetchone()
-                assert raw["origin"] == event["origin"] and raw["raw_payload"] == event["raw"]
+                assert raw["origin"] == event["origin"] and raw["raw_payload_json"] == event["raw"]
                 assert raw["received_at"] == silver(event)["received_at"] and silver(event)["body_text"] == BODY
             initial_count = len(events) + int(migrated)
-            assert cn.execute("SELECT count(*) AS n FROM voc.bronze_messages").fetchone()["n"] == initial_count
+            assert cn.execute("SELECT count(*) AS n FROM voc.bronze_message").fetchone()["n"] == initial_count
             assert cn.execute("SELECT count(*) AS n FROM voc.standardize_outbox").fetchone()["n"] == initial_count
 
             original = docs[first["event_id"]]
@@ -355,7 +357,7 @@ def check_pipeline(migrated):
             send(kafka, STANDARD, first["event_id"], confirmed[first["event_id"]][1])
             wait_worker_offsets(STANDARD)
             assert silver(first)["message_kind"] == "unknown" and silver(second)["message_kind"] == "customer_inquiry"
-            assert cn.execute("SELECT count(*) AS n FROM voc.silver_messages WHERE schema_version=4").fetchone()["n"] == initial_count
+            assert cn.execute("SELECT count(*) AS n FROM voc.silver_message WHERE schema_version=4").fetchone()["n"] == initial_count
             check_automatic_intake(cn, submit, outputs, wait_worker_offsets)
         print("PASS: 19-field Kafka/SQL parity, distinct Gmail messages, role confirmation and withdrawal, "
               "late Discord parent, raw envelope and body replay, and Silver conflict review.", flush=True)

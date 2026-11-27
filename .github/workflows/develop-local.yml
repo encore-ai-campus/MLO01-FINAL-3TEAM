@@ -43,6 +43,7 @@ jobs:
       - name: Django, ticket database and browser logic
         run: |
           pip install -r src/backend/requirements.txt
+          psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f src/collector/test_rename_schema.sql
           while IFS= read -r file; do
             psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f "src/$file" >/dev/null
           done < src/collector/schema-order.txt

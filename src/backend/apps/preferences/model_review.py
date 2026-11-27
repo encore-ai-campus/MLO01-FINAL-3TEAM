@@ -64,11 +64,11 @@ def catalog(cur, company, scope, domain_code=None):
         key = f"category/{domain}"
         names = dict(STANDARD_LABELS.get(code, {}))
         if map_ready:
-            cur.execute("""SELECT coalesce(m.label,c.category_uuid::text),c.name FROM public.category c
-                LEFT JOIN voc.classification_category_map m USING(domain_uuid,category_uuid)
-                WHERE c.domain_uuid=%s ORDER BY c.name,c.category_uuid,m.label""",(domain,))
+            cur.execute("""SELECT coalesce(m.label,c.category_id::text),c.name FROM public.category c
+                LEFT JOIN voc.classification_category_map m USING(domain_id,category_id)
+                WHERE c.domain_id=%s ORDER BY c.name,c.category_id,m.label""",(domain,))
         else:
-            cur.execute("SELECT category_uuid::text,name FROM public.category WHERE domain_uuid=%s ORDER BY name,category_uuid",(domain,))
+            cur.execute("SELECT category_id::text,name FROM public.category WHERE domain_id=%s ORDER BY name,category_id",(domain,))
         names.update(cur.fetchall())
     versions = registered_versions(cur, company, scope, domain)
     return dict(scope=scope,domain=domain,code=code,scope_name=scope_name,jobs_ready=jobs_ready,
@@ -91,19 +91,19 @@ def selected_counts(raw, scope, domain):
 
 
 def registered_versions(cur, company, scope, domain):
-    cur.execute("""SELECT v.artifact_ref,v.model_name,v.registry_version,r.eval_dataset_uuid,r.sentiment_macro_f1,
+    cur.execute("""SELECT v.artifact_ref,v.model_name,v.registry_version,r.eval_dataset_id,r.sentiment_macro_f1,
         r.category_macro_f1,r.review_counts,e.dataset_version FROM voc.model_version v
-        JOIN voc.training_run r USING(workflow_ref) JOIN voc.training_dataset t ON t.dataset_uuid=r.train_dataset_uuid
-        JOIN voc.training_dataset e ON e.dataset_uuid=r.eval_dataset_uuid
-        WHERE t.company_uuid=%s AND e.company_uuid=t.company_uuid AND e.finalized_at IS NOT NULL
+        JOIN voc.training_run r USING(workflow_ref) JOIN voc.training_dataset t ON t.dataset_id=r.train_dataset_id
+        JOIN voc.training_dataset e ON e.dataset_id=r.eval_dataset_id
+        WHERE t.company_id=%s AND e.company_id=t.company_id AND e.finalized_at IS NOT NULL
         UNION ALL
         SELECT 'models:/' || x.model_name || '/' || x.registry_version,x.model_name,x.registry_version,
-               x.eval_dataset_uuid,NULL,NULL,x.review_counts,e.dataset_version
-        FROM voc.external_model_evaluation x JOIN voc.training_dataset e ON e.dataset_uuid=x.eval_dataset_uuid
-        WHERE x.company_uuid=%s AND e.company_uuid=x.company_uuid AND e.purpose='eval' AND e.finalized_at IS NOT NULL
+               x.eval_dataset_id,NULL,NULL,x.review_counts,e.dataset_version
+        FROM voc.external_model_evaluation x JOIN voc.training_dataset e ON e.dataset_id=x.eval_dataset_id
+        WHERE x.company_id=%s AND e.company_id=x.company_id AND e.purpose='eval' AND e.finalized_at IS NOT NULL
           AND NOT EXISTS (SELECT FROM voc.model_version v JOIN voc.training_run r USING(workflow_ref)
-              JOIN voc.training_dataset t ON t.dataset_uuid=r.train_dataset_uuid
-              WHERE t.company_uuid=x.company_uuid AND v.model_name=x.model_name AND v.registry_version=x.registry_version)
+              JOIN voc.training_dataset t ON t.dataset_id=r.train_dataset_id
+              WHERE t.company_id=x.company_id AND v.model_name=x.model_name AND v.registry_version=x.registry_version)
         ORDER BY 2,3 DESC""", (company, company))
     return {uri:dict(uri=uri,label=f"{model} · v{version}",dataset=str(ds),dataset_name=ds_name,
                          counts=selected_counts(counts,scope,domain),
@@ -116,7 +116,7 @@ ORIGINAL_MODELS = {"klue_bert_v1": "원본 KLUE-BERT v1", "ax_encoder": "원본 
 
 def original_versions(cur, company, task):
     cur.execute("""SELECT model_code,row_count,macro_f1,label_counts,split_sha256,report_sha256
-        FROM voc.model_review_benchmark WHERE company_uuid=%s AND task_code=%s""", (company,task))
+        FROM voc.model_review_benchmark WHERE company_id=%s AND task_code=%s""", (company,task))
     versions = {}
     for model, n, f1, labels, split, report in cur.fetchall():
         uri = f"benchmark:{model}"
@@ -127,7 +127,7 @@ def original_versions(cur, company, task):
 
 
 def policy_state(cur, company, ctx):
-    cur.execute("SELECT revision,settings FROM voc.model_review_policy WHERE company_uuid=%s AND scope_key=%s",
+    cur.execute("SELECT revision,settings FROM voc.model_review_policy WHERE company_id=%s AND scope_key=%s",
                 (company,ctx["key"]))
     row = cur.fetchone()
     saved = as_object(row[1]) if row else {}
@@ -180,14 +180,14 @@ def lane_stats(cur, company, ctx, values):
             a.started_at>%(at)s::timestamptz-interval '30 minutes' AS recent,
             target.model_version=CASE target.route WHEN 'stable' THEN %(stable)s ELSE %(canary)s END AS selected
         FROM voc.classification_job j JOIN voc.classification_attempt a USING(request_id)
-        JOIN public.ticket t ON t.company_uuid=j.company_uuid AND t.source_event_id=j.event_id
-        JOIN voc.bronze_messages b USING(event_id)
+        JOIN public.ticket t ON t.company_id=j.company_id AND t.source_event_id=j.event_id
+        JOIN voc.bronze_message b USING(event_id)
         CROSS JOIN LATERAL (SELECT coalesce(to_jsonb(a)->>'assigned_route',j.route) AS route,
             coalesce(to_jsonb(a)->>'assigned_version',j.model_version) AS model_version) target
-        WHERE j.company_uuid=%(company)s AND (%(domain)s::uuid IS NULL OR t.domain_uuid=%(domain)s::uuid)
+        WHERE j.company_id=%(company)s AND (%(domain)s::uuid IS NULL OR t.domain_id=%(domain)s::uuid)
           AND j.analysis_kind=%(task)s
           AND a.started_at>%(at)s::timestamptz-interval '7 days' AND a.started_at<=%(at)s
-          AND b.context->>'synthetic' IS DISTINCT FROM 'true' AND b.origin IS DISTINCT FROM 'synthetic-canary'
+          AND b.context_json->>'synthetic' IS DISTINCT FROM 'true' AND b.origin IS DISTINCT FROM 'synthetic-canary'
     ), completed AS (
         SELECT * FROM attempts WHERE selected AND finished_at<=%(at)s
     ), sequences AS (
@@ -210,26 +210,26 @@ def lane_stats(cur, company, ctx, values):
                             p95=p95 if timed==calls else None,pending=pending,mixed=mixed,
                             cost=float(cost) if cost is not None else None,streak=run if route=="canary" else 0)
     # Compare the actual model answer with the first final counselor label for that same input version.
-    # category_uuid is stable across renames; j.label is the domain-specific serving code.
-    category_join = ("LEFT JOIN voc.classification_category_map m ON m.domain_uuid=f.domain_uuid AND m.label=j.label"
+    # category_id is stable across renames; j.label is the domain-specific serving code.
+    category_join = ("LEFT JOIN voc.classification_category_map m ON m.domain_id=f.domain_id AND m.label=j.label"
                      if ctx["scope"]=="category" and ctx["map_ready"] else "")
     if ctx["scope"]=="category" and not category_join:
         return stats
     mismatch = ("(CASE WHEN j.label='매우 부정' THEN '부정' ELSE j.label END) IS DISTINCT FROM g.sentiment_value"
-                if ctx["scope"]=="sentiment" else "m.category_uuid IS DISTINCT FROM g.category_uuid")
+                if ctx["scope"]=="sentiment" else "m.category_id IS DISTINCT FROM g.category_id")
     cur.execute(f"""WITH reviews AS (
         SELECT DISTINCT ON (j.request_id) j.route,{mismatch} AS corrected
-        FROM voc.gold_label g JOIN voc.feature_snapshot f USING(feature_uuid)
-        JOIN voc.classification_job j ON j.company_uuid=f.company_uuid AND j.event_id=f.silver_event_id
+        FROM voc.feature_snapshot_label g JOIN voc.feature_snapshot f USING(feature_snapshot_id)
+        JOIN voc.classification_job j ON j.company_id=f.company_id AND j.event_id=f.silver_event_id
             AND j.body_version=f.body_version AND j.preprocess_version=f.preprocess_version AND j.analysis_kind=g.label_kind
-        JOIN voc.bronze_messages b ON b.event_id=j.event_id {category_join}
-        WHERE f.company_uuid=%(company)s AND (%(domain)s::uuid IS NULL OR f.domain_uuid=%(domain)s::uuid)
+        JOIN voc.bronze_message b ON b.event_id=j.event_id {category_join}
+        WHERE f.company_id=%(company)s AND (%(domain)s::uuid IS NULL OR f.domain_id=%(domain)s::uuid)
           AND g.label_kind=%(task)s AND g.label_origin='counselor'
           AND g.confirmed_at>%(at)s::timestamptz-interval '7 days' AND g.confirmed_at<=%(at)s
-          AND j.state='succeeded' AND j.applied AND j.finished_at<=g.as_of_at AND g.reviewer_uuid IS NOT NULL
+          AND j.state='succeeded' AND j.applied AND j.finished_at<=g.as_of_at AND g.reviewer_id IS NOT NULL
           AND j.model_version=CASE j.route WHEN 'stable' THEN %(stable)s ELSE %(canary)s END
-          AND b.context->>'synthetic' IS DISTINCT FROM 'true' AND b.origin IS DISTINCT FROM 'synthetic-canary'
-        ORDER BY j.request_id,g.confirmed_at,g.gold_label_uuid)
+          AND b.context_json->>'synthetic' IS DISTINCT FROM 'true' AND b.origin IS DISTINCT FROM 'synthetic-canary'
+        ORDER BY j.request_id,g.confirmed_at,g.feature_snapshot_label_id)
         SELECT route,count(*),100.0*count(*) FILTER(WHERE corrected)/count(*) FROM reviews GROUP BY route""",args)
     for route,n,rate in cur.fetchall():
         stats[route].update(reviews=n,correction=float(rate))
@@ -404,8 +404,8 @@ def result(cur, company, ctx, values, labels, pair):
             if ctx["scope"] == "sentiment":
                 model["single_domain"] = True  # The stored aggregate already covers the whole company.
                 continue
-            cur.execute("""SELECT bool_and(f.domain_uuid=%s) FROM voc.training_dataset_item i
-                    JOIN voc.feature_snapshot f USING(feature_uuid) WHERE i.dataset_uuid=%s""",
+            cur.execute("""SELECT bool_and(f.domain_id=%s) FROM voc.training_dataset_item i
+                    JOIN voc.feature_snapshot f USING(feature_snapshot_id) WHERE i.dataset_id=%s""",
                         (ctx["domain"], model["dataset"]))
             model["single_domain"]=cur.fetchone()[0] is True
     stats = {"stable": {}, "canary": {}} if pair == "original" else lane_stats(cur,company,ctx,values)
@@ -446,21 +446,21 @@ def review(company,scope,post,write,domain=None,pair="saved"):
         if write:
             settings={k:v for k,v in values.items() if k!="revision"}
             settings["labels"]={r["code"]:{k:v for k,v in r.items() if k not in ("code","name")} for r in labels}
-            cur.execute("""INSERT INTO voc.model_review_policy(company_uuid,scope_key,revision,settings) VALUES (%s,%s,1,%s::jsonb)
-                ON CONFLICT(company_uuid,scope_key) DO UPDATE SET settings=excluded.settings,
+            cur.execute("""INSERT INTO voc.model_review_policy(company_id,scope_key,revision,settings) VALUES (%s,%s,1,%s::jsonb)
+                ON CONFLICT(company_id,scope_key) DO UPDATE SET settings=excluded.settings,
                     revision=voc.model_review_policy.revision+1,updated_at=statement_timestamp() RETURNING revision""",
                         (company,ctx["key"],json.dumps(settings)))
             values["revision"]=cur.fetchone()[0]
         return result(cur,company,ctx,values,labels,pair)
 
 
-def read(company_uuid,scope="sentiment",domain=None,pair="saved"):
-    return review(company_uuid,scope,None,False,domain,pair)
+def read(company_id,scope="sentiment",domain=None,pair="saved"):
+    return review(company_id,scope,None,False,domain,pair)
 
 
-def preview(company_uuid,scope,post,domain=None):
-    return review(company_uuid,scope,post,False,domain)
+def preview(company_id,scope,post,domain=None):
+    return review(company_id,scope,post,False,domain)
 
 
-def save(company_uuid,scope,post,domain=None):
-    return review(company_uuid,scope,post,True,domain)
+def save(company_id,scope,post,domain=None):
+    return review(company_id,scope,post,True,domain)

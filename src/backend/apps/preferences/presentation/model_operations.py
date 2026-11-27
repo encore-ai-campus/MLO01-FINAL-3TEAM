@@ -62,7 +62,7 @@ def saved_redirect(name, **params):
 @require_http_methods(["GET", "POST"])
 def schedule(request):
     actor = training_actor(request)
-    company = actor["company_uuid"]
+    company = actor["company_id"]
     policy = retraining.read_policy(company)
     notices = []
     models = []
@@ -199,7 +199,7 @@ def original_scores(data):
 @require_http_methods(["GET", "POST"])
 def review(request):
     actor = training_actor(request)
-    company = actor["company_uuid"]
+    company = actor["company_id"]
     query = request.POST if request.method == "POST" else request.GET
     scope = query.get("scope", "sentiment")
     domain = query.get("domain") or None
@@ -275,7 +275,7 @@ def review(request):
         "current": item["id"] == scope and item["domain"] == domain,
     } for item in data["scopes"]]
     grafana = training.browser_url(settings.VOC_GRAFANA_URL)
-    grafana_params = urlencode({"var-company": actor["company_uuid"], "var-scope": data["scope_key"]})
+    grafana_params = urlencode({"var-company": actor["company_id"], "var-scope": data["scope_key"]})
     return render(request, "preferences/model_review.html", {
         "grafana_url": f"{grafana}/d/voc-model-guard/model-guard?{grafana_params}" if grafana else "",
         "active": "model_training", "actor": actor, "data": data, "scope": scope, "labels": labels,

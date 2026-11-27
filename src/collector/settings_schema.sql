@@ -1,5 +1,5 @@
 ALTER TABLE staff_user ADD COLUMN IF NOT EXISTS role text;
-ALTER TABLE staff_user ADD COLUMN IF NOT EXISTS display_preferences jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE staff_user ADD COLUMN IF NOT EXISTS display_preferences_json jsonb NOT NULL DEFAULT '{}';
 
 INSERT INTO permission(code, name) VALUES
     ('ticket.handle', '티켓 상담'),
@@ -11,53 +11,53 @@ ON CONFLICT (code) DO NOTHING;
 WITH dashboard AS (
     INSERT INTO permission(code, name) VALUES ('analytics.read', 'VoC 대시보드 접근')
     ON CONFLICT (code) DO NOTHING
-    RETURNING permission_uuid
+    RETURNING permission_id
 )
-INSERT INTO staff_permission(staff_user_uuid, permission_uuid)
-SELECT staff.staff_user_uuid, dashboard.permission_uuid
+INSERT INTO staff_permission(staff_user_id, permission_id)
+SELECT staff.staff_user_id, dashboard.permission_id
 FROM staff_user AS staff CROSS JOIN dashboard
 WHERE staff.role = 'admin'
 ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS staff_assignment_policy (
-    company_uuid uuid NOT NULL,
-    staff_user_uuid uuid NOT NULL,
-    enabled boolean NOT NULL,
+    company_id uuid NOT NULL,
+    staff_user_id uuid NOT NULL,
+    is_enabled boolean NOT NULL,
     batch_size integer NOT NULL CHECK (batch_size > 0),
     refill_mode text NOT NULL CHECK (refill_mode IN ('immediate', 'after_all')),
-    PRIMARY KEY (company_uuid, staff_user_uuid),
-    FOREIGN KEY (company_uuid, staff_user_uuid)
-        REFERENCES staff_user(company_uuid, staff_user_uuid) ON DELETE CASCADE
+    PRIMARY KEY (company_id, staff_user_id),
+    FOREIGN KEY (company_id, staff_user_id)
+        REFERENCES staff_user(company_id, staff_user_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS quick_reply (
-    reply_uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_uuid uuid NOT NULL REFERENCES company ON DELETE CASCADE,
-    owner_uuid uuid,
-    team_uuid uuid,
-    domain_uuid uuid NOT NULL,
-    category_uuid uuid NOT NULL,
+    reply_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id uuid NOT NULL REFERENCES company ON DELETE CASCADE,
+    owner_id uuid,
+    team_id uuid,
+    domain_id uuid NOT NULL,
+    category_id uuid NOT NULL,
     name varchar(80) NOT NULL CHECK (length(trim(name)) > 0),
     body varchar(2000) NOT NULL CHECK (length(trim(body)) > 0),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    CHECK (num_nonnulls(owner_uuid, team_uuid) = 1),
-    FOREIGN KEY (company_uuid, owner_uuid) REFERENCES staff_user(company_uuid, staff_user_uuid) ON DELETE CASCADE,
-    FOREIGN KEY (company_uuid, team_uuid) REFERENCES team(company_uuid, team_uuid) ON DELETE CASCADE,
-    FOREIGN KEY (domain_uuid, category_uuid) REFERENCES category(domain_uuid, category_uuid)
+    CHECK (num_nonnulls(owner_id, team_id) = 1),
+    FOREIGN KEY (company_id, owner_id) REFERENCES staff_user(company_id, staff_user_id) ON DELETE CASCADE,
+    FOREIGN KEY (company_id, team_id) REFERENCES team(company_id, team_id) ON DELETE CASCADE,
+    FOREIGN KEY (domain_id, category_id) REFERENCES category(domain_id, category_id)
 );
-CREATE INDEX IF NOT EXISTS quick_reply_company_owner ON quick_reply(company_uuid, owner_uuid) WHERE team_uuid IS NULL;
-CREATE INDEX IF NOT EXISTS quick_reply_company_team ON quick_reply(company_uuid, team_uuid) WHERE team_uuid IS NOT NULL;
+CREATE INDEX IF NOT EXISTS quick_reply_company_owner ON quick_reply(company_id, owner_id) WHERE team_id IS NULL;
+CREATE INDEX IF NOT EXISTS quick_reply_company_team ON quick_reply(company_id, team_id) WHERE team_id IS NOT NULL;
 
 ALTER TABLE company ADD COLUMN IF NOT EXISTS messenger_provider text CHECK (messenger_provider IN ('slack', 'discord'));
 
 CREATE TABLE IF NOT EXISTS messenger_destination (
-    company_uuid uuid NOT NULL REFERENCES company ON DELETE CASCADE,
+    company_id uuid NOT NULL REFERENCES company ON DELETE CASCADE,
     provider text NOT NULL CHECK (provider IN ('slack', 'discord')),
-    team_uuid uuid,
-    staff_user_uuid uuid,
-    channel varchar(100) NOT NULL CHECK (length(trim(channel)) > 0),
-    CHECK (num_nonnulls(team_uuid, staff_user_uuid) <= 1),
-    UNIQUE NULLS NOT DISTINCT (company_uuid, provider, team_uuid, staff_user_uuid),
-    FOREIGN KEY (company_uuid, team_uuid) REFERENCES team(company_uuid, team_uuid) ON DELETE CASCADE,
-    FOREIGN KEY (company_uuid, staff_user_uuid) REFERENCES staff_user(company_uuid, staff_user_uuid) ON DELETE CASCADE
+    team_id uuid,
+    staff_user_id uuid,
+    messenger_channel varchar(100) NOT NULL CHECK (length(trim(messenger_channel)) > 0),
+    CHECK (num_nonnulls(team_id, staff_user_id) <= 1),
+    UNIQUE NULLS NOT DISTINCT (company_id, provider, team_id, staff_user_id),
+    FOREIGN KEY (company_id, team_id) REFERENCES team(company_id, team_id) ON DELETE CASCADE,
+    FOREIGN KEY (company_id, staff_user_id) REFERENCES staff_user(company_id, staff_user_id) ON DELETE CASCADE
 );

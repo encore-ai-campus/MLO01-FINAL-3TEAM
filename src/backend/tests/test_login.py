@@ -109,28 +109,28 @@ class PostgreSQLLoginTests(unittest.TestCase):
             self.addCleanup(self.drop_schema, dsn, schema)
             cursor.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
             cursor.execute(
-                "CREATE TABLE company (company_uuid uuid PRIMARY KEY, email_domain text NOT NULL)"
+                "CREATE TABLE company (company_id uuid PRIMARY KEY, email_domain text NOT NULL)"
             )
             cursor.execute("""
                 CREATE TABLE staff_user (
-                    staff_user_uuid uuid PRIMARY KEY,
-                    company_uuid uuid NOT NULL REFERENCES company (company_uuid),
+                    staff_user_id uuid PRIMARY KEY,
+                    company_id uuid NOT NULL REFERENCES company (company_id),
                     email text NOT NULL,
                     password_hash text NOT NULL
                 )
             """)
             cursor.execute("""
                 CREATE TABLE staff_session (
-                    token_hash text PRIMARY KEY, staff_user_uuid uuid REFERENCES staff_user,
+                    token_hash text PRIMARY KEY, staff_user_id uuid REFERENCES staff_user,
                     expires_at timestamptz NOT NULL)
             """)
-            company_uuid = str(uuid4())
-            cursor.execute("INSERT INTO company VALUES (%s, %s)", (company_uuid, "EXAMPLE.COM"))
+            company_id = str(uuid4())
+            cursor.execute("INSERT INTO company VALUES (%s, %s)", (company_id, "EXAMPLE.COM"))
             cursor.execute("INSERT INTO company VALUES (%s, %s)", (str(uuid4()), "other.example.com"))
             hasher = PasswordHasher()
             cursor.execute(
                 "INSERT INTO staff_user VALUES (%s, %s, %s, %s)",
-                (str(uuid4()), company_uuid, "User01@Example.com", hasher.hash("TestPass1!")),
+                (str(uuid4()), company_id, "User01@Example.com", hasher.hash("TestPass1!")),
             )
 
             test_dsn = make_dsn(dsn, options=f"-c search_path={schema}")
@@ -144,14 +144,14 @@ class PostgreSQLLoginTests(unittest.TestCase):
                 duplicate_uuid = str(uuid4())
                 cursor.execute(
                     "INSERT INTO staff_user VALUES (%s, %s, %s, %s)",
-                    (duplicate_uuid, company_uuid, "user01@example.com", hasher.hash("OtherPass1!")),
+                    (duplicate_uuid, company_id, "user01@example.com", hasher.hash("OtherPass1!")),
                 )
                 self.assertEqual(client.post("/api/auth/login", data=credentials, content_type="application/json").status_code, 401)
-                cursor.execute("DELETE FROM staff_user WHERE staff_user_uuid = %s", (duplicate_uuid,))
+                cursor.execute("DELETE FROM staff_user WHERE staff_user_id = %s", (duplicate_uuid,))
 
                 cursor.execute(
-                    "UPDATE company SET email_domain = %s WHERE company_uuid = %s",
-                    ("different.example.com", company_uuid),
+                    "UPDATE company SET email_domain = %s WHERE company_id = %s",
+                    ("different.example.com", company_id),
                 )
                 self.assertEqual(client.post("/api/auth/login", data=credentials, content_type="application/json").status_code, 401)
 

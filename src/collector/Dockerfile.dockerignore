@@ -17,6 +17,7 @@
 !collector/training_schema.sql
 !collector/retraining_schema.sql
 !collector/schema-order.txt
+!collector/rename_schema.sql
 !workers/classification/schema.sql
 !collector/model_policy_schema.sql
 !collector/channel_intake_schema.sql

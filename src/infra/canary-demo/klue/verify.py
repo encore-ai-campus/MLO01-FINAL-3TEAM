@@ -51,14 +51,14 @@ print(json.dumps(rows))
 def assignment_rows(run):
     data = sql("""
         SELECT coalesce(json_agg(x),'[]') FROM (
-          SELECT t.source_event_id AS event,t.ticket_number,t.ticket_uuid,s.name,s.email,
+          SELECT t.source_event_id AS event,t.ticket_number,t.ticket_id,s.name,s.email,
                  t.category_applied_body_version AS body,j.assignment_checked_at IS NOT NULL AS delivered,
-                 (SELECT count(*) FROM ticket_event e JOIN event_type et USING(event_type_uuid)
-                  WHERE e.ticket_uuid=t.ticket_uuid AND et.code='assigned') AS recorded,
-                 s.company_uuid=t.company_uuid AND s.team_uuid=t.assigned_team_uuid AS correct_team
-          FROM ticket t JOIN voc.bronze_messages b ON b.event_id=t.source_event_id
+                 (SELECT count(*) FROM ticket_event e JOIN event_type et USING(event_type_id)
+                  WHERE e.ticket_id=t.ticket_id AND et.code='assigned') AS recorded,
+                 s.company_id=t.company_id AND s.team_id=t.assigned_team_id AS correct_team
+          FROM ticket t JOIN voc.bronze_message b ON b.event_id=t.source_event_id
           JOIN voc.classification_job j ON j.event_id=b.event_id AND j.analysis_kind='category'
-          LEFT JOIN staff_user s ON s.staff_user_uuid=t.assignee_uuid
+          LEFT JOIN staff_user s ON s.staff_user_id=t.assignee_id
           WHERE b.origin='synthetic-canary' AND split_part(b.source_message_id,'/',1)=:'run'
         ) x;
     """, "-v", f"run={run}")
@@ -98,7 +98,7 @@ def main():
                 assert r["applied"] and r["outcome"]=="succeeded" and r["label"]==labels[target,kind,text]
                 assert r["attempt_count"]==1 and r["seconds"]<=30
                 if kind=="sentiment": assert r["sentiment"]==r["label"]
-                else: assert r["category_uuid"] is not None
+                else: assert r["category_id"] is not None
             assert all(r["email"] in assigned_emails and r["correct_team"] and r["recorded"]==1 and r["body"]==1 for r in advisers)
             phases.append({"canary_percent":percent,"cumulative_tickets":len(expected),"chart_revision":revision})
         assert {r["email"] for r in advisers}==assigned_emails

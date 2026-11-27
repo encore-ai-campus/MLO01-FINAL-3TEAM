@@ -99,12 +99,12 @@
         <div id="detail-actions"{% if selected.kind == 'transfer' %} class="inbox-transfer-actions"{% endif %}>
           {% if selected.can_reply %}<button type="button" class="desk-button" data-view="write">회신하기</button>{% endif %}
           {% if selected.kind == 'transfer' and selected.needs_action %}
-            <form id="request-accept" method="post" action="{% url 'tickets:accept-transfer' selected.ticket_uuid selected.id %}">
+            <form id="request-accept" method="post" action="{% url 'tickets:accept-transfer' selected.ticket_id selected.id %}">
               {% csrf_token %}
               <button type="submit" class="desk-button desk-button-solid">수락</button>
             </form>
           {% endif %}
-          <a class="desk-button{% if selected.kind != 'transfer' %} desk-button-solid{% endif %}" href="{% url 'tickets:detail' selected.ticket_uuid %}">티켓 열기</a>
+          <a class="desk-button{% if selected.kind != 'transfer' %} desk-button-solid{% endif %}" href="{% url 'tickets:detail' selected.ticket_id %}">티켓 열기</a>
         </div>
         {% if selected.can_reply %}<span id="write-actions" hidden><button type="button" class="desk-button" data-view="detail">취소</button><button class="desk-button desk-button-solid" form="request-write" type="submit">보내기</button></span>{% endif %}
       </footer>

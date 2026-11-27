@@ -22,7 +22,7 @@
   {% if can_conduct and ticket.status != '문의 종료' %}
     <label class="detail-summary-toggle">
       <input type="checkbox" id="ticket-summary-toggle" autocomplete="off" aria-controls="ticket-summary-panel"
-             data-url="{% url 'tickets:summary' ticket.ticket_uuid %}">
+             data-url="{% url 'tickets:summary' ticket.ticket_id %}">
       AI 요약
     </label>
     <div id="ticket-summary-panel" class="detail-summary-panel" hidden>
@@ -48,7 +48,7 @@
                 {% if message.attachments %}
                   <ul class="detail-message-files">
                   {% for file in message.attachments %}
-                    <li><a href="{% url 'tickets:message-attachment' ticket.ticket_uuid file.attachment_uuid %}">{{ file.filename }}</a></li>
+                    <li><a href="{% url 'tickets:message-attachment' ticket.ticket_id file.attachment_id %}">{{ file.filename }}</a></li>
                   {% endfor %}
                   </ul>
                 {% endif %}
@@ -77,15 +77,15 @@
             <dt>담당자</dt>
             <dd>{% if can_conduct and ticket.status != '문의 종료' and not delivery_uncertain and assignment_recipients %}
                   {% if is_assignee or actor.is_company_admin %}
-                    <form class="detail-assignment" method="post" action="{% url 'tickets:assign' ticket.ticket_uuid %}{% querystring %}">
+                    <form class="detail-assignment" method="post" action="{% url 'tickets:assign' ticket.ticket_id %}{% querystring %}">
                       {% csrf_token %}
                       <label class="detail-assignment-search">담당자 검색
                         <input type="search" data-recipient-search="detail-assignment-recipient" placeholder="이름 또는 팀">
                       </label>
-                      <select id="detail-assignment-recipient" name="recipient_uuid" aria-label="담당자" required>
+                      <select id="detail-assignment-recipient" name="recipient_id" aria-label="담당자" required>
                         <option value="">{{ ticket.assignee_name|default:'담당자 선택' }}</option>
                         {% for person in assignment_recipients %}
-                          <option value="{{ person.staff_user_uuid }}" {% if person.staff_user_uuid == ticket.assignee_uuid %}selected{% endif %}>{{ person.name }}{% if person.team %} · {{ person.team }}{% endif %}</option>
+                          <option value="{{ person.staff_user_id }}" {% if person.staff_user_id == ticket.assignee_id %}selected{% endif %}>{{ person.name }}{% if person.team %} · {{ person.team }}{% endif %}</option>
                         {% endfor %}
                       </select>
                       <button class="desk-button" type="submit">할당하기</button>
@@ -95,11 +95,11 @@
             <dt>담당 팀</dt><dd>{{ ticket.team_name|default:'—' }}</dd>
           </dl>
           {% if can_conduct and is_assignee and not delivery_uncertain and ticket.status != '문의 종료' %}
-            <a class="desk-button detail-analysis-button" href="{% url 'assignment:ticket-category' ticket.ticket_uuid %}{% querystring %}">분석·배정 수정</a>
+            <a class="desk-button detail-analysis-button" href="{% url 'assignment:ticket-category' ticket.ticket_id %}{% querystring %}">분석·배정 수정</a>
           {% endif %}
           {% if can_conduct and ticket.status != '문의 종료' %}{% include "tickets/includes/collaboration.html" %}{% endif %}
           {% if can_conduct and is_assignee and ticket.status != '답변완료' and ticket.status != '문의 종료' %}
-            <form class="detail-complete-form" method="post" action="{% url 'tickets:complete' ticket.ticket_uuid %}{% querystring %}">
+            <form class="detail-complete-form" method="post" action="{% url 'tickets:complete' ticket.ticket_id %}{% querystring %}">
               {% csrf_token %}<button class="desk-button detail-complete-button" type="submit">처리 완료</button>
             </form>
           {% endif %}
@@ -118,7 +118,7 @@
             <ul>
               <li class="detail-current-ticket"><strong>#{{ ticket.ticket_number }} {{ ticket.title }}</strong><span>현재 티켓 · {{ ticket.status }} · {{ ticket.created_at|detail_time }} 접수</span></li>
               {% for item in customer_tickets %}
-                <li><a href="{% url 'tickets:detail' item.ticket_uuid %}{% querystring memos=None %}">#{{ item.ticket_number }} {{ item.title }}</a>
+                <li><a href="{% url 'tickets:detail' item.ticket_id %}{% querystring memos=None %}">#{{ item.ticket_number }} {{ item.title }}</a>
                   <span>{{ item|analysis_label:'category' }} · {{ item.updated_at|detail_time }} 업데이트</span></li>
               {% endfor %}
             </ul>
@@ -126,7 +126,7 @@
           <details class="detail-history"><summary>유사 티켓</summary><p class="detail-caption">유사 티켓 조회 연결 대기</p></details>
           {% if duplicate_candidates %}
             <details class="detail-history"><summary>다른 채널의 중복 문의 후보 ({{ duplicate_candidates|length }})</summary>
-              <ul>{% for item in duplicate_candidates %}<li><a href="{% url 'tickets:detail' item.ticket_uuid %}{% querystring memos=None %}">#{{ item.ticket_number }} · {{ item.channel|channel_label }} · {{ item.title }}</a></li>{% endfor %}</ul>
+              <ul>{% for item in duplicate_candidates %}<li><a href="{% url 'tickets:detail' item.ticket_id %}{% querystring memos=None %}">#{{ item.ticket_number }} · {{ item.channel|channel_label }} · {{ item.title }}</a></li>{% endfor %}</ul>
             </details>
           {% endif %}
         </div>

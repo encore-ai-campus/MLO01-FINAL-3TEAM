@@ -38,8 +38,8 @@ def register():
     snapshot = Entity(name="feature", join_keys=["feature_uuid"], value_type=ValueType.STRING)
     postgres = PostgreSQLSource(
         name="ticket_snapshot_history",
-        query="""SELECT feature_uuid::text AS feature_uuid, title, body,
-                        unresolved_count, avg_first_reply_7d_seconds, available_at
+        query="""SELECT feature_snapshot_id::text AS feature_uuid, title, body,
+                        unresolved_count, avg_first_reply_7d_ms / 1000 AS avg_first_reply_7d_seconds, available_at
                  FROM voc.feature_snapshot""",
         timestamp_field="available_at",
     )
@@ -55,7 +55,7 @@ def read_online(snapshot):
     import pandas as pd
     from feast.data_source import PushMode
 
-    entity = {"feature_uuid": str(snapshot["feature_uuid"])}
+    entity = {"feature_uuid": str(snapshot["feature_snapshot_id"])}
     values = {name: snapshot[name] for name in FEATURES}
     frame = pd.DataFrame([{**entity, **values, "available_at": snapshot["available_at"]}])
     frame["unresolved_count"] = frame["unresolved_count"].astype("Int64")

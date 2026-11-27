@@ -52,7 +52,7 @@ def page(request):
     if form.is_valid():
         selection = form.cleaned_data
         context.update(selection)
-        company = selection.get("company") if is_operator else actor["company_uuid"]
+        company = selection.get("company") if is_operator else actor["company_id"]
         context["previous_page"] = selection["page"] - 1
         context["next_page"] = selection["page"] + 1
         try:

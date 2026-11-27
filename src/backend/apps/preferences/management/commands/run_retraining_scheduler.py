@@ -25,14 +25,14 @@ class Command(BaseCommand):
             try:
                 with connection.cursor() as cursor:
                     cursor.execute("""WITH companies AS (
-                          SELECT p.company_uuid FROM voc.retraining_policy p
-                          WHERE p.enabled OR EXISTS (SELECT FROM voc.retraining_dispatch d
-                                WHERE d.company_uuid=p.company_uuid AND d.state IN ('running','pending'))
+                          SELECT p.company_id FROM voc.retraining_policy p
+                          WHERE p.is_enabled OR EXISTS (SELECT FROM voc.retraining_dispatch d
+                                WHERE d.company_id=p.company_id AND d.state IN ('running','pending'))
                           UNION
-                          SELECT company_uuid FROM voc.training_stop_request WHERE state='requested'
+                          SELECT company_id FROM voc.training_stop_request WHERE state='requested'
                         )
-                        SELECT company_uuid FROM companies
-                        WHERE %s::uuid IS NULL OR company_uuid=%s ORDER BY company_uuid""",
+                        SELECT company_id FROM companies
+                        WHERE %s::uuid IS NULL OR company_id=%s ORDER BY company_id""",
                         (options["company"], options["company"]))
                     companies = [row[0] for row in cursor.fetchall()]
                 for company in companies:

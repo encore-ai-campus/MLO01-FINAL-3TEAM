@@ -19,15 +19,15 @@ STANDARD_LABELS = {
 
 
 def company_domains(cur, company):
-    cur.execute("""SELECT c.domain_uuid,d.name,p.codes,p.revision
-        FROM public.company c LEFT JOIN public.domain d USING(domain_uuid)
-        LEFT JOIN voc.model_review_company_domains p USING(company_uuid)
-        WHERE c.company_uuid=%s""", (company,))
+    cur.execute("""SELECT c.domain_id,d.name,p.codes,p.revision
+        FROM public.company c LEFT JOIN public.domain d USING(domain_id)
+        LEFT JOIN voc.model_review_company_domains p USING(company_id)
+        WHERE c.company_id=%s""", (company,))
     row = cur.fetchone()
     if row is None:
         raise ValueError("회사를 확인해 주세요.")
     home, home_name, enabled, revision = row
-    cur.execute("SELECT code,domain_uuid FROM voc.model_review_domain")
+    cur.execute("SELECT code,domain_id FROM voc.model_review_domain")
     ids = dict(cur.fetchall())
     options = {code: {"code": code, "name": name, "uuid": ids[code]}
                for code, name in DOMAIN_NAMES.items()}
@@ -65,8 +65,8 @@ def save_domains(company, codes, revision):
             raise ValueError("이 회사에서 사용할 수 있는 도메인을 선택해 주세요.")
         selected = [code for code in options if code in requested]
         if current == 0 or selected != [code for code, item in options.items() if item["enabled"]]:
-            cur.execute("""INSERT INTO voc.model_review_company_domains(company_uuid,codes,revision)
+            cur.execute("""INSERT INTO voc.model_review_company_domains(company_id,codes,revision)
                     VALUES (%s,%s::text[],1)
-                ON CONFLICT (company_uuid) DO UPDATE SET codes=excluded.codes,
+                ON CONFLICT (company_id) DO UPDATE SET codes=excluded.codes,
                     revision=voc.model_review_company_domains.revision+1""", (company, selected))
         return selected

@@ -8,11 +8,11 @@
       <p>현재 담당 상담사만 이관을 요청할 수 있습니다.</p>
     {% elif delivery_uncertain %}<p>기존 답변의 발송 결과를 확인한 뒤 이관할 수 있습니다.</p>
     {% elif transfer_recipients %}
-    <form method="post" enctype="multipart/form-data" action="{% url 'tickets:transfer' ticket.ticket_uuid %}{% querystring %}">
+    <form method="post" enctype="multipart/form-data" action="{% url 'tickets:transfer' ticket.ticket_id %}{% querystring %}">
       {% csrf_token %}
       <label>이름 또는 팀 검색 <input type="search" data-recipient-search="detail-transfer-recipient"></label>
-      <label>새 담당자 <select name="recipient_uuid" id="detail-transfer-recipient" required><option value="">선택</option>
-        {% for recipient in transfer_recipients %}<option value="{{ recipient.staff_user_uuid }}">{{ recipient.name }}{% if recipient.team %} · {{ recipient.team }}{% endif %}</option>{% endfor %}
+      <label>새 담당자 <select name="recipient_id" id="detail-transfer-recipient" required><option value="">선택</option>
+        {% for recipient in transfer_recipients %}<option value="{{ recipient.staff_user_id }}">{{ recipient.name }}{% if recipient.team %} · {{ recipient.team }}{% endif %}</option>{% endfor %}
       </select></label>
       <label>이관 메시지 <textarea name="reason" required></textarea></label>
       <label>첨부 답변 <textarea name="attached_reply"></textarea></label>
@@ -25,13 +25,13 @@
     <div class="detail-dialog-heading"><h2 id="detail-review-title">검토 요청</h2>
       <button type="button" class="desk-button" data-close-dialog>닫기</button></div>
     {% if assignment_recipients %}
-    <form method="post" enctype="multipart/form-data" action="{% url 'tickets:review-requests' ticket.ticket_uuid %}{% querystring %}">
+    <form method="post" enctype="multipart/form-data" action="{% url 'tickets:review-requests' ticket.ticket_id %}{% querystring %}">
       {% csrf_token %}
       <label>이름 또는 팀 검색 <input type="search" data-recipient-search="detail-review-recipient"></label>
-      <label>검토 담당자 <select name="recipient_uuid" id="detail-review-recipient" required><option value="">선택</option>
+      <label>검토 담당자 <select name="recipient_id" id="detail-review-recipient" required><option value="">선택</option>
         {% for person in assignment_recipients %}
-          {% if person.staff_user_uuid != actor.staff_user_uuid %}
-            <option value="{{ person.staff_user_uuid }}">{{ person.name }}{% if person.team %} · {{ person.team }}{% endif %}</option>
+          {% if person.staff_user_id != actor.staff_user_id %}
+            <option value="{{ person.staff_user_id }}">{{ person.name }}{% if person.team %} · {{ person.team }}{% endif %}</option>
           {% endif %}
         {% endfor %}
       </select></label>
