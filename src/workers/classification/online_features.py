@@ -19,7 +19,7 @@ def store():
         provider="local",
         registry={"registry_type": "sql", "path": os.environ["FEAST_REGISTRY_URL"]},
         offline_store={
-            "type": "postgres", "db_schema": "voc", "host": db.get("host", "localhost"),
+            "type": "postgres", "db_schema": os.environ.get("FEAST_OFFLINE_SCHEMA", "voc"), "host": db.get("host", "localhost"),
             "port": int(db.get("port", 5432)), "database": db["dbname"], "user": db["user"],
             "password": db.get("password", ""), "sslmode": db.get("sslmode", "prefer"),
         },

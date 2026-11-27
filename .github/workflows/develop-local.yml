@@ -1,0 +1,83 @@
+name: Develop local release
+on:
+  pull_request:
+    branches: [develop]
+  push:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: develop-local-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  classification:
+    uses: ./.github/workflows/classification-worker.yml
+  serving:
+    uses: ./.github/workflows/model-canary-verify.yml
+  platform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: {POSTGRES_PASSWORD: fixture}
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 3s --health-retries 15
+    env:
+      DJANGO_SECRET_KEY: ci-only
+      VOC_TICKET_TEST_ADMIN_DSN: postgresql://postgres:fixture@localhost/postgres
+      VOC_TEST_DATABASE_URL: postgresql://postgres:fixture@localhost/postgres
+      VOC_ANALYTICS_TEST_DSN: postgresql://postgres:fixture@localhost/postgres
+      VOC_TASK9_TEST_DSN: postgresql://postgres:fixture@localhost/postgres
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with: {python-version: '3.12'}
+      - name: Django, ticket database and browser logic
+        run: |
+          pip install -r src/backend/requirements.txt
+          (cd src/backend && python manage.py test && node --test tests/*.mjs)
+          docker build -f src/backend/Dockerfile -t voc-web:ci src
+      - name: Collector, observability and release controller
+        run: |
+          pip install -r src/collector/requirements.txt -r src/infra/channel_probe/requirements.txt
+          PYTHONPATH=src python -m unittest collector.test_collection infra.channel_probe.test_probe
+          (cd src/monitoring && python -m unittest discover)
+          python -m unittest discover -s src/infra/local-release -p 'test_*.py'
+  silver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - name: Verify Kafka, PostgreSQL and Flink Silver projection
+        run: python3 src/collector/test_silver_v4_integration.py
+  training:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: {POSTGRES_PASSWORD: fixture}
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 3s --health-retries 15
+    env:
+      DATABASE_URL: postgresql://postgres:fixture@localhost/postgres
+      VOC_TRAINING_TEST_DSN: postgresql://postgres:fixture@localhost/postgres
+      PYTHONPATH: src:src/ml/serving
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with: {python-version: '3.12'}
+      - name: Verify Gold history, dataset isolation and training progress
+        run: |
+          pip install -r src/ml/training/requirements.txt
+          for f in schema ticket_schema training_schema; do
+            psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 -f "src/collector/${f}.sql" >/dev/null
+          done
+          python -m unittest ml.training.test_history ml.training.test_dataset_safety ml.training.test_progress
