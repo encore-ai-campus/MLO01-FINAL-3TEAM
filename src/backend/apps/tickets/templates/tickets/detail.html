@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% load static ticket_ui %}
 {% block title %}티켓 #{{ ticket.ticket_number }}{% endblock %}
-{% block styles %}<link rel="stylesheet" href="{% static 'tickets/detail.css' %}?v=3">{% endblock %}
+{% block styles %}<link rel="stylesheet" href="{% static 'tickets/detail.css' %}?v=4">{% endblock %}
 {% block content %}
 <section class="ticket-detail" aria-labelledby="ticket-detail-title">
   <div class="ticket-detail-body">
@@ -18,6 +18,19 @@
           <h1 id="ticket-detail-title">#{{ ticket.ticket_number }} {{ ticket.title }}</h1>
           <p class="detail-caption">접수 <time datetime="{{ ticket.created_at|timestamp }}">{{ ticket.created_at|detail_time }}</time></p>
         </div>
+        <div class="detail-summary-area">
+  {% if can_conduct and ticket.assignee_uuid and ticket.status != '문의 종료' %}
+    <label class="detail-summary-toggle">
+      <input type="checkbox" id="ticket-summary-toggle" autocomplete="off" aria-controls="ticket-summary-panel"
+             data-url="{% url 'tickets:summary' ticket.ticket_uuid %}">
+      AI 요약
+    </label>
+    <div id="ticket-summary-panel" class="detail-summary-panel" hidden>
+      <p role="status" aria-live="polite" aria-atomic="true"></p>
+      <button type="button" class="desk-button" hidden>다시 시도</button>
+    </div>
+  {% endif %}
+        </div>
       </header>
       <section class="detail-chat" aria-label="문의 대화">
         <ol class="detail-messages">
@@ -26,35 +39,66 @@
               <span class="detail-avatar" aria-hidden="true">{% if message.show_avatar %}{{ message.author_name|default:'?'|first }}{% endif %}</span>
               <div class="detail-message-content">
                 {% if message.sender_type != 'customer' %}
-                  <header><strong>{{ message.author_name|default:'상담사' }}</strong>{% if message.message_type == 'memo' %} · 내부 메모{% endif %}
+                  <header><strong>{{ message.author_name|default:'상담사' }}</strong>{% if message.message_type == 'memo' %} · 내부 메모{% elif message.message_type == 'transfer' %} · 이관 메모{% endif %}
                     <time datetime="{{ message.created_at|timestamp }}">{{ message.created_at|message_time }}</time>
                     {% if message.delivery_status and message.delivery_status != 'sent' %}<span>{{ message.delivery_status|delivery_label }}</span>{% endif %}
                   </header>
                 {% endif %}
                 <p class="detail-bubble">{{ message.body }}</p>
+                {% if message.attachments %}
+                  <ul class="detail-message-files">
+                  {% for file in message.attachments %}
+                    <li><a href="{% url 'tickets:message-attachment' ticket.ticket_uuid file.attachment_uuid %}">{{ file.filename }}</a></li>
+                  {% endfor %}
+                  </ul>
+                {% endif %}
                 {% if message.sender_type == 'customer' %}<time class="detail-customer-time" datetime="{{ message.created_at|timestamp }}">{{ message.created_at|message_time }}</time>{% endif %}
               </div>
             </li>
           {% empty %}<li class="detail-caption">등록된 메시지가 없습니다.</li>{% endfor %}
         </ol>
       </section>
-      {% if can_conduct %}{% include "tickets/includes/actions.html" %}{% endif %}
+      {% if ticket.status == '문의 종료' %}
+        <footer class="detail-closed"><strong>문의 종료</strong>
+          {% if ticket.close_at %}<time datetime="{{ ticket.close_at|timestamp }}">{{ ticket.close_at|detail_time }}에 종료되었습니다.</time>{% endif %}
+        </footer>
+      {% elif can_conduct %}{% include "tickets/includes/actions.html" %}{% endif %}
     </div>
     <aside class="detail-aside" aria-label="티켓 보조 패널">
       <details class="ticket-conversation ticket-side-panel" open>
-        <summary><span class="detail-panel-open">티켓 관리</span><span class="detail-panel-closed">보조 패널 펼치기</span></summary>
+        <summary class="detail-panel-heading">
+          <span class="detail-panel-open">티켓 관리</span>
+          <span class="detail-panel-closed">보조 패널 펼치기</span>
+          <span class="detail-state detail-panel-open" data-ticket-status="{{ ticket.status }}">{{ ticket.status }}</span>
+        </summary>
         <div class="detail-side-content">
           <dl class="detail-fields">
-            <dt>처리 상태</dt><dd><span class="detail-state" data-ticket-status="{{ ticket.status }}">{{ ticket.status }}</span></dd>
             <dt>티켓 번호</dt><dd>#{{ ticket.ticket_number }}</dd>
-            <dt>담당자</dt><dd>{{ ticket.assignee_name|default:'—' }}</dd>
+            <dt>담당자</dt>
+            <dd>{% if can_conduct and ticket.status != '문의 종료' and not delivery_uncertain and assignment_recipients %}
+                  {% if is_assignee or actor.is_company_admin %}
+                    <form class="detail-assignment" method="post" action="{% url 'tickets:assign' ticket.ticket_uuid %}{% querystring %}">
+                      {% csrf_token %}
+                      <label class="detail-assignment-search">담당자 검색
+                        <input type="search" data-recipient-search="detail-assignment-recipient" placeholder="이름 또는 팀">
+                      </label>
+                      <select id="detail-assignment-recipient" name="recipient_uuid" aria-label="담당자" required>
+                        <option value="">{{ ticket.assignee_name|default:'담당자 선택' }}</option>
+                        {% for person in assignment_recipients %}
+                          <option value="{{ person.staff_user_uuid }}" {% if person.staff_user_uuid == ticket.assignee_uuid %}selected{% endif %}>{{ person.name }}{% if person.team %} · {{ person.team }}{% endif %}</option>
+                        {% endfor %}
+                      </select>
+                      <button class="desk-button" type="submit">할당하기</button>
+                    </form>
+                  {% else %}{{ ticket.assignee_name|default:'—' }}{% endif %}
+                {% else %}{{ ticket.assignee_name|default:'—' }}{% endif %}</dd>
             <dt>담당 팀</dt><dd>{{ ticket.team_name|default:'—' }}</dd>
           </dl>
-          {% if can_conduct and is_assignee and not delivery_uncertain %}
+          {% if can_conduct and is_assignee and not delivery_uncertain and ticket.status != '문의 종료' %}
             <a class="desk-button detail-analysis-button" href="{% url 'assignment:ticket-category' ticket.ticket_uuid %}{% querystring %}">분석·배정 수정</a>
           {% endif %}
-          {% if can_conduct %}{% include "tickets/includes/collaboration.html" %}{% endif %}
-          {% if can_conduct and is_assignee and ticket.status != '답변완료' %}
+          {% if can_conduct and ticket.status != '문의 종료' %}{% include "tickets/includes/collaboration.html" %}{% endif %}
+          {% if can_conduct and is_assignee and ticket.status != '답변완료' and ticket.status != '문의 종료' %}
             <form class="detail-complete-form" method="post" action="{% url 'tickets:complete' ticket.ticket_uuid %}{% querystring %}">
               {% csrf_token %}<button class="desk-button detail-complete-button" type="submit">처리 완료</button>
             </form>
@@ -72,7 +116,7 @@
           <details class="detail-history" open>
             <summary>상담 이력</summary>
             <ul>
-              <li class="detail-current-ticket"><strong>#{{ ticket.ticket_number }} {{ ticket.title }}</strong><span>현재 티켓 · {{ ticket.status }}</span></li>
+              <li class="detail-current-ticket"><strong>#{{ ticket.ticket_number }} {{ ticket.title }}</strong><span>현재 티켓 · {{ ticket.status }} · {{ ticket.created_at|detail_time }} 접수</span></li>
               {% for item in customer_tickets %}
                 <li><a href="{% url 'tickets:detail' item.ticket_uuid %}{% querystring memos=None %}">#{{ item.ticket_number }} {{ item.title }}</a>
                   <span>{{ item|analysis_label:'category' }} · {{ item.updated_at|detail_time }} 업데이트</span></li>
@@ -90,5 +134,5 @@
     </aside>
   </div>
 </section>
-{% if can_conduct %}<script src="{% static 'tickets/detail-actions.js' %}?v=3" defer></script>{% endif %}
+{% if can_conduct %}<script src="{% static 'tickets/detail-actions.js' %}?v=4" defer></script>{% endif %}
 {% endblock %}
