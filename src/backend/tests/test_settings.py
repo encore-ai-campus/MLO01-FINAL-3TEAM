@@ -2,11 +2,14 @@ import json
 import os
 from contextlib import closing
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import TestCase, skipUnless
-from uuid import uuid4
+from unittest.mock import patch
+from urllib.error import HTTPError
+from uuid import UUID, uuid4
 
 import psycopg2
-from django.test import Client
+from django.test import Client, override_settings
 from psycopg2 import sql
 from psycopg2.extensions import make_dsn
 
@@ -121,6 +124,185 @@ class SettingsTests(TestCase):
         self.assertEqual(agent.post(f"/settings/permissions/{self.agent}/", {}).status_code, 403)
         self.assertEqual(self.session(self.admin, csrf=True).post(
             f"/settings/permissions/{self.agent}/", {}).status_code, 403)
+
+    @override_settings(MLFLOW_TRACKING_URI="http://mlflow.test", ARGO_WORKFLOWS_URL="http://argo.test")
+    def test_training_form_uses_company_choices_and_reuses_workflow_on_post_retry(self):
+        page = "/model-training/"
+        super_admin = self.make_staff("Operator", "inside.test", self.company, self.team, "super_admin")
+        client = self.session(super_admin)
+        self.assertEqual(self.session(self.agent).get(page).status_code, 403)
+        self.assertEqual(self.client.post(page, {}).status_code, 403)
+        self.assertEqual(self.session(super_admin, csrf=True).post(page, {}).status_code, 403)
+        token_file = Path(self.enterContext(TemporaryDirectory())) / "argo-token"
+        self.enterContext(override_settings(ARGO_WORKFLOWS_TOKEN="", ARGO_WORKFLOWS_TOKEN_FILE=token_file))
+        token_file.write_text("expired", encoding="utf-8")
+
+        def version(name, role, company=None):
+            tags = [{"key": "voc_training_input", "value": role}]
+            if company:
+                tags.append({"key": "company_uuid", "value": company})
+            return {"name": name, "version": "1", "status": "READY", "tags": tags}
+
+        models = {"model_versions": [
+            version("base", "encoder"), version("company", "multitask", self.company),
+            version("foreign", "multitask", self.other_company), version("legacy", "legacy"),
+        ]}
+        created = {}
+        submissions = []
+        tokens = []
+
+        def request(url, token, data=None):
+            if url.startswith("http://mlflow.test/"):
+                return models
+            tokens.append(token)
+            if token == "expired":
+                raise HTTPError(url, 401, "Unauthorized", {}, None)
+            if data is None:
+                return created
+            options = data["submitOptions"]
+            submissions.append(options)
+            if created:
+                raise HTTPError(url, 409, "Already exists", {}, None)
+            created.update({
+                "metadata": {"name": options["name"]},
+                "spec": {"arguments": {"parameters": [
+                    {"name": key, "value": value}
+                    for key, value in (parameter.split("=", 1) for parameter in options["parameters"])
+                ]}},
+            })
+            return created
+
+        with patch("apps.preferences.training.request_json", side_effect=request), patch(
+            "apps.preferences.presentation.training.evaluation_sets", return_value=[("eval-v1", "eval-v1 (1건)")],
+        ) as datasets:
+            opened = client.get(page)
+            datasets.assert_called_with(UUID(self.company))
+            self.assertContains(opened, "models:/base/1")
+            self.assertContains(opened, "models:/company/1")
+            self.assertNotContains(opened, "models:/foreign/1")
+            self.assertNotContains(opened, "models:/legacy/1")
+            params = {"request_id": str(uuid4()), "as_of_at": "2025-11-20T10:05",
+                      "model": "models:/base/1", "eval_dataset": "eval-v1"}
+            for forged in ({"model": "models:/foreign/1"}, {"eval_dataset": "eval-v2"}):
+                self.assertEqual(client.post(page, {**params, **forged}).status_code, 400)
+            self.assertEqual(submissions, [])
+            rejected = client.post(page, params)
+            self.assertEqual(rejected.status_code, 503)
+            self.assertIn("Argo 제출 인증에 실패했습니다.", rejected.text)
+            token_file.write_text("fresh", encoding="utf-8")
+            success = client.post(page, {**params, "company": self.other_company})
+            self.assertEqual(success.status_code, 303)
+            self.assertEqual(success.url, f"/model-training/runs/{created['metadata']['name']}/")
+            token_file.write_text("rotated", encoding="utf-8")
+            retried = client.post("/settings/model-training/", params)
+            self.assertEqual(retried.status_code, 303)
+            self.assertEqual(retried.url, success.url)
+            self.assertEqual(tokens, ["expired", "fresh", "rotated", "rotated"])
+            self.assertEqual(submissions[0], submissions[1])
+            self.assertIn(f"company={self.company}", submissions[0]["parameters"])
+            self.assertIn("label-cutoff=2025-11-20T10:05:00+09:00", submissions[0]["parameters"])
+
+    def test_training_menu_and_legacy_address_require_super_admin(self):
+        operator = self.make_staff("Operator", "inside.test", self.company, self.team, "super_admin")
+        client = self.session(operator)
+        page = client.get("/settings/").text
+        self.assertLess(page.index('href="/model-training/"'), page.index('<details class="desk-settings-menu"'))
+        self.assertNotContains(self.client.get("/settings/"), 'href="/model-training/"')
+        self.assertNotContains(self.session(self.agent).get("/settings/"), 'href="/model-training/"')
+        self.assertEqual(client.get("/settings/model-training/").url, "/model-training/")
+        self.assertEqual(self.client.get("/settings/model-training/").status_code, 403)
+
+    @override_settings(MLFLOW_TRACKING_URI="http://mlflow.test", ARGO_WORKFLOWS_URL="http://argo.test")
+    def test_retry_after_lost_argo_response_reuses_the_accepted_workflow(self):
+        operator = self.make_staff("Operator", "inside.test", self.company, self.team, "super_admin")
+        client = self.session(operator)
+        form = {"request_id": str(uuid4()), "as_of_at": "2025-11-20T10:05",
+                "model": "models:/base/1", "eval_dataset": "eval-v1"}
+        accepted = {}
+
+        def argo(path, payload=None):
+            if path == "/submit":
+                options = payload["submitOptions"]
+                if accepted:
+                    self.assertEqual(options["name"], accepted["metadata"]["name"])
+                    raise HTTPError(path, 409, "Already exists", {}, None)
+                accepted.update({
+                    "metadata": {"name": options["name"]},
+                    "spec": {"arguments": {"parameters": [
+                        {"name": key, "value": value}
+                        for key, value in (param.split("=", 1) for param in options["parameters"])
+                    ]}},
+                })
+                raise TimeoutError("Argo accepted the workflow before the connection timed out")
+            self.assertEqual(path, f"/{accepted['metadata']['name']}")
+            return accepted
+
+        with patch("apps.preferences.training.available_models", return_value=[("models:/base/1", "Base")]), patch(
+            "apps.preferences.presentation.training.evaluation_sets", return_value=[("eval-v1", "eval-v1")],
+        ), patch("apps.preferences.training.argo_request", side_effect=argo):
+            self.assertEqual(client.post("/model-training/", form).status_code, 503)
+            retry = client.post("/model-training/", form)
+            self.assertEqual(retry.status_code, 303)
+            self.assertEqual(retry.url, f"/model-training/runs/{accepted['metadata']['name']}/")
+            changed = client.post("/model-training/", {**form, "as_of_at": "2025-11-20T10:06"})
+            self.assertEqual(changed.status_code, 503)
+            self.assertNotIn("Location", changed.headers)
+
+    def test_revoking_super_admin_blocks_the_existing_session(self):
+        operator = self.make_staff("Operator", "inside.test", self.company, self.team, "super_admin")
+        client = self.session(operator)
+        name = "voc-training-" + uuid4().hex
+        self.assertContains(client.get("/settings/"), 'href="/model-training/"')
+        self.cursor.execute("UPDATE staff_user SET role='admin' WHERE staff_user_uuid=%s", (operator,))
+        self.assertNotContains(client.get("/settings/"), 'href="/model-training/"')
+        with patch("apps.preferences.training.argo_request") as argo:
+            for path in ("/model-training/", "/model-training/runs/",
+                         f"/model-training/runs/{name}/", f"/model-training/runs/{name}/status/"):
+                with self.subTest(path=path):
+                    self.assertEqual(client.get(path).status_code, 403)
+            self.assertEqual(client.post("/model-training/", {}).status_code, 403)
+            argo.assert_not_called()
+
+    @override_settings(ARGO_WORKFLOWS_UI_URL="http://argo.test", MINIO_CONSOLE_URL="http://minio.test")
+    def test_training_history_and_detail_only_show_company_web_runs(self):
+        operator = self.make_staff("Operator", "inside.test", self.company, self.team, "super_admin")
+        client = self.session(operator)
+        other_operator = self.make_staff("Operator", "outside.test", self.other_company, self.other_team, "super_admin")
+
+        def workflow(index, company=self.company, desk=True):
+            return {
+                "metadata": {"name": f"voc-training-{index:032x}", "uid": f"run-{index}",
+                             "labels": {"voc.company": company, **({"voc.requested-by": operator} if desk else {})},
+                             "creationTimestamp": f"2026-11-{index:02d}T00:00:00Z"},
+                "spec": {"workflowTemplateRef": {"name": "voc-training"}, "arguments": {"parameters": [
+                    {"name": "company", "value": company}, {"name": "eval-dataset", "value": "eval-v1"},
+                ]}},
+                "status": {"phase": "Succeeded"},
+            }
+
+        own, foreign = workflow(12), workflow(13, self.other_company)
+        status_path = f"/model-training/runs/{own['metadata']['name']}/status/"
+        with patch("apps.preferences.training.argo_request") as argo, patch(
+            "apps.preferences.training.progress_and_result", return_value=([], {"train_version": "train-v1"}),
+        ) as data:
+            argo.side_effect = [
+                {"items": [workflow(i) for i in range(1, 8)], "metadata": {"continue": "page-2"}},
+                {"items": [*map(workflow, range(8, 13)), foreign, workflow(14, desk=False)]},
+            ]
+            listing = client.get("/model-training/runs/").json()["runs"]
+            self.assertEqual(len(listing), 10)
+            self.assertEqual(listing[0]["name"], own["metadata"]["name"])
+            self.assertEqual(argo.call_args.kwargs["query"]["listOptions.continue"], "page-2")
+            argo.side_effect = None
+            argo.return_value = workflow(12, self.other_company)
+            self.assertEqual(client.get(status_path).status_code, 404)
+            self.assertEqual(self.client.get(status_path).status_code, 403)
+            argo.return_value = own
+            self.assertEqual(self.session(other_operator).get(status_path).status_code, 404)
+            data.assert_not_called()
+            summary = client.get(status_path).json()
+            self.assertEqual(summary["result"]["train_version"], "train-v1")
+            self.assertIn("MinIO 콘솔", summary["links"])
 
     def test_independent_permission_changes_take_effect_for_current_sessions(self):
         self.cursor.execute("""
