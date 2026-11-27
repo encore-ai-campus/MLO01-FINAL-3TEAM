@@ -82,12 +82,22 @@ def find_staff(cursor, token):
     return actor
 
 
-def company_staff(cursor, company_uuid):
-    cursor.execute("""
+def company_staff(cursor, company_uuid, *, include_super_admin=True, staff_uuid=None, lock=False):
+    query = """
         SELECT s.staff_user_uuid, coalesce(s.name,s.email) AS name, s.email, t.name AS team
         FROM staff_user s LEFT JOIN team t ON t.company_uuid=s.company_uuid AND t.team_uuid=s.team_uuid
-        WHERE s.company_uuid=%s ORDER BY name,s.staff_user_uuid
-    """, (company_uuid,))
+        WHERE s.company_uuid=%s
+    """
+    params = [company_uuid]
+    if not include_super_admin:
+        query += " AND s.role IS DISTINCT FROM 'super_admin'"
+    if staff_uuid is not None:
+        query += " AND s.staff_user_uuid=%s"
+        params.append(staff_uuid)
+    query += " ORDER BY name,s.staff_user_uuid"
+    if lock:
+        query += " FOR UPDATE OF s"
+    cursor.execute(query, params)
     return fetch_rows(cursor)
 
 
