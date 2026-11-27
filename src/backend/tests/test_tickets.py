@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import psycopg2
 from argon2 import PasswordHasher
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
@@ -543,10 +544,17 @@ class TicketTests(unittest.TestCase):
         self.addCleanup(self.cur.execute, "DELETE FROM ticket_message WHERE request_key=%s", (memo["request_key"],))
         self.assertEqual(browser.post(detail_url + "messages/", memo).status_code, 403)
         memo["csrfmiddlewaretoken"] = browser.cookies["csrftoken"].value
-        saved = browser.post(detail_url + "messages/?scope=mine", memo, follow=True)
+        saved = browser.post(detail_url + "messages/?scope=mine", {
+            **memo, "reference_files": [SimpleUploadedFile("상담.pdf", b"%PDF-1.7", "application/pdf")],
+        }, follow=True)
         self.assertContainsHTML(saved, "브라우저 메모")
         self.assertEqual(saved.redirect_chain, [(detail_url + "?scope=mine&memos=1", 302)])
         self.assertContainsHTML(saved, 'data-message-type="memo"')
+        self.assertContainsHTML(saved, "상담.pdf")
+        files = saved.context["conversation"][-1]["attachments"]
+        url = reverse("tickets:message-attachment", args=[self.tickets[1], files[0]["attachment_uuid"]])
+        self.assertEqual(browser.get(url).content, b"%PDF-1.7")
+        self.assertEqual(Client().get(url).status_code, 302)
         self.assertEqual(browser.get(f"/tickets/{self.tickets[-1]}/").status_code, 404)
         self.assertEqual(browser.post("/logout/").status_code, 403)
         self.assertEqual(browser.post("/logout/", {"csrfmiddlewaretoken":browser.cookies["csrftoken"].value}).status_code, 302)
@@ -647,6 +655,21 @@ class TicketTests(unittest.TestCase):
         self.assertEqual(send.call_args.args[0]["source_message_id"], "1")
         untouched = self.client.get(f"/api/tickets/{first}").json()
         self.assertEqual(untouched["ticket"]["status"], "미처리")
+        self.cur.execute("""
+            UPDATE ticket_message SET sent_at=now() - interval '71 hours'
+            WHERE ticket_uuid=%s AND message_type='reply'
+        """, (discord,))
+        self.assertEqual(self.client.get(f"/api/tickets/{discord}").json()["ticket"]["status"], "답변완료")
+        self.cur.execute("""
+            UPDATE ticket_message SET sent_at=now() - interval '72 hours'
+            WHERE ticket_uuid=%s AND message_type='reply'
+        """, (discord,))
+        closed = self.client.get(reverse("tickets:detail", args=[discord]))
+        self.assertContainsHTML(closed, 'class="detail-closed"')
+        self.assertNotIn('id="ticket-reply-body"', closed.text)
+        self.assertEqual(self.client.get(f"/api/tickets/{discord}").json()["ticket"]["status"], "문의 종료")
+        rejected = self.client.post(endpoint, {**payload, "request_key": str(uuid4())}, content_type="application/json")
+        self.assertEqual(rejected.status_code, 409, rejected.text)
         self.cur.execute("DELETE FROM ticket_message WHERE ticket_uuid=%s AND message_type='reply'", (discord,))
         self.cur.execute("UPDATE ticket SET status='미처리' WHERE ticket_uuid=%s", (discord,))
 
@@ -913,6 +936,32 @@ class TicketTests(unittest.TestCase):
         sent_drawer = self.client.get("/inbox/", {"tab": "sent_transfer", "request": transfer_request})
         self.assertContainsHTML(sent_drawer, "수락 완료")
         self.assertNotIn('id="request-accept"', accepted_drawer.text)
+
+        direct_review = self.client.post(detail_url + "review-requests/", {
+            "recipient_uuid": recipient, "memo": "개인 검토 요청",
+        })
+        self.assertEqual(direct_review.status_code, 302, direct_review.text)
+        direct = receiver.get("/api/ticket-requests").json()["items"]
+        self.assertIn("개인 검토 요청", [item["memo"] for item in direct if item["kind"] == "review"])
+
+        self.cur.execute("UPDATE ticket SET assignee_uuid=%s WHERE ticket_uuid=%s", (self.employees[0], ticket))
+        direct_transfer = self.client.post(detail_url + "transfer/", {
+            "recipient_uuid": recipient, "reason": "즉시 이관", "attached_reply": "이전 답변",
+            "reference_files": [SimpleUploadedFile("이관.pdf", b"%PDF-1.7", content_type="application/pdf")],
+        })
+        self.assertEqual(direct_transfer.status_code, 302, direct_transfer.text)
+        self.cur.execute("SELECT assignee_uuid::text FROM ticket WHERE ticket_uuid=%s", (ticket,))
+        self.assertEqual(self.cur.fetchone()[0], recipient)
+        self.assertContainsHTML(receiver.get(detail_url), "즉시 이관")
+        transferred = next(item for item in receiver.get("/api/ticket-requests").json()["items"] if item["memo"] == "즉시 이관")
+        self.assertCountEqual(transferred["attachment_names"], ["reference.txt", "이관.pdf"])
+        self.cur.execute("""
+            SELECT collab_request_attachment_uuid FROM collab_request_attachment
+            WHERE collab_request_uuid=%s AND original_filename='이관.pdf'
+        """, (transferred["id"],))
+        download_url = reverse("tickets:request-attachment-file", args=[transferred["id"], self.cur.fetchone()[0]])
+        self.assertEqual(receiver.get(download_url).content, b"%PDF-1.7")
+        self.assertEqual(self.client.get(download_url).status_code, 404)
 
     def test_recommendations_follow_saved_category(self):
         self.login()

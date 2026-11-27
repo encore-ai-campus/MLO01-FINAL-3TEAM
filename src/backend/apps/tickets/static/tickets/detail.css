@@ -92,7 +92,7 @@
 .detail-customer-time { justify-self: end; margin-top: 4px; }
 .ticket-detail .detail-bubble { margin: 3px 0 0; font-size: 13px; background: #f7f7f7; }
 .ticket-detail [data-message-type="reply"] .detail-bubble { background: #fbf0d7; }
-.ticket-detail [data-message-type="memo"] .detail-bubble, .ticket-detail [data-message-type="memo"] .detail-avatar { background: #efefef; }
+.ticket-detail :is([data-message-type="memo"], [data-message-type="transfer"]) :is(.detail-bubble, .detail-avatar) { background: #efefef; }
 .detail-aside { min-width: 0; }
 .ticket-detail .ticket-side-panel { min-height: min(815px, calc(100dvh - 120px)); }
 .ticket-detail .ticket-side-panel:not([open]) { min-height: 0; }
@@ -131,3 +131,195 @@
 .detail-grip { display: grid; place-items: center; width: 92px; min-height: 16px; margin: -10px auto 6px; cursor: ns-resize; touch-action: none; }
 .detail-grip > span { width: 40px; height: 4px; border-radius: 4px; background: #aaa; }
 .detail-delivery-notice { margin-bottom: 8px; padding: 6px 9px; border-radius: 6px; background: #fff3dc; color: #78501d; font-size: 13px; }
+
+.ticket-detail .detail-header {
+  display: block;
+  flex: none;
+}
+
+.ticket-detail .detail-header-line {
+  display: flex;
+  width: 100%;
+}
+
+.ticket-detail .detail-header-line + .detail-header-line {
+  margin-top: 4px;
+}
+
+.ticket-detail .detail-summary {
+  width: 100%;
+}
+
+.ticket-detail .detail-summary strong {
+  flex: none;
+}
+
+.ticket-side-panel > .detail-panel-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+}
+
+.detail-panel-heading::-webkit-details-marker {
+  display: none;
+}
+
+.detail-side-content .detail-collaboration {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.detail-collaboration dialog {
+  width: min(480px, calc(100% - 32px));
+  max-height: 85vh;
+  padding: 20px;
+  border: 1px solid var(--desk-line);
+  border-radius: 12px;
+  background: var(--paper);
+  color: var(--primary);
+}
+
+.detail-collaboration dialog::backdrop {
+  background: rgb(0 0 0 / 28%);
+}
+
+.detail-dialog-heading, .detail-compose-tools, .detail-emoji-options {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.detail-dialog-heading {
+  justify-content: space-between;
+}
+
+.detail-compose-tools {
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--desk-muted);
+}
+
+.ticket-detail .detail-emoji-picker {
+  position: relative;
+  margin: 0;
+}
+
+.detail-emoji-options {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  z-index: 1;
+  padding: 6px;
+  border: 1px solid var(--desk-line);
+  border-radius: 8px;
+  background: var(--paper);
+}
+
+.ticket-detail .detail-composer textarea {
+  height: 191px;
+}
+
+.detail-send-error {
+  color: #a6312a;
+  font-size: 12px;
+}
+
+.detail-closed {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px;
+  border-top: 1px solid var(--desk-line);
+  font-size: 13px;
+}
+
+.detail-closed time {
+  color: var(--desk-muted);
+}
+
+.detail-assignment {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.detail-assignment-search {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 4px;
+}
+
+.detail-assignment :is(select, input), .detail-collaboration input[type="search"] {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 6px;
+  border: 1px solid var(--desk-line);
+  border-radius: 6px;
+  background: var(--paper);
+  font: inherit;
+}
+
+.detail-message-files {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
+.detail-message-files:empty {
+  display: none;
+}
+
+.detail-message-files a {
+  text-decoration: underline;
+}
+
+.ticket-detail .detail-column {
+  height: min(815px, calc(100dvh - 120px));
+}
+
+.ticket-detail .detail-chat {
+  min-height: 70px;
+  overflow-y: auto;
+}
+
+.ticket-detail .detail-compose-area {
+  flex: none;
+  max-height: 65%;
+  overflow-y: auto;
+}
+
+@media (max-width: 780px) {
+  .ticket-detail .detail-column {
+    height: auto;
+  }
+
+  .ticket-detail .detail-chat {
+    max-height: 60vh;
+  }
+}
+
+.detail-summary-area:has(.detail-summary-toggle) {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 9px 12px;
+  border-radius: 7px;
+  background: var(--desk-soft);
+}
+
+.detail-summary-area .detail-summary-toggle {
+  flex: none;
+  margin: 0;
+}
+
+.detail-summary-area .detail-summary-panel {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
