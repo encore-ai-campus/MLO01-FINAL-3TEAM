@@ -1,17 +1,17 @@
 import base64
 import json
 
+from apps.accounts.repository import TICKET_READ
 from apps.collaboration import repository as inbox_repository
 
 from config.database import fetch_rows
 
 
-CONDUCT = """
-    2 = (
-        SELECT count(*)
-        FROM staff_permission sp JOIN permission p USING (permission_uuid)
-        WHERE sp.staff_user_uuid=s.staff_user_uuid AND p.code IN ('ticket.read','ticket.handle')
-    )
+CONDUCT = f"""
+    ({TICKET_READ} AND EXISTS (
+        SELECT FROM staff_permission sp JOIN permission p USING (permission_uuid)
+        WHERE sp.staff_user_uuid=s.staff_user_uuid AND p.code='ticket.handle'
+    ))
 """
 MESSAGE_FIELDS = """
     ticket_message_uuid, ticket_uuid, staff_user_uuid, sender_type,

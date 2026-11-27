@@ -414,6 +414,26 @@ class TicketTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertTrue(response.cookies["voc_session"]["httponly"])
 
+    def test_super_admin_with_ticket_work_permission_can_open_current_company_tickets(self):
+        self.cur.execute("""
+            INSERT INTO staff_user(company_uuid,email,name,password_hash,role)
+            SELECT company_uuid,'operator@qa1.test','Operator',password_hash,'super_admin'
+            FROM staff_user WHERE staff_user_uuid=%s RETURNING staff_user_uuid
+        """, (self.employees[0],))
+        operator = self.cur.fetchone()[0]
+        self.addCleanup(self.cur.execute, "DELETE FROM staff_user WHERE staff_user_uuid=%s", (operator,))
+        self.cur.execute("INSERT INTO staff_permission SELECT %s,permission_uuid FROM permission WHERE code='ticket.handle'",
+                         (operator,))
+        auth = self.client.post("/api/auth/login", {"email": "operator@qa1.test", "password": "SamplePass1!"},
+                                content_type="application/json")
+        self.assertEqual(auth.status_code, 200)
+        response = self.client.get("/api/tickets", {"scope": "all"})
+        self.assertEqual(response.status_code, 200)
+        ticket = response.json()["items"][0]["ticket_uuid"]
+        self.assertTrue(self.client.get(f"/tickets/{ticket}/").context["can_conduct"])
+        self.cur.execute("DELETE FROM staff_permission WHERE staff_user_uuid=%s", (operator,))
+        self.assertEqual(self.client.get("/api/tickets").status_code, 403)
+
     def test_identity_tenant_permissions_and_logout(self):
         self.assertEqual(self.client.get("/api/tickets").status_code, 401)
         self.login()
