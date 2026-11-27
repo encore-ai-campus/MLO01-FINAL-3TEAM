@@ -566,6 +566,35 @@ class TicketTests(unittest.TestCase):
         self.assertEqual(resumed.cookies["voc_desk_session"].value, token)
         self.assertEqual(self.client.get(resumed.url).status_code, 200)
 
+    @patch("apps.tickets.summary.select_sentences")
+    def test_summary_is_opt_in_scoped_and_uses_only_the_customer_inquiry(self, select):
+        assigned = self.tickets[1]
+        endpoint = reverse("tickets:summary", args=[assigned])
+        self.assertEqual(self.client.post(endpoint).status_code, 401)
+        self.login()
+        self.assertEqual(self.client.post(endpoint).status_code, 403)
+        self.grant_conduct()
+        self.assertEqual(self.client.post(reverse("tickets:summary", args=[self.tickets[-1]])).status_code, 404)
+        self.assertEqual(self.client.post(reverse("tickets:summary", args=[self.tickets[0]])).status_code, 409)
+        self.assertEqual(self.client.get(endpoint).status_code, 405)
+        browser = Client(enforce_csrf_checks=True)
+        browser.cookies = self.client.cookies.copy()
+        page = browser.get(reverse("tickets:detail", args=[assigned]))
+        self.assertContainsHTML(page, 'id="ticket-summary-toggle"')
+        self.assertNotIn("checked", re.search(r'<input[^>]*id="ticket-summary-toggle"[^>]*>', page.text)[0])
+        self.assertEqual(browser.post(endpoint).status_code, 403)
+        select.assert_not_called()
+
+        note = self.client.post(reverse("tickets:add-memo", args=[assigned]), {"body": "내부 전용 메모"})
+        self.assertEqual(note.status_code, 201)
+        self.addCleanup(self.cur.execute, "DELETE FROM ticket_message WHERE ticket_message_uuid=%s",
+                        (note.json()["ticket_message_uuid"],))
+        select.return_value = ("배송 요청 2", "")
+        summary = browser.post(endpoint, {"body": "브라우저에서 보낸 답변 초안"},
+                               HTTP_X_CSRFTOKEN=browser.cookies["csrftoken"].value)
+        self.assertEqual(summary.json(), {"mode": "original", "text": "배송 요청 2", "partial": False})
+        select.assert_called_once_with(["배송 요청 2"])
+
     def test_list_link_opens_detail_and_memo_requires_conduct_permission(self):
         self.login()
         ticket = self.tickets[0]
