@@ -19,7 +19,7 @@
           <p class="detail-caption">접수 <time datetime="{{ ticket.created_at|timestamp }}">{{ ticket.created_at|detail_time }}</time></p>
         </div>
         <div class="detail-summary-area">
-  {% if can_conduct and ticket.assignee_uuid and ticket.status != '문의 종료' %}
+  {% if can_conduct and ticket.status != '문의 종료' %}
     <label class="detail-summary-toggle">
       <input type="checkbox" id="ticket-summary-toggle" autocomplete="off" aria-controls="ticket-summary-panel"
              data-url="{% url 'tickets:summary' ticket.ticket_uuid %}">

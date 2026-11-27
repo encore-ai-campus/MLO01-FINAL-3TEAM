@@ -71,7 +71,7 @@ VALUES (:'company_id'::uuid,lower(:'email'),:'staff_name',:'password_hash');
 
 ### 티켓 상세의 AI 요약
 
-상담사가 배정된 티켓에서 상담 권한이 있는 직원이 답변 작성란 위의 **AI 요약**을 선택하면 Django가 고객 문의 본문을 로컬 Ollama에 보낸다. 요약은 해당 화면에만 표시된다. Mac에서 Ollama를 실행하고 저장소 루트에서 아래 명령으로 모델을 한 번 등록한다.
+상담 권한이 있는 직원은 개인 담당자 배정 전에도 티켓 상세에서 **AI 요약**을 선택할 수 있다. Django가 고객 문의 본문을 로컬 Ollama에 보내고 해당 화면에 요약을 표시한다. 문의가 종료되면 요약 컨트롤도 닫힌다. Mac에서 Ollama를 실행하고 저장소 루트에서 아래 명령으로 모델을 한 번 등록한다.
 
 ```sh
 ollama create voc-ticket-summary:qwen2.5-1.5b-v2 -f src/ml/ticket-summary/Modelfile

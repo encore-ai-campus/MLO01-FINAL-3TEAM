@@ -583,7 +583,6 @@ class TicketTests(unittest.TestCase):
         self.assertEqual(self.client.post(endpoint).status_code, 403)
         self.grant_conduct()
         self.assertEqual(self.client.post(reverse("tickets:summary", args=[self.tickets[-1]])).status_code, 404)
-        self.assertEqual(self.client.post(reverse("tickets:summary", args=[self.tickets[0]])).status_code, 409)
         self.assertEqual(self.client.get(endpoint).status_code, 405)
         browser = Client(enforce_csrf_checks=True)
         browser.cookies = self.client.cookies.copy()
@@ -673,6 +672,8 @@ class TicketTests(unittest.TestCase):
         closed = self.client.get(reverse("tickets:detail", args=[discord]))
         self.assertContainsHTML(closed, 'class="detail-closed"')
         self.assertNotIn('id="ticket-reply-body"', closed.text)
+        self.assertNotIn('id="ticket-summary-toggle"', closed.text)
+        self.assertEqual(self.client.post(reverse("tickets:summary", args=[discord])).status_code, 409)
         self.assertEqual(self.client.get(f"/api/tickets/{discord}").json()["ticket"]["status"], "문의 종료")
         rejected = self.client.post(endpoint, {**payload, "request_key": str(uuid4())}, content_type="application/json")
         self.assertEqual(rejected.status_code, 409, rejected.text)
@@ -996,6 +997,25 @@ class TicketTests(unittest.TestCase):
     def assign_unassigned_ticket(self, ticket):
         self.cur.execute("UPDATE ticket SET assignee_uuid=%s WHERE ticket_uuid=%s", (self.employees[0], ticket))
         self.addCleanup(self.cur.execute, "UPDATE ticket SET assignee_uuid=NULL WHERE ticket_uuid=%s", (ticket,))
+
+    @patch("apps.tickets.summary.OLLAMA.open", side_effect=TimeoutError)
+    def test_handler_can_request_summary_before_assignment(self, inference):
+        self.login()
+        ticket = self.tickets[0]
+        detail_url = reverse("tickets:detail", args=[ticket])
+        endpoint = reverse("tickets:summary", args=[ticket])
+        self.assertNotIn('id="ticket-summary-toggle"', self.client.get(detail_url).text)
+        self.assertEqual(self.client.post(endpoint).status_code, 403)
+        self.grant_conduct()
+        self.assertContainsHTML(self.client.get(detail_url), 'id="ticket-summary-toggle"')
+        inference.assert_not_called()
+        # An unassigned case reaches inference. Model outages must not claim the ticket.
+        response = self.client.post(endpoint)
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"]["code"], "SUMMARY_UNAVAILABLE")
+        inference.assert_called_once()
+        self.cur.execute("SELECT assignee_uuid FROM ticket WHERE ticket_uuid=%s", (ticket,))
+        self.assertIsNone(self.cur.fetchone()[0])
 
     def grant_conduct(self):
         self.cur.execute("INSERT INTO staff_permission SELECT %s,permission_uuid FROM permission WHERE code='ticket.handle' "
