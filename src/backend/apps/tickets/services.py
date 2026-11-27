@@ -1,5 +1,7 @@
 from contextlib import contextmanager
+from http.client import HTTPException
 
+from django.conf import settings
 from django.db import connection, transaction
 
 from apps.accounts.services import TICKET_HANDLE, current_actor, require_work_permission
@@ -90,4 +92,11 @@ def summarize_ticket(token, ticket_uuid):
     with open_desk(token) as desk:
         source = desk.summary_source(ticket_uuid)
     # Release the read transaction before waiting for inference.
-    return summary.summarize(source["body"], source["channel"])
+    try:
+        return summary.summarize_inquiry(source["body"], source["channel"], settings.VOC_OLLAMA_URL)
+    except summary.EmptyInquiry:
+        raise DeskError(422, "SUMMARY_QUOTED_ONLY", "인용된 메일을 제외하면 요약할 본문이 없습니다.") from None
+    except (OSError, HTTPException):
+        raise DeskError(503, "SUMMARY_UNAVAILABLE", "요약 모델에 연결할 수 없습니다.") from None
+    except ValueError:
+        raise DeskError(502, "SUMMARY_INVALID", "모델이 유효한 한 줄 요약을 만들지 못했습니다.") from None
