@@ -9,7 +9,7 @@
       <a class="desk-card settings-tile" href="{% url 'preferences:display' %}"><strong>개인 화면 설정</strong><span aria-hidden="true">›</span><p>업무 홈 카드와 좌측 패널의 표시 항목을 설정합니다.</p></a>
     </div>
 </section>
-{% if actor.role == "admin" %}
+{% if actor.is_company_admin %}
   <section id="work" class="settings-link-group">
     <h2>업무 관리</h2>
     <div class="settings-link-grid">

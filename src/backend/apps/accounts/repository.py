@@ -9,6 +9,17 @@ from config.database import fetch_rows
 SESSION_SECONDS = 8 * 60 * 60
 DASHBOARD_READ = "analytics.read"
 
+# Legacy read-only grants and existing two-grant counselor accounts remain valid.
+# A super admin can also open tickets through the work permission exposed in settings.
+TICKET_READ = """
+    EXISTS (
+        SELECT FROM staff_permission sp JOIN permission p USING(permission_uuid)
+        WHERE sp.staff_user_uuid=s.staff_user_uuid AND (
+            p.code='ticket.read' OR (p.code='ticket.handle' AND to_jsonb(s)->>'role'='super_admin')
+        )
+    )
+"""
+
 
 def token_digest(token):
     return hashlib.sha256(token.encode()).hexdigest()
@@ -47,18 +58,15 @@ def issue_session(email, password_hash):
 
 
 def find_staff(cursor, token):
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT s.staff_user_uuid, s.company_uuid, lower(s.email) AS email,
                coalesce(s.name, s.email) AS name,
                to_jsonb(s)->>'role' AS role,
                to_jsonb(s)->>'display_preferences' AS display_preferences,
                to_jsonb(s)->>'team_uuid' AS team_uuid,
-               EXISTS (
-                   SELECT FROM staff_permission sp JOIN permission p USING(permission_uuid)
-                   WHERE sp.staff_user_uuid=s.staff_user_uuid AND p.code='ticket.read'
-               ) AS can_read,
+               {TICKET_READ} AS can_read,
                -- Before settings setup the permission does not exist and admins have dashboard access.
-               CASE WHEN dashboard.permission_uuid IS NULL THEN coalesce(to_jsonb(s)->>'role' = 'admin', false)
+               CASE WHEN dashboard.permission_uuid IS NULL THEN coalesce(to_jsonb(s)->>'role' IN ('admin','super_admin'), false)
                     ELSE dashboard_grant.staff_user_uuid IS NOT NULL END AS can_read_dashboard
         FROM staff_session ses JOIN staff_user s USING(staff_user_uuid)
         JOIN company c ON c.company_uuid=s.company_uuid
@@ -85,7 +93,7 @@ def company_staff(cursor, company_uuid):
 
 def company_employee(cursor, company_uuid, staff_uuid, *, lock=False):
     query = """
-        SELECT staff_user_uuid, coalesce(name,email) AS name, email
+        SELECT staff_user_uuid, coalesce(name,email) AS name, email, role
         FROM staff_user WHERE company_uuid=%s AND staff_user_uuid=%s
     """
     cursor.execute(query + (" FOR UPDATE" if lock else ""), (company_uuid, staff_uuid))

@@ -100,7 +100,7 @@ def staff_in_scope(cursor, filters):
                ) AS handles_tickets
         FROM staff_user AS staff
         LEFT JOIN team ON team.team_uuid = staff.team_uuid AND team.company_uuid = staff.company_uuid
-        WHERE staff.company_uuid = %(company)s AND to_jsonb(staff)->>'role' IS DISTINCT FROM 'admin'
+        WHERE staff.company_uuid = %(company)s AND coalesce(to_jsonb(staff)->>'role', '') NOT IN ('admin', 'super_admin')
           AND (%(team)s::uuid IS NULL OR staff.team_uuid = %(team)s::uuid)
         ORDER BY name, staff.staff_user_uuid
     """, filters)

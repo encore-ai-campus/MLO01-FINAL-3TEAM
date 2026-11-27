@@ -138,14 +138,18 @@ def employee_permissions(request, staff_uuid):
         services.require_settings_admin(actor)
         company = actor["company_uuid"]
         staff = services.settings_employee(cursor, actor, staff_uuid, lock=saving)
+        read_only = staff["role"] == "super_admin" and actor["role"] != "super_admin"
+        if saving and read_only:
+            raise DeskError(403, "PERMISSION_TARGET_FORBIDDEN", "최고관리자의 업무 권한은 최고관리자만 변경할 수 있습니다.")
         codes = services.WORK_PERMISSION_CODES
         granted = repository.work_permissions(cursor, company, staff_uuid, codes)
         form = WorkPermissionsForm(request.POST if saving else None, initial={"permissions": granted})
+        form.fields["permissions"].disabled = read_only
         if saving and form.is_valid():
             if not repository.set_work_permissions(cursor, company, staff_uuid, codes, form.cleaned_data["permissions"]):
                 raise DeskError(503, "PERMISSIONS_UNAVAILABLE", "업무 권한을 저장할 수 없습니다. 설정 스키마 적용 상태를 확인해 주세요.")
             return redirect("accounts:employee-permissions", staff_uuid=staff_uuid)
     return render(request, "preferences/form.html", {
         "actor": actor, "active": "settings", "title": "업무 권한 설정", "subject": staff["name"],
-        "form": form, "back_url": "accounts:permissions",
+        "form": form, "back_url": "accounts:permissions", "read_only": read_only,
     }, status=400 if saving else 200)

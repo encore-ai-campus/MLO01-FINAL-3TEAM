@@ -26,7 +26,7 @@
     </summary>
     <div class="desk-settings-links" role="group" aria-label="설정 메뉴">
       <a class="desk-nav-item desk-nav-subitem" href="{% url 'preferences:index' %}#personal">개인 설정</a>
-      {% if actor.role == "admin" %}
+      {% if actor.is_company_admin %}
         <a class="desk-nav-item desk-nav-subitem" href="{% url 'preferences:index' %}#work">업무 관리</a>
         <a class="desk-nav-item desk-nav-subitem" href="{% url 'preferences:index' %}#hr">인사 관리</a>
       {% endif %}

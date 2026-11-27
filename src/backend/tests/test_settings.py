@@ -125,6 +125,22 @@ class SettingsTests(TestCase):
         self.assertEqual(self.session(self.admin, csrf=True).post(
             f"/settings/permissions/{self.agent}/", {}).status_code, 403)
 
+    def test_super_admin_can_manage_admin_but_admin_cannot_change_super_admin(self):
+        operator = self.make_staff("Operator", "inside.test", self.company, None, "super_admin")
+        owner = self.session(operator)
+        admin_url = f"/settings/permissions/{self.admin}/"
+        owner_url = f"/settings/permissions/{operator}/"
+        self.assertContains(owner.get("/settings/"), 'href="/settings/permissions/"')
+        self.assertEqual(owner.post(admin_url, {"permissions": ["ticket.handle"]}).status_code, 302)
+        self.assertEqual(owner.get(admin_url).context["form"].initial["permissions"], ["ticket.handle"])
+        self.assertEqual(owner.post(owner_url, {"permissions": ["analytics.read"]}).status_code, 302)
+        protected = self.client.get(owner_url)
+        self.assertTrue(protected.context["form"].fields["permissions"].disabled)
+        self.assertNotContains(protected, 'type="submit"')
+        self.assertEqual(self.client.post(owner_url, {"permissions": ["chat.handle"]}).status_code, 403)
+        self.assertEqual(owner.get(owner_url).context["form"].initial["permissions"], ["analytics.read"])
+        self.assertEqual(owner.post(f"/settings/permissions/{self.foreign}/", {}).status_code, 404)
+
     @override_settings(MLFLOW_TRACKING_URI="http://mlflow.test", ARGO_WORKFLOWS_URL="http://argo.test")
     def test_training_form_uses_company_choices_and_reuses_workflow_on_post_retry(self):
         page = "/model-training/"
