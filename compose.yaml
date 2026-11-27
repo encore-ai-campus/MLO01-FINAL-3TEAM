@@ -158,6 +158,7 @@ services:
       ARGO_WORKFLOWS_UI_URL:
       MLFLOW_UI_URL:
       MINIO_CONSOLE_URL:
+      VOC_OLLAMA_URL: ${VOC_OLLAMA_URL:-http://host.docker.internal:11434}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,[::1],ticket-desk}
       TASK3_REPLY_CONNECTIONS:
       VOC_ASSIGNMENT_WORKER_TOKEN:

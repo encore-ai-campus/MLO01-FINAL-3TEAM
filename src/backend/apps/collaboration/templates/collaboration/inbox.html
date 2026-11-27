@@ -71,7 +71,9 @@
             <p>{{ selected.memo }}</p>
           </section>
           {% if selected.attachment_names %}<section class="inbox-reference"><h3>참고 자료</h3><p class="inbox-file">{{ selected.attachment_names|join:", " }}</p>
-            {% if selected.has_download %}<a href="{% url 'tickets:request-attachment' selected.id %}">참고 자료 내려받기</a>{% endif %}
+            {% if download_files|length > 1 %}
+              <ul>{% for file in download_files %}<li><a href="{% url 'tickets:request-attachment-file' selected.id file.id %}">{{ file.filename }} 내려받기</a></li>{% endfor %}</ul>
+            {% elif selected.has_download %}<a href="{% url 'tickets:request-attachment' selected.id %}">참고 자료 내려받기</a>{% endif %}
           </section>{% endif %}
           {% if selected.sent_reply %}<section class="inbox-sent-reply"><h3>{% if selected.is_sent %}받은 답변{% else %}보낸 답변{% endif %}</h3><p>{{ selected.sent_reply }}</p></section>{% endif %}
         </div>

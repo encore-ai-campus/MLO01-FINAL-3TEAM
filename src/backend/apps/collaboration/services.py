@@ -90,12 +90,14 @@ def inbox_context(cursor, actor, params, request_id=None):
             continue
         if any(key in value.casefold() for value in (item["title"], "#" + item["ticket_number"], item["counterpart"] or "")):
             rows.append(item)
+    download_files = repository.download_options(cursor, _scope(actor), selected["id"]) if selected and selected.get("has_download") else []
     history = repository.transfer_history(cursor, actor["company_uuid"], selected["ticket_uuid"]) if selected and selected["kind"] == "transfer" else []
     return {"tabs": [(kind, label, counts[kind], attention[kind]) for kind, label in TABS.items()], "tab": tab,
             "tab_label": TABS[tab], "column": "이관 메시지" if tab.endswith("transfer") else "검토 메모",
             "person_label": "받는 사람" if is_sent else "보낸 사람", "time_label": "보낸 시각" if is_sent else "받은 시각",
             "has_unread_filter": has_unread_filter,
             "scope": scope, "query": search, "selected": selected, "rows": rows, "transfer_history": history,
+            "download_files": download_files,
             "sentiment_class": SENTIMENTS.get(selected["sentiment"], "pending") if selected else ""}
 
 

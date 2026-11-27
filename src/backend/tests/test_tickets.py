@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import psycopg2
 from argon2 import PasswordHasher
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
@@ -495,6 +496,8 @@ class TicketTests(unittest.TestCase):
             return response.json()
         data = detail(a)
         self.assertEqual([m["ticket_uuid"] for m in data["messages"]], [a])
+        self.assertNotIn("customer_email", data["ticket"])
+        self.assertNotIn("staff_user_uuid", data["messages"][0])
         self.assertEqual([row["ticket_uuid"] for row in data["customer_tickets"]], [b])
         self.assertEqual([c["ticket_uuid"] for c in data["duplicate_candidates"]], [discord])
         self.assertEqual([c["ticket_uuid"] for c in detail(discord)["duplicate_candidates"]], [a])
@@ -534,16 +537,24 @@ class TicketTests(unittest.TestCase):
         detail = browser.get(detail_path + "?scope=mine")
         self.assertContainsHTML(detail, "배송 요청 2")
         self.assertContainsHTML(detail, 'class="detail-meta"')
+        self.assertEqual(detail.context["conversation"][0]["body"], "배송 요청 2")
         self.grant_conduct()
         detail_url = f"/tickets/{self.tickets[1]}/"
         memo = {"message_type": "memo", "body": "브라우저 메모", "request_key": str(uuid4())}
         self.addCleanup(self.cur.execute, "DELETE FROM ticket_message WHERE request_key=%s", (memo["request_key"],))
         self.assertEqual(browser.post(detail_url + "messages/", memo).status_code, 403)
         memo["csrfmiddlewaretoken"] = browser.cookies["csrftoken"].value
-        saved = browser.post(detail_url + "messages/?scope=mine", memo, follow=True)
+        saved = browser.post(detail_url + "messages/?scope=mine", {
+            **memo, "reference_files": [SimpleUploadedFile("상담.pdf", b"%PDF-1.7", "application/pdf")],
+        }, follow=True)
         self.assertContainsHTML(saved, "브라우저 메모")
         self.assertEqual(saved.redirect_chain, [(detail_url + "?scope=mine&memos=1", 302)])
-        self.assertContainsHTML(saved, 'id="detail-memos" open')
+        self.assertContainsHTML(saved, 'data-message-type="memo"')
+        self.assertContainsHTML(saved, "상담.pdf")
+        files = saved.context["conversation"][-1]["attachments"]
+        url = reverse("tickets:message-attachment", args=[self.tickets[1], files[0]["attachment_uuid"]])
+        self.assertEqual(browser.get(url).content, b"%PDF-1.7")
+        self.assertEqual(Client().get(url).status_code, 302)
         self.assertEqual(browser.get(f"/tickets/{self.tickets[-1]}/").status_code, 404)
         self.assertEqual(browser.post("/logout/").status_code, 403)
         self.assertEqual(browser.post("/logout/", {"csrfmiddlewaretoken":browser.cookies["csrftoken"].value}).status_code, 302)
@@ -562,6 +573,35 @@ class TicketTests(unittest.TestCase):
         self.assertEqual(resumed.url, "/tickets/?scope=mine")
         self.assertEqual(resumed.cookies["voc_desk_session"].value, token)
         self.assertEqual(self.client.get(resumed.url).status_code, 200)
+
+    @patch("apps.tickets.summary.select_sentences")
+    def test_summary_is_opt_in_scoped_and_uses_only_the_customer_inquiry(self, select):
+        assigned = self.tickets[1]
+        endpoint = reverse("tickets:summary", args=[assigned])
+        self.assertEqual(self.client.post(endpoint).status_code, 401)
+        self.login()
+        self.assertEqual(self.client.post(endpoint).status_code, 403)
+        self.grant_conduct()
+        self.assertEqual(self.client.post(reverse("tickets:summary", args=[self.tickets[-1]])).status_code, 404)
+        self.assertEqual(self.client.post(reverse("tickets:summary", args=[self.tickets[0]])).status_code, 409)
+        self.assertEqual(self.client.get(endpoint).status_code, 405)
+        browser = Client(enforce_csrf_checks=True)
+        browser.cookies = self.client.cookies.copy()
+        page = browser.get(reverse("tickets:detail", args=[assigned]))
+        self.assertContainsHTML(page, 'id="ticket-summary-toggle"')
+        self.assertNotIn("checked", re.search(r'<input[^>]*id="ticket-summary-toggle"[^>]*>', page.text)[0])
+        self.assertEqual(browser.post(endpoint).status_code, 403)
+        select.assert_not_called()
+
+        note = self.client.post(reverse("tickets:add-memo", args=[assigned]), {"body": "내부 전용 메모"})
+        self.assertEqual(note.status_code, 201)
+        self.addCleanup(self.cur.execute, "DELETE FROM ticket_message WHERE ticket_message_uuid=%s",
+                        (note.json()["ticket_message_uuid"],))
+        select.return_value = ("배송 요청 2", "")
+        summary = browser.post(endpoint, {"body": "브라우저에서 보낸 답변 초안"},
+                               HTTP_X_CSRFTOKEN=browser.cookies["csrftoken"].value)
+        self.assertEqual(summary.json(), {"mode": "original", "text": "배송 요청 2", "partial": False})
+        select.assert_called_once_with(["배송 요청 2"])
 
     def test_list_link_opens_detail_and_memo_requires_conduct_permission(self):
         self.login()
@@ -615,6 +655,21 @@ class TicketTests(unittest.TestCase):
         self.assertEqual(send.call_args.args[0]["source_message_id"], "1")
         untouched = self.client.get(f"/api/tickets/{first}").json()
         self.assertEqual(untouched["ticket"]["status"], "미처리")
+        self.cur.execute("""
+            UPDATE ticket_message SET sent_at=now() - interval '71 hours'
+            WHERE ticket_uuid=%s AND message_type='reply'
+        """, (discord,))
+        self.assertEqual(self.client.get(f"/api/tickets/{discord}").json()["ticket"]["status"], "답변완료")
+        self.cur.execute("""
+            UPDATE ticket_message SET sent_at=now() - interval '72 hours'
+            WHERE ticket_uuid=%s AND message_type='reply'
+        """, (discord,))
+        closed = self.client.get(reverse("tickets:detail", args=[discord]))
+        self.assertContainsHTML(closed, 'class="detail-closed"')
+        self.assertNotIn('id="ticket-reply-body"', closed.text)
+        self.assertEqual(self.client.get(f"/api/tickets/{discord}").json()["ticket"]["status"], "문의 종료")
+        rejected = self.client.post(endpoint, {**payload, "request_key": str(uuid4())}, content_type="application/json")
+        self.assertEqual(rejected.status_code, 409, rejected.text)
         self.cur.execute("DELETE FROM ticket_message WHERE ticket_uuid=%s AND message_type='reply'", (discord,))
         self.cur.execute("UPDATE ticket SET status='미처리' WHERE ticket_uuid=%s", (discord,))
 
@@ -881,6 +936,32 @@ class TicketTests(unittest.TestCase):
         sent_drawer = self.client.get("/inbox/", {"tab": "sent_transfer", "request": transfer_request})
         self.assertContainsHTML(sent_drawer, "수락 완료")
         self.assertNotIn('id="request-accept"', accepted_drawer.text)
+
+        direct_review = self.client.post(detail_url + "review-requests/", {
+            "recipient_uuid": recipient, "memo": "개인 검토 요청",
+        })
+        self.assertEqual(direct_review.status_code, 302, direct_review.text)
+        direct = receiver.get("/api/ticket-requests").json()["items"]
+        self.assertIn("개인 검토 요청", [item["memo"] for item in direct if item["kind"] == "review"])
+
+        self.cur.execute("UPDATE ticket SET assignee_uuid=%s WHERE ticket_uuid=%s", (self.employees[0], ticket))
+        direct_transfer = self.client.post(detail_url + "transfer/", {
+            "recipient_uuid": recipient, "reason": "즉시 이관", "attached_reply": "이전 답변",
+            "reference_files": [SimpleUploadedFile("이관.pdf", b"%PDF-1.7", content_type="application/pdf")],
+        })
+        self.assertEqual(direct_transfer.status_code, 302, direct_transfer.text)
+        self.cur.execute("SELECT assignee_uuid::text FROM ticket WHERE ticket_uuid=%s", (ticket,))
+        self.assertEqual(self.cur.fetchone()[0], recipient)
+        self.assertContainsHTML(receiver.get(detail_url), "즉시 이관")
+        transferred = next(item for item in receiver.get("/api/ticket-requests").json()["items"] if item["memo"] == "즉시 이관")
+        self.assertCountEqual(transferred["attachment_names"], ["reference.txt", "이관.pdf"])
+        self.cur.execute("""
+            SELECT collab_request_attachment_uuid FROM collab_request_attachment
+            WHERE collab_request_uuid=%s AND original_filename='이관.pdf'
+        """, (transferred["id"],))
+        download_url = reverse("tickets:request-attachment-file", args=[transferred["id"], self.cur.fetchone()[0]])
+        self.assertEqual(receiver.get(download_url).content, b"%PDF-1.7")
+        self.assertEqual(self.client.get(download_url).status_code, 404)
 
     def test_recommendations_follow_saved_category(self):
         self.login()

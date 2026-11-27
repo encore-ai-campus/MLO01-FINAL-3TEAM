@@ -6,7 +6,7 @@ from apps.accounts.services import TICKET_HANDLE, current_actor, require_work_pe
 from config.database import read_snapshot
 from config.http import DeskError
 
-from . import action_repository, repository
+from . import action_repository, repository, summary
 
 
 def add_memo(token, ticket_uuid, body):
@@ -15,6 +15,11 @@ def add_memo(token, ticket_uuid, body):
         if not actor["can_read"]:
             raise DeskError(403, "TICKET_READ_FORBIDDEN", "티켓 조회 권한이 없습니다.")
         require_work_permission(cursor, actor, TICKET_HANDLE)
+        ticket = action_repository.lock_ticket(cursor, actor, ticket_uuid)
+        if ticket is None:
+            raise DeskError(404, "TICKET_NOT_FOUND", "티켓을 찾을 수 없습니다.")
+        if ticket["status"] == "문의 종료":
+            raise DeskError(409, "TICKET_CLOSED", "종료된 문의는 처리할 수 없습니다.")
         memo = repository.add_memo(cursor, actor["company_uuid"], actor["staff_user_uuid"], ticket_uuid, body)
         if memo is None:
             raise DeskError(404, "TICKET_NOT_FOUND", "티켓을 찾을 수 없습니다.")
@@ -36,12 +41,31 @@ class TicketDesk:
         assignee = self.actor["staff_user_uuid"] if query.scope == "mine" else None
         return repository.list_tickets(self._cursor, self.actor["company_uuid"], assignee, query)
 
+    def message_attachment(self, ticket_uuid, attachment_uuid):
+        can_conduct = action_repository.can_conduct(self._cursor, self.actor)
+        return action_repository.visible_message_attachment(
+            self._cursor, self.actor, ticket_uuid, attachment_uuid, can_conduct,
+        )
+
     def filter_options(self):
         return repository.filter_options(self._cursor, self.actor["company_uuid"])
 
+    def summary_source(self, ticket_uuid):
+        require_work_permission(self._cursor, self.actor, TICKET_HANDLE)
+        source = repository.summary_source(self._cursor, self.actor["company_uuid"], ticket_uuid)
+        if source is None:
+            raise DeskError(404, "TICKET_NOT_FOUND", "티켓을 찾을 수 없습니다.")
+        if not source["assignee_uuid"]:
+            raise DeskError(409, "TICKET_UNASSIGNED", "상담사 배정 후 요약을 사용할 수 있습니다.")
+        if not (source["body"] or "").strip():
+            raise DeskError(422, "TICKET_BODY_EMPTY", "요약할 고객 문의 본문이 없습니다.")
+        return source
+
     def detail(self, ticket_uuid, with_controls=False):
         can_conduct = action_repository.can_conduct(self._cursor, self.actor)
-        result = repository.detail(self._cursor, self.actor["company_uuid"], ticket_uuid, can_conduct)
+        result = repository.detail(
+            self._cursor, self.actor["company_uuid"], ticket_uuid, can_conduct, for_page=with_controls,
+        )
         if result is None:
             raise DeskError(404, "TICKET_NOT_FOUND", "티켓을 찾을 수 없습니다.")
         result["can_conduct"] = can_conduct
@@ -60,3 +84,10 @@ def open_desk(token):
         if not actor["can_read"]:
             raise DeskError(403, "TICKET_READ_FORBIDDEN", "티켓 조회 권한이 없습니다.")
         yield TicketDesk(cursor, actor)
+
+
+def summarize_ticket(token, ticket_uuid):
+    with open_desk(token) as desk:
+        source = desk.summary_source(ticket_uuid)
+    # Release the read transaction before waiting for inference.
+    return summary.summarize(source["body"], source["channel"])

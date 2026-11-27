@@ -339,6 +339,7 @@ def main(previous, sha):
         profile = json.loads(PROFILE.read_bytes())
         existing = [name for name in ("web","assign","retraining-scheduler") if name in profile["services"]]
         configure_training_services(profile, tag, directory)
+        profile["services"]["web"]["environment"].setdefault("VOC_OLLAMA_URL", "http://host.docker.internal:11434")
         undo.callback(compose, PROFILE, *existing)
         undo.callback(atomic, PROFILE, PROFILE.read_bytes())
         put(PROFILE, profile)

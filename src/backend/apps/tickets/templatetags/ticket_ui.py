@@ -117,7 +117,7 @@ def list_controls(query, options, page, page_size, total):
     definitions = [
         ("team", "담당 부서", [("unassigned", "미배정"), *option_rows("teams")]),
         ("assignee", "담당자", [("unassigned", "미지정"), *option_rows("assignees")]),
-        ("status", "처리 상태", [(label, label) for label in ("미처리", "보류", "답변완료")]),
+        ("status", "처리 상태", [(label, label) for label in ("미처리", "보류", "답변완료", "문의 종료")]),
         ("category", "카테고리", option_rows("categories")),
         ("sentiment", "감성", [(label, label) for label in ("긍정", "중립", "부정", "매우 부정")]),
     ]
@@ -147,3 +147,8 @@ def list_controls(query, options, page, page_size, total):
         "next_sort": orders[(orders.index(sort) + 1) % len(orders)],
         "today": timezone.now().astimezone(KST).date().isoformat(),
     }
+
+
+@register.filter
+def message_time(value):
+    return local_time(value).strftime("%H:%M")

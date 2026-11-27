@@ -26,6 +26,17 @@ TICKET_COLUMNS = """
 """
 
 
+def download_options(cursor, scope, request):
+    cursor.execute(f"""
+        SELECT a.collab_request_attachment_uuid AS id, a.original_filename AS filename
+        {REQUEST_FROM} JOIN collab_request_attachment a USING (collab_request_uuid)
+        WHERE t.company_uuid=%s AND r.recipient_uuid=%s AND r.collab_request_uuid=%s
+          AND a.content IS NOT NULL
+        ORDER BY a.created_at, a.collab_request_attachment_uuid
+    """, (*scope, request))
+    return fetch_rows(cursor)
+
+
 def received(cursor, scope):
     cursor.execute(f"""
         SELECT {TICKET_COLUMNS}, r.collab_request_uuid AS id, r.request_type AS kind,

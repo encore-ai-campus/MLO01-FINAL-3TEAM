@@ -7,7 +7,7 @@ from django import forms
 from config.http import DeskError
 
 SORTS = ("default", "updated-desc", "updated-asc", "received-desc", "received-asc")
-STATUSES = ("미처리", "보류", "답변완료")
+STATUSES = ("미처리", "보류", "답변완료", "문의 종료")
 SENTIMENTS = ("긍정", "중립", "부정", "매우 부정")
 
 
