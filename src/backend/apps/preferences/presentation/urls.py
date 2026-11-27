@@ -1,9 +1,10 @@
 from django.urls import path
 
-from . import training, views
+from . import lineage, training, views
 
 app_name = "preferences"
 urlpatterns = [
+    path("settings/lineage/", lineage.page, name="lineage"),
     path("settings/", views.index, name="index"),
     path("settings/display/", views.display, name="display"),
     path("settings/display/cards/", views.home_cards, name="home-cards"),

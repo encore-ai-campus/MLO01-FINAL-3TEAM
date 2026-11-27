@@ -1,0 +1,101 @@
+{% extends "preferences/base.html" %}
+{% block title %}데이터 리니지{% endblock %}
+{% block settings_content %}
+<a class="desk-back" href="{% url 'preferences:index' %}">설정으로 돌아가기</a>
+<div class="desk-heading"><h1>데이터 리니지</h1></div>
+{% if form.company %}
+<form method="get" class="settings-form">
+  <input type="hidden" name="view" value="{{ view|default:'flow' }}">
+  <p>{{ form.company.label_tag }}{{ form.company }}</p>
+  <div class="settings-actions"><button class="desk-button" type="submit">고객사 적용</button></div>
+</form>
+{% endif %}
+<nav class="settings-toolbar" aria-label="리니지 조회">
+  <a class="desk-button" href="?view=flow&amp;company={{ company|urlencode }}"{% if view == "flow" %} aria-current="page"{% endif %}>데이터 흐름</a>
+  <a class="desk-button" href="?view=event&amp;company={{ company|urlencode }}"{% if view == "event" %} aria-current="page"{% endif %}>이벤트 추적</a>
+  <a class="desk-button" href="?view=model&amp;company={{ company|urlencode }}"{% if view == "model" %} aria-current="page"{% endif %}>모델 학습 이력</a>
+</nav>
+{% if form.errors %}<div role="alert">{{ form.errors }}</div>{% endif %}
+{% if notice %}<p role="status">{{ notice }}</p>{% endif %}
+{% if view == "flow" %}
+<section class="settings-link-group" aria-labelledby="flow-title">
+  <h2 id="flow-title">수집부터 모델까지</h2>
+  <p class="desk-sub">저장된 이벤트와 버전으로 각 단계의 연결 관계를 확인합니다.</p>
+  <ol class="settings-form">
+    {% for title, description, table in flow %}
+      <li class="desk-card"><h3>{{ title }}</h3><p>{{ description }}</p><details><summary>데이터 저장 위치</summary><code>{{ table }}</code></details></li>
+    {% endfor %}
+  </ol>
+</section>
+{% elif view == "event" %}
+<form method="get" class="settings-form">
+  <input type="hidden" name="view" value="event">
+  {% if form.company %}<input type="hidden" name="company" value="{{ company }}">{% endif %}
+  <p>{{ form.q.label_tag }}{{ form.q }}</p>
+  <div class="settings-actions"><button class="desk-button" type="submit">조회</button></div>
+</form>
+{% if event %}
+<section class="settings-link-group">
+  <h2>이벤트 {{ event.event_id }}</h2>
+  <div class="settings-table-wrap"><table class="desk-table">
+    <caption>문의 처리 흐름</caption>
+    <thead><tr><th scope="col">단계</th><th scope="col">기록</th><th scope="col">시각</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">수집</th><td>{{ event.channel }} · {{ event.source_message_id }}</td><td>{{ event.received_at|date:"Y/m/d H:i:s"|default:"미확인" }}</td></tr>
+      <tr><th scope="row">표준화</th><td>스키마 {{ event.schema_version|default:"미확인" }} · 본문 {{ event.body_version|default:"미확인" }}</td><td>{{ event.standardized_at|date:"Y/m/d H:i:s"|default:"미확인" }}</td></tr>
+      <tr><th scope="row">티켓</th><td>{% if event.ticket_uuid %}<a href="{% url 'tickets:detail' event.ticket_uuid %}">#{{ event.ticket_number }}</a>{% else %}미확인{% endif %}</td><td>{{ event.ticket_created_at|date:"Y/m/d H:i:s"|default:"미확인" }}</td></tr>
+      <tr><th scope="row">분류</th><td>감성 {{ event.sentiment_status|default:"미확인" }} · 카테고리 {{ event.category_status|default:"미확인" }}</td><td>—</td></tr>
+    </tbody>
+  </table></div>
+  <h3>피처 스냅샷</h3>
+  <div class="settings-table-wrap"><table class="desk-table">
+    <thead><tr><th scope="col">식별자</th><th scope="col">본문 버전</th><th scope="col">전처리 버전</th></tr></thead>
+    <tbody>{% for feature in features %}<tr><td>{{ feature.feature_uuid }}</td><td>{{ feature.body_version }}</td><td>{{ feature.preprocess_version }}</td></tr>{% empty %}<tr><td colspan="3">연결된 피처 스냅샷이 없습니다.</td></tr>{% endfor %}</tbody>
+  </table></div>
+  <h3>포함된 학습·평가 데이터셋</h3>
+  <div class="settings-table-wrap"><table class="desk-table">
+    <thead><tr><th scope="col">버전</th><th scope="col">용도</th><th scope="col">건수</th><th scope="col">확정 시각</th></tr></thead>
+    <tbody>{% for dataset in datasets %}<tr><td>{{ dataset.dataset_version }}</td><td>{{ dataset.purpose }}</td><td>{{ dataset.row_count|default_if_none:"미확인" }}</td><td>{{ dataset.finalized_at|date:"Y/m/d H:i:s"|default:"미확인" }}</td></tr>{% empty %}<tr><td colspan="4">연결된 데이터셋이 없습니다.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% elif not q and not notice %}
+<section class="settings-link-group">
+  <h2>최근 티켓</h2>
+  <div class="settings-table-wrap"><table class="desk-table">
+    <thead><tr><th scope="col">티켓</th><th scope="col">제목</th><th scope="col">접수 시각</th></tr></thead>
+    <tbody>{% for ticket in tickets %}<tr><td><a href="?view=event&amp;company={{ company|urlencode }}&amp;q={{ ticket.ticket_number|urlencode }}">#{{ ticket.ticket_number }}</a></td><td>{{ ticket.title }}</td><td>{{ ticket.created_at|date:"Y/m/d H:i" }}</td></tr>{% empty %}<tr><td colspan="3">조회할 티켓이 없습니다.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+{% elif view == "model" and not notice %}
+<section class="settings-link-group">
+  <h2>모델 학습 이력</h2>
+  <p class="desk-sub">조회 대상 회사의 학습·평가 데이터셋을 사용한 실행을 표시합니다.</p>
+  {% for run in runs %}
+  <details class="desk-card">
+    <summary>{{ run.workflow_ref }} · {{ run.model_name|default:"모델 미등록" }}{% if run.registry_version %} v{{ run.registry_version }}{% endif %}</summary>
+    <div class="settings-table-wrap"><table class="desk-table">
+      <caption>학습 데이터와 모델 연결</caption>
+      <thead><tr><th scope="col">항목</th><th scope="col">기록</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">시작 모델</th><td>{{ run.base_model_uri }}</td></tr>
+        <tr><th scope="row">학습 데이터셋</th><td>{{ run.train_version }} · {{ run.train_count|default_if_none:"미확인" }}건</td></tr>
+        <tr><th scope="row">학습 데이터 해시</th><td>{{ run.train_sha|default:"미확인" }}</td></tr>
+        <tr><th scope="row">평가 데이터셋</th><td>{{ run.eval_version }} · {{ run.eval_count|default_if_none:"미확인" }}건</td></tr>
+        <tr><th scope="row">평가 데이터 해시</th><td>{{ run.eval_sha|default:"미확인" }}</td></tr>
+        <tr><th scope="row">MLflow 실행</th><td>{{ run.mlflow_run_id|default:"미확인" }}</td></tr>
+        <tr><th scope="row">감성 Macro F1</th><td>{{ run.sentiment_macro_f1|default_if_none:"미확인" }}</td></tr>
+        <tr><th scope="row">카테고리 Macro F1</th><td>{{ run.category_macro_f1|default_if_none:"미확인" }}</td></tr>
+      </tbody>
+    </table></div>
+  </details>
+  {% empty %}<p role="status">등록된 학습 이력이 없습니다.</p>{% endfor %}
+</section>
+{% endif %}
+{% if previous_page or has_next %}
+<nav class="settings-toolbar" aria-label="조회 페이지">
+  {% if previous_page %}<a class="desk-button" href="?view={{ view }}&amp;company={{ company|urlencode }}&amp;page={{ previous_page }}">이전</a>{% endif %}
+  {% if has_next %}<a class="desk-button" href="?view={{ view }}&amp;company={{ company|urlencode }}&amp;page={{ next_page }}">다음</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}
