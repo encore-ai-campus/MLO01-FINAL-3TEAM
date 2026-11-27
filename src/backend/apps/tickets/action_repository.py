@@ -6,6 +6,8 @@ from apps.collaboration import repository as inbox_repository
 
 from config.database import fetch_rows
 
+from .status import STATUS_SQL
+
 
 CONDUCT = f"""
     ({TICKET_READ} AND EXISTS (
@@ -25,8 +27,8 @@ def can_conduct(cursor, actor):
 
 
 def lock_ticket(cursor, actor, ticket_uuid):
-    cursor.execute("""
-        SELECT t.ticket_uuid, t.status, t.assignee_uuid, t.csv_import_kind
+    cursor.execute(f"""
+        SELECT t.ticket_uuid, {STATUS_SQL} AS status, t.assignee_uuid, t.csv_import_kind
         FROM ticket t
         WHERE t.ticket_uuid=%s AND t.company_uuid=%s
           AND EXISTS (SELECT FROM visible_ticket v WHERE v.ticket_uuid=t.ticket_uuid)
@@ -73,11 +75,12 @@ def options(cursor, actor, ticket):
     cursor.execute(f"""
         SELECT s.staff_user_uuid, COALESCE(s.name,s.email) AS name, tm.name AS team
         FROM staff_user s LEFT JOIN team tm USING (company_uuid, team_uuid)
-        WHERE s.company_uuid=%s AND s.staff_user_uuid<>%s
-          AND s.staff_user_uuid IS DISTINCT FROM %s AND {CONDUCT}
+        WHERE s.company_uuid=%s AND {CONDUCT}
         ORDER BY name,s.staff_user_uuid
-    """, (actor["company_uuid"], actor["staff_user_uuid"], ticket["assignee_uuid"]))
-    recipients = fetch_rows(cursor)
+    """, (actor["company_uuid"],))
+    staff = fetch_rows(cursor)
+    excluded = {actor["staff_user_uuid"], ticket["assignee_uuid"]}
+    recipients = [person for person in staff if person["staff_user_uuid"] not in excluded]
     cursor.execute(f"""
         SELECT ch.review_channel_uuid,ch.name FROM ticket_review_channel ch
         WHERE ch.company_uuid=%s AND EXISTS (
@@ -85,7 +88,7 @@ def options(cursor, actor, ticket):
             WHERE m.review_channel_uuid=ch.review_channel_uuid AND s.staff_user_uuid<>%s AND {CONDUCT})
         ORDER BY ch.name,ch.review_channel_uuid
     """, (actor["company_uuid"], actor["staff_user_uuid"]))
-    return {"transfer_recipients": recipients, "review_channels": fetch_rows(cursor)}
+    return {"assignment_recipients": staff, "transfer_recipients": recipients, "review_channels": fetch_rows(cursor)}
 
 
 def quick_replies(cursor, actor, ticket_uuid):
@@ -132,7 +135,7 @@ def add_attachment(cursor, request, attachment):
         INSERT INTO collab_request_attachment
             (collab_request_uuid,original_filename,content_type,storage_key,size_bytes,content)
         VALUES (%s,%s,%s,%s,%s,%s)
-    """, (request, f"reference.{extension}", content_type, f"db:{request}", len(data), data))
+    """, (request, attachment.get("filename", f"reference.{extension}"), content_type, f"db:{request}", len(data), data))
 
 
 def inbox(cursor, actor, kind=None):
@@ -140,13 +143,42 @@ def inbox(cursor, actor, kind=None):
     return [row for row in rows if row["kind"] in ("transfer", "review") and (kind is None or row["kind"] == kind)]
 
 
-def request_attachment(cursor, actor, action_uuid):
+def request_attachment(cursor, actor, action_uuid, attachment_uuid=None):
     cursor.execute(f"""
         SELECT a.original_filename,a.content_type,a.content
         {inbox_repository.REQUEST_FROM}
         JOIN collab_request_attachment a USING (collab_request_uuid)
         WHERE r.recipient_uuid=%s AND t.company_uuid=%s AND r.collab_request_uuid=%s
-          AND a.content IS NOT NULL
+          AND a.content IS NOT NULL AND (%s::uuid IS NULL OR a.collab_request_attachment_uuid=%s)
         ORDER BY a.created_at,a.collab_request_attachment_uuid LIMIT 1
-    """, (actor["staff_user_uuid"], actor["company_uuid"], action_uuid))
+    """, (actor["staff_user_uuid"], actor["company_uuid"], action_uuid, attachment_uuid, attachment_uuid))
+    return next(iter(fetch_rows(cursor)), None)
+
+
+def retry_attachments(cursor, ticket_uuid, staff_uuid, message_uuid):
+    cursor.execute("""
+        SELECT a.filename, a.content_type, a.content
+        FROM ticket_message_attachment a JOIN ticket_message m USING(ticket_message_uuid)
+        WHERE m.ticket_message_uuid=%s AND m.ticket_uuid=%s AND m.staff_user_uuid=%s
+          AND m.message_type='reply' AND m.delivery_status='failed'
+        ORDER BY a.attachment_uuid
+    """, (message_uuid, ticket_uuid, staff_uuid))
+    return [dict(row, content=bytes(row["content"])) for row in fetch_rows(cursor)]
+
+
+def save_message_attachment(cursor, message_uuid, file):
+    cursor.execute("""
+        INSERT INTO ticket_message_attachment(ticket_message_uuid,filename,content_type,content)
+        VALUES (%s,%s,%s,%s)
+    """, (message_uuid, file["filename"], file["content_type"], file["content"]))
+
+
+def visible_message_attachment(cursor, actor, ticket_uuid, attachment_uuid, include_memos):
+    cursor.execute("""
+        SELECT a.filename, a.content_type, a.content
+        FROM visible_ticket t JOIN ticket_message m USING(ticket_uuid)
+        JOIN ticket_message_attachment a USING(ticket_message_uuid)
+        WHERE t.company_uuid=%s AND t.ticket_uuid=%s AND a.attachment_uuid=%s
+          AND (%s OR m.message_type<>'memo')
+    """, (actor["company_uuid"], ticket_uuid, attachment_uuid, include_memos))
     return next(iter(fetch_rows(cursor)), None)

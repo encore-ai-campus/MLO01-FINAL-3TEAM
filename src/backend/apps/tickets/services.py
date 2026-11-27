@@ -15,6 +15,11 @@ def add_memo(token, ticket_uuid, body):
         if not actor["can_read"]:
             raise DeskError(403, "TICKET_READ_FORBIDDEN", "티켓 조회 권한이 없습니다.")
         require_work_permission(cursor, actor, TICKET_HANDLE)
+        ticket = action_repository.lock_ticket(cursor, actor, ticket_uuid)
+        if ticket is None:
+            raise DeskError(404, "TICKET_NOT_FOUND", "티켓을 찾을 수 없습니다.")
+        if ticket["status"] == "문의 종료":
+            raise DeskError(409, "TICKET_CLOSED", "종료된 문의는 처리할 수 없습니다.")
         memo = repository.add_memo(cursor, actor["company_uuid"], actor["staff_user_uuid"], ticket_uuid, body)
         if memo is None:
             raise DeskError(404, "TICKET_NOT_FOUND", "티켓을 찾을 수 없습니다.")
@@ -35,6 +40,12 @@ class TicketDesk:
             raise DeskError(422, "INVALID_PERIOD", "시작일과 종료일을 포함해 최대 365일까지 조회할 수 있습니다.")
         assignee = self.actor["staff_user_uuid"] if query.scope == "mine" else None
         return repository.list_tickets(self._cursor, self.actor["company_uuid"], assignee, query)
+
+    def message_attachment(self, ticket_uuid, attachment_uuid):
+        can_conduct = action_repository.can_conduct(self._cursor, self.actor)
+        return action_repository.visible_message_attachment(
+            self._cursor, self.actor, ticket_uuid, attachment_uuid, can_conduct,
+        )
 
     def filter_options(self):
         return repository.filter_options(self._cursor, self.actor["company_uuid"])

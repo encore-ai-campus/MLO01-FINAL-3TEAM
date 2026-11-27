@@ -1,5 +1,7 @@
 from config.database import fetch_rows
 
+from .status import CLOSE_AT_SQL, STATUS_SQL
+
 SORTS = {
     "default": "t.created_at ASC",
     "received-asc": "t.created_at ASC",
@@ -7,9 +9,9 @@ SORTS = {
     "updated-asc": "t.updated_at ASC",
     "updated-desc": "t.updated_at DESC",
 }
-TICKET_COLUMNS = """
+TICKET_COLUMNS = f"""
     t.ticket_uuid, t.ticket_number, c.external_customer_id AS customer_id, t.title,
-    tm.name AS team_name, COALESCE(st.name, st.email) AS assignee_name, t.status,
+    tm.name AS team_name, COALESCE(st.name, st.email) AS assignee_name, {STATUS_SQL} AS status,
     cat.name AS category, t.category_status, t.category_review_reason, t.sentiment, t.sentiment_status,
     t.created_at, t.updated_at, ch.type AS channel
 """
@@ -37,7 +39,7 @@ def filter_options(cursor, company_uuid):
 
 
 def detail(cursor, company_uuid, ticket_uuid, include_memos=False, *, for_page=False):
-    customer_fields = ", c.name AS customer_name, c.email AS customer_email" if for_page else ""
+    customer_fields = f", c.name AS customer_name, c.email AS customer_email, ({CLOSE_AT_SQL}) AS close_at" if for_page else ""
     cursor.execute("SELECT " + TICKET_COLUMNS + ", t.customer_uuid,t.assignee_uuid,t.csv_import_kind"
                    + customer_fields + TICKET_FROM
                    + " WHERE t.ticket_uuid=%s AND t.company_uuid=%s", (str(ticket_uuid), company_uuid))
@@ -47,7 +49,7 @@ def detail(cursor, company_uuid, ticket_uuid, include_memos=False, *, for_page=F
     customer_uuid = ticket.pop("customer_uuid")
     cursor.execute(f"""
         SELECT t.ticket_uuid,t.ticket_number,m.sender_type,m.message_type,m.body,m.created_at,m.delivery_status,
-               {"m.staff_user_uuid," if for_page else ""}
+               {"m.staff_user_uuid,m.ticket_message_uuid," if for_page else ""}
                CASE WHEN m.sender_type='customer' THEN c.name ELSE s.name END AS author_name
         FROM visible_ticket t JOIN ticket_message m ON m.ticket_uuid=t.ticket_uuid
         JOIN customer c ON c.customer_uuid=t.customer_uuid AND c.company_uuid=t.company_uuid
@@ -73,8 +75,33 @@ def detail(cursor, company_uuid, ticket_uuid, include_memos=False, *, for_page=F
             AND peer.company_uuid=%s AND ch.type<>%s
         ORDER BY peer.created_at,peer.ticket_number
         """, (str(ticket_uuid), str(ticket_uuid), str(ticket_uuid), company_uuid, ticket["channel"]))
-    return {"ticket": ticket, "messages": messages, "memos": memos, "customer_tickets": related,
-            "duplicate_candidates": fetch_rows(cursor)}
+    result = {"ticket": ticket, "messages": messages, "memos": memos, "customer_tickets": related,
+              "duplicate_candidates": fetch_rows(cursor)}
+    if for_page:
+        visible_messages = messages + memos
+        cursor.execute("""
+            SELECT ticket_message_uuid, attachment_uuid, filename
+            FROM ticket_message_attachment WHERE ticket_message_uuid = ANY(%s::uuid[])
+            ORDER BY attachment_uuid
+        """, ([row["ticket_message_uuid"] for row in visible_messages],))
+        attachments = {}
+        for row in fetch_rows(cursor):
+            attachments.setdefault(row["ticket_message_uuid"], []).append(row)
+        for row in visible_messages:
+            row["attachments"] = attachments.get(row["ticket_message_uuid"], ())
+    if for_page and include_memos:
+        cursor.execute("""
+            SELECT 'staff' AS sender_type, 'transfer' AS message_type, e.transfer_reason AS body, e.created_at,
+                   coalesce(st.name, st.email) AS author_name
+            FROM visible_ticket t
+            JOIN ticket_event e USING (ticket_uuid)
+            JOIN event_type et USING (event_type_uuid)
+            LEFT JOIN staff_user st ON st.staff_user_uuid=e.actor_uuid AND st.company_uuid=t.company_uuid
+            WHERE t.ticket_uuid=%s AND t.company_uuid=%s AND et.code='ticket_transfer'
+              AND e.transfer_reason IS NOT NULL
+        """, (str(ticket_uuid), company_uuid))
+        result["transfer_notes"] = fetch_rows(cursor)
+    return result
 
 
 def summary_source(cursor, company_uuid, ticket_uuid):
@@ -120,7 +147,8 @@ def list_tickets(cursor, company_uuid, assignee_uuid, query):
         _id_filter(conditions, params, column, query.filters[key])
     for key in ("status", "sentiment"):
         if query.filters[key]:
-            conditions.append("t." + key + " = ANY(%s)")
+            column = f"({STATUS_SQL})" if key == "status" else "t.sentiment"
+            conditions.append(column + " = ANY(%s)")
             params.append(query.filters[key])
     if query.days is not None:
         today = "(now() AT TIME ZONE 'Asia/Seoul')::date"

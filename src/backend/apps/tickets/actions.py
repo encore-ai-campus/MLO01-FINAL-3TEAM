@@ -1,3 +1,4 @@
+import base64
 from contextlib import contextmanager
 
 from django.db import connection, transaction
@@ -29,6 +30,8 @@ def write_ticket(token, ticket_uuid):
         ticket = repo.lock_ticket(cursor, actor, ticket_uuid)
         if ticket is None:
             raise DeskError(404, "TICKET_NOT_FOUND", "티켓을 찾을 수 없습니다.")
+        if ticket["status"] == "문의 종료":
+            raise DeskError(409, "TICKET_CLOSED", "종료된 문의는 처리할 수 없습니다.")
         yield cursor, actor, ticket
 
 
@@ -46,27 +49,65 @@ def complete_ticket(token, ticket_uuid):
         transaction.on_commit(lambda: refill_after_completion(ticket_uuid), robust=True)
 
 
-def transfer(token, ticket_uuid, recipient, reason, attached_reply):
+def assign(token, ticket_uuid, recipient):
+    with write_ticket(token, ticket_uuid) as (cursor, actor, ticket):
+        if not actor["is_company_admin"]:
+            require_assignee(actor, ticket)
+        if repo.has_unsettled_reply(cursor, ticket_uuid):
+            raise DeskError(409, "DELIVERY_UNCERTAIN", "답변 발송 결과를 확인한 뒤 담당자를 변경해 주세요.")
+        cursor.execute(f"""
+            SELECT s.team_uuid FROM staff_user s
+            WHERE s.staff_user_uuid=%s AND s.company_uuid=%s AND {repo.CONDUCT}
+        """, (recipient, actor["company_uuid"]))
+        candidate = cursor.fetchone()
+        if candidate is None:
+            raise DeskError(422, "INVALID_RECIPIENT", "상담 권한이 있는 담당자를 선택해 주세요.")
+        if ticket["assignee_uuid"] == recipient:
+            return
+        cursor.execute("""
+            UPDATE ticket SET assignee_uuid=%s, assigned_team_uuid=%s, updated_at=now()
+            WHERE ticket_uuid=%s
+        """, (recipient, candidate[0], ticket_uuid))
+        cursor.execute("""
+            INSERT INTO event_type(code) VALUES ('ticket_manually_assigned') ON CONFLICT (code) DO NOTHING
+        """)
+        repo.add_event(cursor, ticket_uuid, actor, "ticket_manually_assigned", recipient=recipient)
+
+
+def transfer(token, ticket_uuid, recipient, reason, attached_reply, *, immediate=False, files=()):
     with write_ticket(token, ticket_uuid) as (cursor, actor, ticket):
         require_assignee(actor, ticket)
         if recipient == actor["staff_user_uuid"]:
             raise DeskError(422, "INVALID_RECIPIENT", "이관할 새 상담사를 선택해 주세요.")
         cursor.execute(f"""
-            SELECT FROM staff_user s
+            SELECT s.team_uuid FROM staff_user s
             WHERE s.staff_user_uuid=%s AND s.company_uuid=%s AND {repo.CONDUCT}
         """, (recipient, actor["company_uuid"]))
-        if cursor.fetchone() is None:
+        candidate = cursor.fetchone()
+        if candidate is None:
             raise DeskError(422, "INVALID_RECIPIENT", "이관할 새 상담사를 선택해 주세요.")
+        if immediate and repo.has_unsettled_reply(cursor, ticket_uuid):
+            raise DeskError(409, "DELIVERY_UNCERTAIN", "발송 결과를 확인한 뒤 이관해 주세요.")
         cursor.execute("""
             SELECT 1 FROM collab_request WHERE ticket_uuid=%s AND requester_uuid=%s
               AND request_type='transfer' AND status='pending' LIMIT 1
         """, (ticket_uuid, actor["staff_user_uuid"]))
         if cursor.fetchone() is not None:
             raise DeskError(409, "TRANSFER_PENDING", "이미 수락을 기다리는 이관 요청이 있습니다.")
-        request = repo.add_request(cursor, ticket_uuid, actor, recipient, "transfer", "pending", reason)
+        status = "accepted" if immediate else "pending"
+        request = repo.add_request(cursor, ticket_uuid, actor, recipient, "transfer", status, reason)
         if attached_reply:
             repo.add_attachment(cursor, request, {"content_type": "text/plain", "content": attached_reply})
-    return {"transfer_request_uuid": request, "status": "pending"}
+        for attachment in files:
+            repo.add_attachment(cursor, request, attachment)
+        if immediate:
+            cursor.execute("""
+                UPDATE ticket SET assignee_uuid=%s, assigned_team_uuid=%s, updated_at=now()
+                WHERE ticket_uuid=%s
+            """, (recipient, candidate[0], ticket_uuid))
+            repo.add_event(cursor, ticket_uuid, actor, "ticket_transfer", request=request,
+                           recipient=recipient, reason=reason)
+    return {"transfer_request_uuid": request, "status": status}
 
 
 def accept_transfer(token, ticket_uuid, request_uuid):
@@ -119,6 +160,24 @@ def request_review(token, ticket_uuid, channel, memo, attachment):
     return {"review_request_uuid": requests[0], "recipient_count": len(requests)}
 
 
+def request_staff_review(token, ticket_uuid, recipient, memo, attachment, *, files=()):
+    with write_ticket(token, ticket_uuid) as (cursor, actor, _):
+        cursor.execute(f"""
+            SELECT 1 FROM staff_user s
+            WHERE s.staff_user_uuid=%s AND s.company_uuid=%s
+              AND s.staff_user_uuid<>%s AND {repo.CONDUCT}
+        """, (recipient, actor["company_uuid"], actor["staff_user_uuid"]))
+        if cursor.fetchone() is None:
+            raise DeskError(422, "INVALID_RECIPIENT", "검토를 받을 상담사를 선택해 주세요.")
+        request = repo.add_request(cursor, ticket_uuid, actor, recipient, "review", "pending", memo)
+        if attachment:
+            repo.add_attachment(cursor, request, attachment)
+        for file in files:
+            repo.add_attachment(cursor, request, file)
+        repo.add_event(cursor, ticket_uuid, actor, "ticket_review_requested", request=request, recipient=recipient)
+    return {"review_request_uuid": request, "recipient_count": 1}
+
+
 def received_requests(token, kind=None):
     with read_snapshot() as cursor:
         actor = current_actor(token, cursor)
@@ -126,18 +185,18 @@ def received_requests(token, kind=None):
         return repo.inbox(cursor, actor, kind)
 
 
-def request_attachment(token, action_uuid):
+def request_attachment(token, action_uuid, attachment_uuid=None):
     with read_snapshot() as cursor:
         actor = current_actor(token, cursor)
         if not actor["can_read"]:
             raise DeskError(403, "TICKET_READ_FORBIDDEN", "티켓 조회 권한이 없습니다.")
-        attachment = repo.request_attachment(cursor, actor, action_uuid)
+        attachment = repo.request_attachment(cursor, actor, action_uuid, attachment_uuid)
         if attachment is None:
             raise DeskError(404, "ATTACHMENT_NOT_FOUND", "첨부 자료를 찾을 수 없습니다.")
         return attachment
 
 
-def store_message(token, ticket_uuid, message_type, body, request_key):
+def store_message(token, ticket_uuid, message_type, body, request_key, *, files=(), retry_message=None):
     with write_ticket(token, ticket_uuid) as (cursor, actor, ticket):
         if message_type == "reply":
             require_assignee(actor, ticket)
@@ -150,6 +209,12 @@ def store_message(token, ticket_uuid, message_type, body, request_key):
             ):
                 raise DeskError(409, "REQUEST_KEY_REUSED", "요청 키가 이미 다른 메시지에 사용됐습니다.")
             return {"message": existing, "ticket_status": ticket["status"]}
+
+        files = [dict(file, content=base64.b64decode(file["content"])) for file in files]
+        if retry_message and message_type == "reply":
+            files = repo.retry_attachments(cursor, ticket_uuid, actor["staff_user_uuid"], retry_message) + files
+        if sum(len(file["content"]) for file in files) > 10 * 1024 * 1024:
+            raise DeskError(422, "FILE_LIMIT_EXCEEDED", "첨부파일의 전체 크기는 10 MiB까지 허용됩니다.")
 
         source, status = None, None
         if message_type == "reply":
@@ -171,6 +236,8 @@ def store_message(token, ticket_uuid, message_type, body, request_key):
         """, (ticket_uuid, actor["staff_user_uuid"], body, message_type, status, request_key,
               status == "sending", ticket_uuid))
         message = fetch_rows(cursor)[0]
+        for file in files:
+            repo.save_message_attachment(cursor, message["ticket_message_uuid"], file)
         cursor.execute("UPDATE ticket SET updated_at=now() WHERE ticket_uuid=%s", (ticket_uuid,))
 
     if status != "sending":
@@ -178,7 +245,7 @@ def store_message(token, ticket_uuid, message_type, body, request_key):
 
     provider_id = None
     try:
-        provider_id = delivery.send_reply(source, body)
+        provider_id = delivery.send_reply(source, body, files=files) if files else delivery.send_reply(source, body)
         status = "sent"
     except delivery.DeliveryError as error:
         status = error.status
