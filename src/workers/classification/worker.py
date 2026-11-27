@@ -30,6 +30,7 @@ READY = Path("/tmp/worker-ready")
 class Release:
     version: str
     url: str
+    uses_customer_features: bool = False
 
     @classmethod
     def load(cls, prefix):
@@ -39,7 +40,7 @@ class Release:
         if (not version or parsed.scheme not in {"http", "https"} or not parsed.hostname
                 or parsed.username or parsed.password or parsed.query or parsed.fragment):
             raise ValueError(f"Invalid {prefix} release")
-        return cls(version, base)
+        return cls(version, base, os.environ.get(prefix + "_CUSTOMER_FEATURES") == "1")
 
 
 @dataclass(frozen=True)
@@ -74,13 +75,22 @@ def dispatch(cn, config):
             return False
         canary = row["analysis_kind"] == "sentiment" and bucket(config.company, row["event_id"]) < config.percent
         release = config.canary if canary else config.stable
+        if canary and release.uses_customer_features and not config.stable.uses_customer_features:
+            snapshot = cn.execute("""
+                SELECT 1 FROM voc.feature_snapshot
+                WHERE company_uuid=%(company_uuid)s AND silver_event_id=%(event_id)s
+                  AND preprocess_version=%(preprocess_version)s AND body_version=%(body_version)s
+            """, row).fetchone()
+            if snapshot is None:
+                canary, release = False, config.stable
         cn.execute("""
             INSERT INTO voc.classification_job
-                (company_uuid,event_id,preprocess_version,body_version,analysis_kind,queued_at,route,model_version,model_url)
+                (company_uuid,event_id,preprocess_version,body_version,analysis_kind,queued_at,route,model_version,model_url,uses_customer_features)
             VALUES (%(company_uuid)s,%(event_id)s,%(preprocess_version)s,%(body_version)s,%(analysis_kind)s,
-                    %(queued_at)s,%(route)s,%(model_version)s,%(model_url)s)
+                    %(queued_at)s,%(route)s,%(model_version)s,%(model_url)s,%(uses_customer_features)s)
             ON CONFLICT (company_uuid,event_id,preprocess_version,body_version,analysis_kind) DO NOTHING
-        """, {**row, "route": "canary" if canary else "stable", "model_version": release.version, "model_url": release.url})
+        """, {**row, "route": "canary" if canary else "stable", "model_version": release.version, "model_url": release.url,
+            "uses_customer_features": release.uses_customer_features})
         cn.execute("""
             UPDATE voc.ticket_analysis_outbox SET published_at=clock_timestamp()
             WHERE company_uuid=%(company_uuid)s AND event_id=%(event_id)s AND analysis_kind=%(analysis_kind)s
@@ -197,6 +207,18 @@ def claim(cn, config):
               AND preprocess_version=%(preprocess_version)s AND body_version=%(body_version)s
         """, job).fetchone()
         job.update(domain_id=str(ticket["domain_uuid"]), model_text=feature["model_text"])
+        if job["uses_customer_features"]:
+            job["snapshot"] = cn.execute("""
+                SELECT feature_uuid,title,body,unresolved_count,avg_first_reply_7d_seconds,available_at
+                FROM voc.feature_snapshot
+                WHERE company_uuid=%(company_uuid)s AND silver_event_id=%(event_id)s
+                  AND preprocess_version=%(preprocess_version)s AND body_version=%(body_version)s
+                  AND available_at<=clock_timestamp()
+            """, job).fetchone()
+            if job["snapshot"]:
+                cn.execute("""
+                    UPDATE voc.classification_job SET feature_uuid=%s WHERE request_id=%s
+                """, (job["snapshot"]["feature_uuid"],job["request_id"]))
         return True, job
 
 
@@ -211,6 +233,16 @@ def predict(job):
     request_id = str(job["request_id"])
     body = {"request_id": request_id, "analysis_kind": job["analysis_kind"],
             "model_text": job["model_text"], "domain_id": job["domain_id"]}
+    if job.get("uses_customer_features"):
+        from online_features import read_online
+
+        if not job["snapshot"]:
+            raise PredictionError("missing_feature_snapshot")
+        try:
+            online = read_online(job["snapshot"])
+        except Exception:
+            raise PredictionError("feature_store_error") from None
+        body.update(model_text=online.pop("body"),title=online.pop("title"),customer_features=online)
     request = Request(job["model_url"] + "/v1/predict", json.dumps(body).encode(), {"Content-Type": "application/json"})
     try:
         with urlopen(request, timeout=HTTP_TIMEOUT) as response:
