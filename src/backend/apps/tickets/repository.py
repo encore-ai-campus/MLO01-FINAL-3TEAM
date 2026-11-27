@@ -36,15 +36,18 @@ def filter_options(cursor, company_uuid):
     return {"teams": teams, "assignees": assignees, "categories": fetch_rows(cursor)}
 
 
-def detail(cursor, company_uuid, ticket_uuid, include_memos=False):
-    cursor.execute("SELECT " + TICKET_COLUMNS + ", t.customer_uuid,t.assignee_uuid,t.csv_import_kind " + TICKET_FROM
+def detail(cursor, company_uuid, ticket_uuid, include_memos=False, *, for_page=False):
+    customer_fields = ", c.name AS customer_name, c.email AS customer_email" if for_page else ""
+    cursor.execute("SELECT " + TICKET_COLUMNS + ", t.customer_uuid,t.assignee_uuid,t.csv_import_kind"
+                   + customer_fields + TICKET_FROM
                    + " WHERE t.ticket_uuid=%s AND t.company_uuid=%s", (str(ticket_uuid), company_uuid))
     ticket = next(iter(fetch_rows(cursor)), None)
     if ticket is None:
         return None
     customer_uuid = ticket.pop("customer_uuid")
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT t.ticket_uuid,t.ticket_number,m.sender_type,m.message_type,m.body,m.created_at,m.delivery_status,
+               {"m.staff_user_uuid," if for_page else ""}
                CASE WHEN m.sender_type='customer' THEN c.name ELSE s.name END AS author_name
         FROM visible_ticket t JOIN ticket_message m ON m.ticket_uuid=t.ticket_uuid
         JOIN customer c ON c.customer_uuid=t.customer_uuid AND c.company_uuid=t.company_uuid
