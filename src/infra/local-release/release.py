@@ -159,6 +159,13 @@ def release_training(sha, changed, undo):
     undo.callback(run, *KUBE, "-n", TRAIN, "patch", "workflowtemplate", TRAIN, "--type=json", "-p",
                   json.dumps([dict(op="replace", path="/spec", value=previous["spec"])]))
     run(*KUBE, "-n", TRAIN, "apply", "-f", "-", data=json.dumps(rendered))
+    if changed("src/ml/training/requirements.txt", "src/ml/training/Dockerfile"):
+        service = kube(TRAIN, "deployment", "mlflow")
+        container = next(c for c in service["spec"]["template"]["spec"]["containers"] if c["name"] == "mlflow")
+        update = [*KUBE, "-n", TRAIN, "set", "image", "deployment/mlflow"]
+        undo.callback(run, *update, "mlflow=" + container["image"])
+        run(*update, "mlflow=" + image)
+        run(*KUBE, "-n", TRAIN, "rollout", "status", "deployment/mlflow", "--timeout=180s")
 
 
 def pipeline(sha, changed, directory, undo):
@@ -242,6 +249,25 @@ for (company,) in companies:
     recent_workflows(company)
 print('MLflow, evaluation set and Argo API OK')"""
     run("docker","exec",WEB,"python","manage.py","shell","-v","0","-c",probe)
+    # Check both live routes directly, using synthetic text without creating a ticket.
+    domain = read("docker", "exec", "encore-voc-collector-postgres-1", "psql", "-XAt", "-U", "voc", "-d", "voc",
+                  "-c", "SELECT c.domain_uuid FROM public.company c JOIN public.staff_user s USING(company_uuid) "
+                        "WHERE s.role='super_admin' ORDER BY c.company_uuid LIMIT 1")
+    probe_model = """import json,os,sys,uuid
+from urllib.request import Request,urlopen
+for lane,kind in [('STABLE','sentiment'),('STABLE','category'),('CANARY','sentiment')]:
+    ref=str(uuid.uuid4())
+    body=dict(request_id=ref,domain_id=sys.argv[1],analysis_kind=kind,model_text='배송 예정일을 알려 주세요.')
+    if os.environ.get(lane+'_CUSTOMER_FEATURES')=='1':
+        body.update(title=None, customer_features=dict(unresolved_count=0,avg_first_reply_7d_seconds=None))
+    req=Request(os.environ[lane+'_URL']+'/v1/predict',json.dumps(body).encode(),{'Content-Type':'application/json'})
+    with urlopen(req,timeout=15) as response:
+        data=json.load(response)
+    assert (data['request_id'],data['analysis_kind'],data['model_version'])==(ref,kind,os.environ[lane+'_MODEL_VERSION'])
+    print(lane, kind, data['model_version'])
+"""
+    run(*KUBE, "-n", "voc-live-ml", "exec", "deployment/" + APP + "-worker", "-c", "worker", "--",
+        "python", "-c", probe_model, domain)
     for name in ("discord","gmail","postgres","kafka","publish","db-worker","jobmanager","taskmanager","metrics"):
         state = json.loads(read("docker","inspect","-f","{{json .State}}",f"encore-voc-collector-{name}-1"))
         if not state["Running"] or state.get("Health",{}).get("Status","healthy") != "healthy":
@@ -286,7 +312,13 @@ def main(previous, sha):
         verify()
         if read("docker","inspect","-f",'{{index .Config.Labels "org.opencontainers.image.revision"}}',WEB) != sha:
             raise RuntimeError("Unexpected running revision")
-        put(LIVE / "klue/web-current.json", profile)
+        recovery = LIVE / "klue/web-current.json"
+        undo.callback(atomic, recovery, recovery.read_bytes())
+        put(recovery, profile)
+        saved_app = LIVE / "klue/application.json"
+        local_app = json.loads(saved_app.read_bytes())
+        local_app["spec"]["source"] = kube("argocd", "application", APP)["spec"]["source"]
+        put(saved_app, local_app)
         undo.pop_all()
 
 
