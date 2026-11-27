@@ -1,0 +1,143 @@
+{% extends "preferences/base.html" %}
+{% load static %}
+{% block title %}모델 교체 검토{% endblock %}
+{% block styles %}{{ block.super }}<link rel="stylesheet" href="{% static 'preferences/model-operations.css' %}">{% endblock %}
+{% block settings_content %}
+<div class="desk-heading"><h1>모델 교체 검토</h1></div>
+{% include "preferences/model_operation_tabs.html" with section="review" %}
+<div class="ops-stack">
+  <section class="desk-card ops-panel ops-workspaces" aria-labelledby="review-scope-heading">
+    <div class="ops-heading"><h2 id="review-scope-heading">판정 업무</h2>{% if grafana_url %}<a class="settings-inline-link" href="{{ grafana_url }}" target="_blank" rel="noopener">Grafana 운영 기록 열기 ↗</a>{% endif %}</div>
+    <nav class="ops-scopes" aria-label="판정 업무">
+      {% for item in scope_tabs %}<a href="{{ item.url }}" {% if item.current %}aria-current="page"{% endif %}>{{ item.name }}</a>{% endfor %}
+    </nav>
+    <details class="ops-domains" {% if domain_error %}open{% endif %}>
+      <summary>회사 사용 도메인 설정</summary>
+      <form method="post" class="ops-domain-form">
+        {% csrf_token %}
+        <input type="hidden" name="scope" value="{{ scope }}"><input type="hidden" name="domain" value="{{ domain }}"><input type="hidden" name="pair" value="{{ pair }}">
+        <input type="hidden" name="action" value="save_domains"><input type="hidden" name="domain_revision" value="{{ data.domain_revision }}">
+        <fieldset><legend>세부유형을 검토할 도메인</legend>
+          <p class="desk-sub">감성은 회사 공통으로 사용합니다. 세부유형을 사용할 도메인을 모두 선택하세요.</p>
+          <div class="ops-domain-choices">
+            {% for item in data.domains %}<label><input type="checkbox" name="domains" value="{{ item.code }}" {% if item.enabled %}checked{% endif %}> {{ item.name }}</label>{% endfor %}
+          </div>
+        </fieldset>
+        <button class="desk-button" type="submit">사용 도메인 저장</button>
+      </form>
+    </details>
+  </section>
+  {% if saved %}<p class="ops-message" role="status">{% if domains_saved %}이 회사에서 사용할 도메인을 저장했습니다.{% else %}{{ data.scope_name }}의 모델과 교체 기준을 저장했습니다.{% endif %}</p>{% endif %}
+  {% if error %}<p class="ops-message is-error" role="alert">{{ error }}{% if conflict %} <a class="settings-inline-link" href="{{ current_url }}">저장된 설정 다시 열기</a>{% endif %}</p>{% endif %}
+  <nav class="ops-pairs" aria-label="평가 대상">
+    <a href="{{ saved_url }}" {% if pair == "saved" %}aria-current="page"{% endif %}>저장된 모델 비교</a>
+    {% if data.original_available %}<a href="{{ original_url }}" {% if pair == "original" %}aria-current="page"{% endif %}>원본 v1 · A.X 평가</a>{% endif %}
+  </nav>
+  {% if pair == "original" %}
+  <section class="desk-card ops-panel ops-archive" aria-labelledby="original-results-heading">
+    <div class="ops-heading">
+      <h2 id="original-results-heading">{{ data.scope_name }} 원본 평가</h2>
+      <span class="desk-sub">학습 데이터와 겹치는 항목을 제외한 검증셋 · {{ original_scores.samples }}건</span>
+    </div>
+    {% if original_scores.macro %}
+    <div class="ops-original-models" aria-label="원본 모델별 Macro-F1">
+      <div><h3>KLUE-BERT v1</h3><p><strong>{{ original_scores.macro.stable }}</strong><span>Macro-F1</span></p></div>
+      <div><h3>A.X</h3><p><strong>{{ original_scores.macro.candidate }}</strong><span>Macro-F1</span></p></div>
+    </div>
+    {% endif %}
+    <div class="ops-offline-verdict">
+      <p><strong>{{ data.decision.title }}</strong> · {{ data.decision.reason }}</p>
+      <p class="desk-sub">Macro-F1 기준 {{ original_scores.macro.criterion }}</p>
+      {% if original_scores.negative_lower %}<p class="desk-sub">부정 재현율 신뢰하한 · v1 {{ original_scores.negative_lower.stable }} · A.X {{ original_scores.negative_lower.candidate }} · 기준 {{ original_scores.negative_lower.criterion }}</p>{% endif %}
+    </div>
+    <h3>유형별 재현율과 적용 기준</h3>
+    <div class="settings-table-wrap">
+      <table class="desk-table ops-evidence ops-original-evidence">
+        <thead><tr><th scope="col">유형</th><th scope="col">KLUE-BERT v1 재현율</th><th scope="col">A.X 재현율</th><th scope="col">재현율 하한</th><th scope="col">최소 정답 표본</th><th scope="col">최대 누락</th><th scope="col">A.X 판정</th></tr></thead>
+        <tbody>{% for label in original_scores.scores %}
+          <tr><th scope="row">{{ label.name }}</th><td>{{ label.stable }}</td><td>{{ label.candidate }}</td>
+            <td>{{ label.min_recall }}%</td><td>{{ label.min_samples }}건</td><td>{% if label.max_missed != None %}{{ label.max_missed }}건{% else %}미설정{% endif %}</td>
+            <td><span class="ops-result" data-status="{{ label.status }}">{{ label.status }}</span></td></tr>
+        {% endfor %}</tbody>
+      </table>
+    </div>
+    <a class="settings-inline-link" href="{{ saved_url }}&amp;edit=labels#type-policy">{{ data.scope_name }} 유형별 기준 조정</a>
+  </section>
+  {% else %}
+  <section class="desk-card ops-summary" aria-label="모델 교체 판정">
+    <div class="ops-heading">
+      <h2>{{ data.scope_name }} · {% if preview %}저장 전 판정 미리보기{% else %}저장된 기준의 판정{% endif %}</h2>
+      <span class="desk-sub">{{ data.as_of|date:"Y.m.d H:i" }} 한국시간</span>
+    </div>
+    <p class="ops-headline">{{ data.decision.title }}</p>
+    <p class="ops-reason">{{ data.decision.reason }}</p>
+    {% if highlights %}
+      <ul class="ops-highlights" aria-label="주요 판정 근거">
+        {% for item in highlights %}<li><div><span class="ops-result" data-status="{{ item.status }}">{{ item.status }}</span> <strong>{{ item.label }}</strong></div>
+          <div class="ops-measured">기존 <b>{{ item.stable }}</b><span>→</span>후보 <b>{{ item.candidate }}</b></div>
+          <p>기준 {{ item.criterion }}</p></li>{% endfor %}
+      </ul>
+    {% endif %}
+    {% if preview %}<p class="ops-preview-note">저장된 판정 <strong>{{ before.title }}</strong> → 변경 시 <strong>{{ data.decision.title }}</strong></p>{% endif %}
+    <a class="settings-inline-link" href="#policy-settings">모델과 교체 기준 설정으로 이동 ↓</a>
+  </section>
+  <section class="desk-card ops-panel">
+    <h2>판정 근거</h2>
+    {% if scope == "category" %}<p class="desk-sub ops-evidence-note">세부유형의 품질은 이 도메인의 고정 평가셋으로 비교합니다. 운영 지표는 이 도메인에 실제로 배정된 모델 호출을 집계합니다.</p>{% endif %}
+    <div class="settings-table-wrap">
+      <table class="desk-table ops-evidence">
+        <thead><tr><th scope="col">지표</th><th scope="col">기존 모델{% if baseline_name %}<small>{{ baseline_name }}</small>{% endif %}</th><th scope="col">후보 모델{% if candidate_name %}<small>{{ candidate_name }}</small>{% endif %}</th><th scope="col">판정 기준</th><th scope="col">결과</th></tr></thead>
+        <tbody>{% for row in rows %}<tr><th scope="row">{{ row.label }}</th><td>{{ row.stable }}</td><td>{{ row.candidate }}</td><td>{{ row.criterion }}</td><td><span class="ops-result" data-status="{{ row.status }}">{{ row.status }}</span></td></tr>{% endfor %}</tbody>
+      </table>
+    </div>
+  </section>
+  <form method="post" class="settings-form desk-card ops-panel ops-policy" id="policy-settings" aria-labelledby="policy-title">
+    {% csrf_token %}<input type="hidden" name="revision" value="{{ selected.revision }}"><input type="hidden" name="scope" value="{{ scope }}"><input type="hidden" name="domain" value="{{ domain }}">
+    <h2 id="policy-title">{{ data.scope_name }} 모델과 교체 기준</h2>
+    <details class="ops-rule" {% if not selected.candidate_uri or error %}open{% endif %}>
+      <summary><span class="ops-rule-copy"><strong>어떤 두 모델을 비교할까요?</strong>
+        <span class="ops-rule-summary">{{ selected.baseline_uri|default:"기존 모델 선택" }} → {{ selected.candidate_uri|default:"후보 모델 선택" }}</span></span><span class="ops-edit">비교 대상 선택</span></summary>
+      <div class="ops-rule-body ops-inputs">
+        <div class="ops-model-column"><h3>기존 모델</h3>
+          <label class="ops-field">등록 모델 버전<select name="baseline_uri"><option value="">선택하세요</option>{% for item in data.models %}<option value="{{ item.uri }}" {% if selected.baseline_uri == item.uri %}selected{% endif %}>{{ item.label }}</option>{% endfor %}</select></label>
+          <label class="ops-field">배포된 모델 버전<input type="text" name="baseline_served" maxlength="100" value="{{ selected.baseline_served|default_if_none:'' }}" placeholder="호출 기록의 모델 버전"></label>
+        </div>
+        <div class="ops-model-column"><h3>후보 모델</h3>
+          <label class="ops-field">등록 모델 버전<select name="candidate_uri"><option value="">선택하세요</option>{% for item in data.models %}<option value="{{ item.uri }}" {% if selected.candidate_uri == item.uri %}selected{% endif %}>{{ item.label }}</option>{% endfor %}</select></label>
+          <label class="ops-field">배포된 모델 버전<input type="text" name="candidate_served" maxlength="100" value="{{ selected.candidate_served|default_if_none:'' }}" placeholder="호출 기록의 모델 버전"></label>
+        </div>
+        <p class="desk-sub ops-wide">{% if not data.models %}학습이 끝나면 등록 모델을 선택할 수 있습니다. {% endif %}학습 지표는 등록 모델 버전, 운영 지표는 해당 배포 버전의 호출 기록을 사용합니다.</p>
+      </div>
+    </details>
+    {% for group in groups %}
+      <details class="ops-rule" {% if error %}open{% endif %}>
+        <summary><span class="ops-rule-copy"><strong>{{ group.title }}</strong><span class="ops-rule-summary">
+          {% for field in group.fields %}<span>{{ field.label }} <b>{% if field.saved_value != None %}{{ field.saved_value }}{{ field.unit }}{% else %}미설정{% endif %}</b></span>{% endfor %}
+        </span></span><span class="ops-edit">기준 조정</span></summary>
+        <div class="ops-rule-body">
+          <p class="desk-sub">{{ group.window }}</p>
+          <div class="ops-inputs">{% for field in group.fields %}<label class="ops-field">{{ field.label }}{% if field.unit %} ({{ field.unit }}){% endif %}
+            <input type="number" name="{{ field.key }}" value="{{ field.input_value|default_if_none:'' }}" step="{{ field.step|default:'any' }}" {% if field.min != None %}min="{{ field.min }}"{% endif %} {% if field.max != None %}max="{{ field.max }}"{% endif %} {% if not field.optional %}required{% else %}placeholder="미설정"{% endif %}>
+          </label>{% endfor %}</div>
+        </div>
+      </details>
+    {% endfor %}
+    {% if labels %}
+      <details id="type-policy" class="ops-rule" {% if error or edit_labels %}open{% endif %}>
+        <summary><span class="ops-rule-copy"><strong>유형별로 지킬 기준은 무엇인가요?</strong><span class="ops-rule-summary">각 유형의 재현율·최소 정답 표본·누락 허용 건수</span></span><span class="ops-edit">유형별 조정</span></summary>
+        <input type="hidden" name="labels_present" value="1">
+        <div class="ops-rule-body settings-table-wrap"><table class="desk-table ops-label-table">
+          <thead><tr><th scope="col">유형 / 기준 적용</th><th scope="col">최소 재현율 (%)</th><th scope="col">최소 정답 표본 (건)</th><th scope="col">최대 누락 (건)</th></tr></thead>
+          <tbody>{% for label in labels %}<tr><th scope="row"><label><input type="checkbox" name="enabled__{{ label.code }}" {% if label.enabled %}checked{% endif %}> {{ label.name }}</label></th>
+            <td><input type="number" name="recall__{{ label.code }}" min="0" max="100" step="0.01" aria-label="{{ label.name }} 최소 재현율" value="{{ label.min_recall }}" required></td>
+            <td><input type="number" name="samples__{{ label.code }}" min="1" max="1000000" aria-label="{{ label.name }} 최소 정답 표본" value="{{ label.min_samples }}" required></td>
+            <td><input type="number" name="missed__{{ label.code }}" min="0" max="1000000" aria-label="{{ label.name }} 최대 누락" value="{{ label.max_missed|default_if_none:'' }}" placeholder="미설정"></td></tr>{% endfor %}</tbody>
+        </table></div>
+      </details>
+    {% endif %}
+    <div class="settings-actions"><button class="desk-button" type="submit" name="action" value="preview">저장 전 미리보기</button>
+      <button class="desk-button desk-button-solid" type="submit" name="action" value="save" {% if conflict %}disabled{% endif %}>교체 기준 저장</button></div>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

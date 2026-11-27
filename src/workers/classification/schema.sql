@@ -62,3 +62,29 @@ CREATE INDEX IF NOT EXISTS classification_assignment_queue
 
 ALTER TABLE voc.classification_job ADD COLUMN IF NOT EXISTS uses_customer_features boolean NOT NULL DEFAULT false;
 ALTER TABLE voc.classification_job ADD COLUMN IF NOT EXISTS feature_uuid uuid;
+ALTER TABLE voc.classification_attempt ADD COLUMN IF NOT EXISTS http_ms double precision
+    CHECK (http_ms>=0 AND http_ms<'Infinity'::double precision);
+-- Billing integrations can attach measured per-attempt cost in KRW.
+ALTER TABLE voc.classification_attempt ADD COLUMN IF NOT EXISTS cost_krw numeric CHECK (cost_krw>=0);
+CREATE INDEX IF NOT EXISTS classification_company_window ON voc.classification_job(company_uuid,analysis_kind,model_version);
+CREATE INDEX IF NOT EXISTS classification_attempt_window ON voc.classification_attempt(started_at);
+
+-- Jobs may retry on stable after a rollback. Keep the actual target of each attempt.
+ALTER TABLE voc.classification_attempt ADD COLUMN IF NOT EXISTS assigned_route text;
+ALTER TABLE voc.classification_attempt ADD COLUMN IF NOT EXISTS assigned_version text;
+UPDATE voc.classification_attempt a SET assigned_route=j.route, assigned_version=j.model_version
+FROM voc.classification_job j WHERE j.request_id=a.request_id AND a.assigned_route IS NULL;
+
+-- A trip stays latched across worker restarts and rolling deploys of the same candidate.
+CREATE TABLE IF NOT EXISTS voc.classification_rollout (
+    company_uuid uuid NOT NULL REFERENCES public.company,
+    scope_key text NOT NULL,
+    candidate_version text NOT NULL,
+    stable_version text NOT NULL,
+    configured_percent smallint NOT NULL CHECK (configured_percent BETWEEN 0 AND 100),
+    failures jsonb NOT NULL DEFAULT '{}',
+    first_failure_at timestamptz,
+    tripped_at timestamptz,
+    reason text,
+    PRIMARY KEY (company_uuid, scope_key, candidate_version)
+);

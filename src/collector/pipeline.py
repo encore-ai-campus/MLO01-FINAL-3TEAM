@@ -23,19 +23,16 @@ MAX_BYTES = 64 * 1024 * 1024
 
 
 def db():
-    return psycopg.connect(host="postgres", dbname="voc", user="voc",
+    return psycopg.connect(os.environ.get("DATABASE_URL", "postgresql://voc@postgres/voc"),
                            password=Path("/run/secrets/postgres_password").read_text().strip(),
                            row_factory=dict_row, autocommit=True)
 
 
 def init():
     with db() as cn, cn.transaction():
-        cn.execute(Path(__file__).with_name("schema.sql").read_text())
-        cn.execute(Path(__file__).with_name("ticket_schema.sql").read_text())
-        cn.execute(Path(__file__).with_name("training_schema.sql").read_text())
-        cn.execute(Path(__file__).with_name("channel_intake_schema.sql").read_text())
-        cn.execute(Path(__file__).with_name("settings_schema.sql").read_text())
-        cn.execute(Path(__file__).with_name("followup_schema.sql").read_text(encoding="utf-8"))
+        manifest = Path(__file__).with_name("schema-order.txt")
+        for script in manifest.read_text(encoding="utf-8").splitlines():
+            cn.execute((manifest.parent.parent / script).read_text(encoding="utf-8"))
     admin = AdminClient({"bootstrap.servers": BROKERS})
     topics = (*RAW, REQUEST, STANDARD, REVIEW)
     jobs = admin.create_topics([NewTopic(topic, 1, 1, config={"max.message.bytes": str(MAX_BYTES)})

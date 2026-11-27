@@ -72,6 +72,8 @@ spec:
             {{- end }}
             - name: SENTIMENT_CANARY_PERCENT
               value: {{ .Values.routing.sentiment.canaryPercent | quote }}
+            - name: CATEGORY_CANARY_PERCENT
+              value: {{ .Values.routing.category.canaryPercent | quote }}
           readinessProbe:
             exec: {command: ["test", "-f", "/tmp/worker-ready"]}
             periodSeconds: 3

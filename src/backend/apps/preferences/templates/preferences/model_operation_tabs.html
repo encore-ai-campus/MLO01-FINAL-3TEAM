@@ -1,0 +1,5 @@
+<nav class="settings-toolbar" aria-label="모델 관리">
+  <a class="desk-button" href="{% url 'preferences:model-training' %}" {% if section == 'training' %}aria-current="page"{% endif %}>모델 학습</a>
+  <a class="desk-button" href="{% url 'preferences:retraining-schedule' %}" {% if section == 'schedule' %}aria-current="page"{% endif %}>자동 재학습</a>
+  <a class="desk-button" href="{% url 'preferences:model-review' %}" {% if section == 'review' %}aria-current="page"{% endif %}>모델 교체 검토</a>
+</nav>

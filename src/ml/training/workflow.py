@@ -147,9 +147,11 @@ def train(cn, args, progress=NO_PROGRESS):
                 "features": list(MODEL_FIELDS), "preprocess_version": PREPROCESS_VERSION}, "datasets.json")
             from .model import fit
 
+            review_counts = {}
             metrics = fit(record["base_model_uri"], str(train_set["company_uuid"]),
-                train_rows, eval_rows, config, output, progress=progress, **options)
+                train_rows, eval_rows, config, output, progress=progress, review_counts=review_counts, **options)
             mlflow.log_metrics(metrics)
+            mlflow.log_dict(review_counts, "evaluation-counts.json")
             here = Path(__file__).resolve().parent
             with progress.stage("model_save") as saved:
                 logged = mlflow.pyfunc.log_model(
@@ -164,9 +166,11 @@ def train(cn, args, progress=NO_PROGRESS):
                     ])), pip_requirements=["mlflow==3.6.0", "torch==2.9.1", "transformers==4.57.3"],
                 )
                 cn.execute("""
-                    UPDATE voc.training_run SET logged_model_uri=%s,sentiment_macro_f1=%s,category_macro_f1=%s
+                    UPDATE voc.training_run SET logged_model_uri=%s,sentiment_macro_f1=%s,category_macro_f1=%s,
+                        review_counts=%s::jsonb
                     WHERE workflow_ref=%s
-                """, (logged.model_uri, metrics["sentiment_macro_f1"], metrics["category_macro_f1"], args.workflow_ref))
+                """, (logged.model_uri, metrics["sentiment_macro_f1"], metrics["category_macro_f1"],
+                      json.dumps(review_counts), args.workflow_ref))
                 if logged.artifact_path.startswith("s3://"):
                     saved["paths"] = {"model": logged.artifact_path}
             return logged.model_uri
@@ -186,11 +190,15 @@ def _metadata_frame(dataset):
 
 
 def register_candidate(cn, ref, progress=NO_PROGRESS):
-    with workflow_lock(cn, ref), progress.stage("registry") as result:
+    with workflow_lock(cn, ref), workflow_lock(cn, "voc-training-register/"+ref), progress.stage("registry") as result:
         model = cn.execute("SELECT * FROM voc.model_version WHERE workflow_ref=%s", (ref,)).fetchone()
         if model:
             result["state"] = "reused"
             return f"models:/{model['model_name']}/{model['registry_version']}"
+        if cn.execute("SELECT to_regclass('voc.training_stop_request') AS stop_table").fetchone()["stop_table"]:
+            if cn.execute("""SELECT 1 FROM voc.training_stop_request WHERE workflow_uid=%s
+                             AND state IN ('requested','stopped')""", (ref,)).fetchone():
+                raise ValueError("Model registration was stopped by a TiCats administrator")
         run = run_record(cn, ref)
         if not run["logged_model_uri"] or run["sentiment_macro_f1"] is None or run["category_macro_f1"] is None:
             raise ValueError("Candidate has not completed training and evaluation")

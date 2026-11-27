@@ -1,0 +1,48 @@
+services:
+  stable-model: &model
+    image: voc-model:local
+    build: ./src/ml/serving
+    restart: unless-stopped
+    volumes:
+      - ${VOC_STABLE_MODEL_DIR:?Set the stable checkpoint directory}:/models/checkpoint:ro
+      - ${VOC_DOMAIN_MAP_FILE:?Set the domain mapping file}:/models/domains.json:ro
+    environment: &model-env
+      MODEL_VERSION: ${STABLE_MODEL_VERSION:?Set the stable release ID}
+      MODEL_PATH: /models/checkpoint
+      MODEL_DOMAIN_MAP: /models/domains.json
+      OMP_NUM_THREADS: "2"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz',timeout=3).close()"]
+      interval: 5s
+      start_period: 90s
+      timeout: 4s
+      retries: 6
+  canary-model:
+    <<: *model
+    environment:
+      <<: *model-env
+      MODEL_VERSION: ${CANARY_MODEL_VERSION:?Set the candidate release ID}
+      MODEL_ANALYSIS_KINDS: ${CANARY_ANALYSIS_KINDS:-sentiment}
+    volumes:
+      - ${VOC_CANARY_MODEL_DIR:?Set the candidate checkpoint directory}:/models/checkpoint:ro
+      - ${VOC_DOMAIN_MAP_FILE:?Set the domain mapping file}:/models/domains.json:ro
+  classification-worker:
+    image: voc-classification-worker:local
+    build: ./src/workers/classification
+    restart: unless-stopped
+    init: true
+    command: ["run"]
+    environment:
+      DATABASE_URL: ${VOC_WORKER_DB_URL:-postgresql://voc@postgres/voc}
+      PGPASSWORD_FILE: /run/secrets/postgres_password
+      DEMO_COMPANY_UUID: ${VOC_CLASSIFICATION_COMPANY:?Set the company's UUID}
+      STABLE_MODEL_VERSION: ${STABLE_MODEL_VERSION}
+      CANARY_MODEL_VERSION: ${CANARY_MODEL_VERSION}
+      STABLE_URL: http://stable-model:8080
+      CANARY_URL: http://canary-model:8080
+      SENTIMENT_CANARY_PERCENT: ${SENTIMENT_CANARY_PERCENT:-0}
+      CATEGORY_CANARY_PERCENT: ${CATEGORY_CANARY_PERCENT:-0}
+    secrets: [postgres_password]
+    depends_on:
+      init-db-topics: {condition: service_completed_successfully}
+      stable-model: {condition: service_healthy}

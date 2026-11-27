@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import os
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import boto3
@@ -16,19 +17,9 @@ from workers.classification.online_features import FEATURES, FEATURE_REFS, store
 
 from .progress import NO_PROGRESS
 
-SCHEMA = pa.schema([
-    (name, dtype)
-    for names, dtype in (
-        (("feature_uuid", "domain_uuid", "ticket_uuid", "bronze_event_id", "silver_event_id",
-          "source_conversation", "seed_ref", "title", "body", "text_sha256", "calculation_version",
-          "calculation_sources", "sentiment_label_uuid", "sentiment_value", "sentiment_evidence",
-          "category_label_uuid", "category_uuid", "category_evidence"), pa.string()),
-        (("received_at", "available_at", "as_of_at"), pa.timestamp("us", tz="UTC")),
-        (("silver_schema_version", "body_version", "preprocess_version", "unresolved_count"), pa.int64()),
-        (("avg_first_reply_7d_seconds",), pa.float64()),
-    )
-    for name in names
-])
+_types = {str(t): t for t in (pa.string(), pa.timestamp("us", tz="UTC"), pa.int64(), pa.float64())}
+_contract = Path(__file__).resolve().parents[2] / "contracts/training-snapshot.json"
+SCHEMA = pa.schema([(name, _types[kind]) for kind, names in json.loads(_contract.read_text()).items() for name in names])
 
 
 def database():

@@ -155,19 +155,23 @@ class SettingsTests(TestCase):
 
         def version(name, role, company=None):
             tags = [{"key": "voc_training_input", "value": role}]
+            if role == "encoder":
+                tags.append({"key": "source_revision", "value": "77c8b3d707df785034b4e50f2da5d37be5f0f546"})
             if company:
                 tags.append({"key": "company_uuid", "value": company})
             return {"name": name, "version": "1", "status": "READY", "tags": tags}
 
         models = {"model_versions": [
             version("base", "encoder"), version("company", "multitask", self.company),
-            version("foreign", "multitask", self.other_company), version("legacy", "legacy"),
+            version("foreign", "multitask", self.other_company), version("legacy", "legacy"), version("missing", "encoder"),
         ]}
         created = {}
         submissions = []
         tokens = []
 
         def request(url, token, data=None):
+            if "/get-download-uri?" in url:
+                return {"artifact_uri": "s3://models/missing" if "name=missing" in url else "s3://models/ready"}
             if url.startswith("http://mlflow.test/"):
                 return models
             tokens.append(token)
@@ -188,7 +192,7 @@ class SettingsTests(TestCase):
             })
             return created
 
-        with patch("apps.preferences.training.request_json", side_effect=request), patch(
+        with patch("apps.preferences.training_inputs.model_files_available", side_effect=lambda uri, role: uri.endswith("/ready")), patch("apps.preferences.training.request_json", side_effect=request), patch(
             "apps.preferences.presentation.training.evaluation_sets", return_value=[("eval-v1", "eval-v1 (1건)")],
         ) as datasets:
             opened = client.get(page)
@@ -197,6 +201,7 @@ class SettingsTests(TestCase):
             self.assertContains(opened, "models:/company/1")
             self.assertNotContains(opened, "models:/foreign/1")
             self.assertNotContains(opened, "models:/legacy/1")
+            self.assertNotContains(opened, "models:/missing/1")
             params = {"request_id": str(uuid4()), "as_of_at": "2025-11-20T10:05",
                       "model": "models:/base/1", "eval_dataset": "eval-v1"}
             for forged in ({"model": "models:/foreign/1"}, {"eval_dataset": "eval-v2"}):

@@ -14,6 +14,12 @@ import worker
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_cost_is_recorded_only_when_the_endpoint_reports_a_valid_amount(self):
+        self.assertIsNone(worker.billed_cost({}))
+        for value in ("-1", "NaN", "Infinity", "bad"):
+            self.assertIsNone(worker.billed_cost({"X-Inference-Cost-KRW": value}))
+        self.assertEqual(str(worker.billed_cost({"X-Inference-Cost-KRW": "0.0125"})), "0.0125")
+
     def test_rejects_undocumented_labels_wrong_version_and_wrong_correlation(self):
         job = {"model_url": "http://fixture", "request_id": uuid4(), "domain_id": str(uuid4()),
                "analysis_kind": "sentiment", "model_version": "stub-v1", "model_text": "샘플"}
@@ -41,9 +47,21 @@ class WorkerTests(unittest.TestCase):
         cls.cn = psycopg.connect(dsn, dbname=database, autocommit=True, row_factory=dict_row)
         cls.addClassCleanup(cls.cn.close)
         src = Path(__file__).resolve().parents[2]
-        for path in [src/"collector/schema.sql", src/"collector/ticket_schema.sql", Path(worker.__file__).with_name("schema.sql")]:
+        manifest=(src/"collector/schema-order.txt").read_text(encoding="utf-8").splitlines()
+        for _ in range(2):
             with cls.cn.transaction():
-                cls.cn.execute(path.read_text())
+                for script in manifest:
+                    cls.cn.execute((src/script).read_text(encoding="utf-8"))
+                cls.cn.execute(Path(worker.__file__).with_name("verify-schema.sql").read_text(encoding="utf-8"))
+
+    def test_legacy_database_without_http_ms_fails_readiness_until_migrated(self):
+        path=Path(worker.__file__).parent
+        with self.cn.transaction(force_rollback=True):
+            self.cn.execute("ALTER TABLE voc.classification_attempt DROP COLUMN http_ms")
+            with self.assertRaises(psycopg.errors.UndefinedColumn), self.cn.transaction():
+                self.cn.execute((path/"verify-schema.sql").read_text(encoding="utf-8"))
+            self.cn.execute((path/"schema.sql").read_text(encoding="utf-8"))
+            self.cn.execute((path/"verify-schema.sql").read_text(encoding="utf-8"))
 
     def setUp(self):
         self.company, self.domain, channel, self.category = (uuid4() for _ in range(4))
@@ -70,8 +88,64 @@ class WorkerTests(unittest.TestCase):
         return self.cn.execute("SELECT * FROM voc.classification_job WHERE company_uuid=%s ORDER BY analysis_kind",
                                (self.company,)).fetchall()
 
+    def test_latched_rollback_counts_distinct_events_and_reroutes_already_queued_retry(self):
+        # Claim a candidate and leave it pending for retry before another replica trips.
+        job = self.two_claims()["sentiment"]
+        worker.finish(self.cn,job,error=worker.PredictionError("transport_error"),config=self.config)
+        key=(self.company,"sentiment","v2")
+        def record(event, failed=True):
+            with self.cn.transaction():
+                worker.observe_canary(self.cn,{**job,"event_id":event},"sentiment",failed,self.config)
+        def state():
+            return self.cn.execute("SELECT * FROM voc.classification_rollout WHERE company_uuid=%s AND scope_key=%s AND candidate_version=%s",key).fetchone()
+        record(self.event); record(self.event)
+        self.assertIsNone(state()["tripped_at"])
+        record(uuid4()); record(uuid4(), False)
+        self.assertEqual(state()["failures"], {})
+        for event in (self.event,uuid4(),uuid4()):
+            record(event)
+        trip=state()
+        self.assertEqual(trip["reason"],"consecutive_failures")
+        self.assertEqual(len(trip["failures"]),3)
+        self.assertLessEqual(trip["first_failure_at"],trip["tripped_at"])
+        self.cn.execute("UPDATE voc.classification_job SET ready_at=now() WHERE request_id=%s",(job["request_id"],))
+        _, retry=worker.claim(self.cn,self.config)
+        self.assertEqual((retry["route"],retry["model_version"]),("stable","v1"))
+        history=self.cn.execute("SELECT assigned_route FROM voc.classification_attempt WHERE request_id=%s ORDER BY attempt_no",
+                                (job["request_id"],)).fetchall()
+        self.assertEqual([r["assigned_route"] for r in history],["canary","stable"])
+        with self.cn.transaction():
+            self.assertEqual(worker.routing_percent(self.cn,self.config,"sentiment",100),0)
+            self.assertEqual(worker.routing_percent(self.cn,self.config,"category/"+str(self.domain),50),50)
+
     def ticket(self):
         return self.cn.execute("SELECT * FROM ticket WHERE source_event_id=%s", (self.event,)).fetchone()
+
+    def test_saved_policy_distinguishes_baseline_errors_and_candidate_latency_in_last_30_minutes(self):
+        job = self.two_claims()["sentiment"]
+        key = (self.company, "sentiment", "v2")
+        self.cn.execute("""INSERT INTO voc.model_review_policy(company_uuid,scope_key,revision,settings)
+            VALUES (%s,'sentiment',1,'{"baseline_served":"v1","candidate_served":"v2","error_limit":2}')""", (self.company,))
+        # A legacy policy omits volume and p95 fields. Its inherited limits are 100 and 1.5 times.
+        self.cn.execute("""INSERT INTO voc.classification_attempt
+            (request_id,attempt_no,started_at,finished_at,assigned_route,assigned_version,outcome,http_ms)
+            SELECT %s, n+1, now()-interval '1 minute', now(), CASE WHEN n<=100 THEN 'stable' ELSE 'canary' END,
+                CASE WHEN n<=100 THEN 'v1' ELSE 'v2' END, CASE WHEN n<=3 THEN 'failed' ELSE 'succeeded' END,
+                CASE WHEN n<=100 THEN 100 ELSE 140 END FROM generate_series(1,200) n""", (job["request_id"],))
+        def reason():
+            with self.cn.transaction():
+                worker.enforce_saved_limits(self.cn, key, "v1", False)
+                return self.cn.execute("""SELECT reason FROM voc.classification_rollout
+                    WHERE company_uuid=%s AND scope_key=%s AND candidate_version=%s""", key).fetchone()["reason"]
+        self.assertIsNone(reason())  # 3% baseline errors, 0% candidate errors.
+        self.cn.execute("""UPDATE voc.classification_attempt SET outcome='succeeded' WHERE request_id=%s
+            AND assigned_route='stable'""", (job["request_id"],))
+        self.cn.execute("""UPDATE voc.classification_attempt SET http_ms=400,started_at=now()-interval '40 minutes',
+            finished_at=now()-interval '39 minutes' WHERE request_id=%s AND attempt_no>190""", (job["request_id"],))
+        self.assertIsNone(reason())  # Old calls cannot round the current sample up to 100.
+        self.cn.execute("""UPDATE voc.classification_attempt SET started_at=now()-interval '1 minute', finished_at=now()
+            WHERE request_id=%s AND attempt_no>190""", (job["request_id"],))
+        self.assertEqual(reason(), "candidate_p95")
 
     def two_claims(self):
         config = self.config

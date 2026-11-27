@@ -15,6 +15,10 @@
 !collector/schema.sql
 !collector/ticket_schema.sql
 !collector/training_schema.sql
+!collector/retraining_schema.sql
+!collector/schema-order.txt
+!workers/classification/schema.sql
+!collector/model_policy_schema.sql
 !collector/channel_intake_schema.sql
 !collector/settings_schema.sql
 !collector/followup_schema.sql
