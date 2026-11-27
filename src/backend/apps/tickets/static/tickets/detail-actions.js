@@ -78,8 +78,7 @@ if (summaryToggle && composer) {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail?.message || '요약을 불러오지 못했습니다.');
-    if (data.partial) return '문의 앞뒤 일부에서 발췌\n' + data.text;
-    if (data.mode === 'original') return '문의 원문\n' + data.text;
+    if (data.partial) return '문의 일부를 바탕으로 요약\n' + data.text;
     return data.text;
   }
 
