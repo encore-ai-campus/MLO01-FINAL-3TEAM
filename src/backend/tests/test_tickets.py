@@ -543,7 +543,7 @@ class TicketTests(unittest.TestCase):
         saved = browser.post(detail_url + "messages/?scope=mine", memo, follow=True)
         self.assertContainsHTML(saved, "브라우저 메모")
         self.assertEqual(saved.redirect_chain, [(detail_url + "?scope=mine&memos=1", 302)])
-        self.assertContainsHTML(saved, 'id="detail-memos" open')
+        self.assertContainsHTML(saved, 'data-message-type="memo"')
         self.assertEqual(browser.get(f"/tickets/{self.tickets[-1]}/").status_code, 404)
         self.assertEqual(browser.post("/logout/").status_code, 403)
         self.assertEqual(browser.post("/logout/", {"csrfmiddlewaretoken":browser.cookies["csrftoken"].value}).status_code, 302)
