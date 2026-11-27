@@ -24,12 +24,17 @@ class CategoryRouteForm(forms.Form):
 class CategoryChangeForm(forms.Form):
     category_uuid = forms.UUIDField()
     reason = forms.CharField(max_length=1000, required=False)
+    feature_uuid = forms.UUIDField(required=False)
 
 
 class AnalysisChangeForm(CategoryChangeForm):
     category_uuid = forms.UUIDField(required=False)
     sentiment = forms.ChoiceField(choices=[(value, value) for value in SENTIMENTS], required=False)
     team_uuid = forms.UUIDField(required=False)
+    is_urgent = forms.TypedChoiceField(
+        choices=(("", "기록하지 않음"), ("yes", "긴급"), ("no", "일반")),
+        coerce=lambda value: value == "yes", empty_value=None, required=False,
+    )
 
 
 class CategoryResultForm(forms.Form):

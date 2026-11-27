@@ -44,7 +44,7 @@ def prepare():
              "metadata": {"name": "voc-classification-db"}, "stringData": credentials}))
     kube("apply", "-f", str(HERE / "database.yaml"))
     kube("rollout", "status", "deployment/canary-demo-db", "--timeout=180s")
-    scripts = [ROOT / "src/collector" / name for name in ("schema.sql", "ticket_schema.sql", "settings_schema.sql", "followup_schema.sql")]
+    scripts = [ROOT / "src/collector" / name for name in ("schema.sql", "ticket_schema.sql", "training_schema.sql", "settings_schema.sql", "followup_schema.sql")]
     scripts += [ROOT / "src/workers/classification/schema.sql", HERE / "fixtures.sql"]
     sql("BEGIN;\n" + "\n".join(path.read_text() for path in scripts) + "\nCOMMIT;")
     print("Demo PostgreSQL schema and synthetic tenant ready.")

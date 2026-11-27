@@ -89,8 +89,11 @@ def category(request, ticket_uuid, as_json=False):
             raise DeskError(404, "TICKET_NOT_FOUND", "티켓을 찾을 수 없습니다.")
         require_assignee(actor, ticket)
         categories = repo.category_choices(cursor, ticket["domain_uuid"])
+        cursor.execute("SELECT voc.ticket_feature_uuid(%s)", (ticket_uuid,))
+        ticket["feature_uuid"] = cursor.fetchone()[0]
         if as_json:
-            return JsonResponse({"current_category_uuid": ticket["category_uuid"], "categories": categories})
+            return JsonResponse({"current_category_uuid": ticket["category_uuid"], "categories": categories,
+                                 "feature_uuid": str(ticket["feature_uuid"]) if ticket["feature_uuid"] else None})
         teams = repo.team_choices(cursor, actor["company_uuid"])
     ticket["category"] = next((category["name"] for category in categories
                                if category["category_uuid"] == ticket["category_uuid"]), None)

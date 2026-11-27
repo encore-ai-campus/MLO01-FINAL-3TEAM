@@ -106,8 +106,8 @@ def add_event(cursor, ticket_uuid, actor, code, *, request=None, recipient=None,
               from_status=None, to_status=None):
     cursor.execute("""
         INSERT INTO ticket_event
-            (ticket_uuid,event_type_uuid,actor_uuid,recipient_uuid,collab_request_uuid,transfer_reason,from_status,to_status)
-        VALUES (%s,(SELECT event_type_uuid FROM event_type WHERE code=%s),%s,%s,%s,%s,%s,%s)
+            (ticket_uuid,event_type_uuid,actor_uuid,recipient_uuid,collab_request_uuid,transfer_reason,from_status,to_status,created_at)
+        VALUES (%s,(SELECT event_type_uuid FROM event_type WHERE code=%s),%s,%s,%s,%s,%s,%s,clock_timestamp())
         RETURNING ticket_event_uuid
     """, (ticket_uuid, code, actor["staff_user_uuid"], recipient, request, reason, from_status, to_status))
     return cursor.fetchone()[0]

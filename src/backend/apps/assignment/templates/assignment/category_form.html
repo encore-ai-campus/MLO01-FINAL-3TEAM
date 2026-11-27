@@ -12,6 +12,7 @@
   </header>
   <form method="post" class="ticket-analysis-form">
     {% csrf_token %}
+    {% if ticket.feature_uuid %}<input type="hidden" name="feature_uuid" value="{{ ticket.feature_uuid }}">{% endif %}
     <div class="ticket-analysis-labels">
       <label for="analysis-sentiment">감성 분석
         <select id="analysis-sentiment" name="sentiment">
@@ -39,7 +40,16 @@
       </select>
     </label>
     <p id="analysis-team-help">담당 부서를 변경하면 기존 상담사 배정이 해제됩니다.</p>
-    <label for="category-reason">변경 사유 (선택)
+    {% if ticket.feature_uuid %}
+    <label for="analysis-urgency">긴급 여부 (선택)
+      <select id="analysis-urgency" name="is_urgent">
+        <option value="">기록하지 않음</option>
+        <option value="yes">긴급</option>
+        <option value="no">일반</option>
+      </select>
+    </label>
+    {% endif %}
+    <label for="category-reason">{% if ticket.feature_uuid %}변경·검수 사유{% else %}변경 사유 (선택){% endif %}
       <textarea id="category-reason" name="reason" maxlength="1000" rows="3"></textarea>
     </label>
     <div><button class="desk-button desk-button-solid" type="submit">변경 사항 저장</button></div>

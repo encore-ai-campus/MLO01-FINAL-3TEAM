@@ -48,7 +48,7 @@ class AssignmentTests(unittest.TestCase):
         cls.cursor = cls.cn.cursor()
         cls.addClassCleanup(cls.cursor.close)
         collector = Path(__file__).resolve().parents[2] / "collector"
-        for schema in ("schema.sql", "ticket_schema.sql", "settings_schema.sql"):
+        for schema in ("schema.sql", "ticket_schema.sql", "training_schema.sql", "settings_schema.sql"):
             cls.cursor.execute((collector / schema).read_text(encoding="utf-8"))
         cls.enterClassContext(use_database(cls.dsn))
 

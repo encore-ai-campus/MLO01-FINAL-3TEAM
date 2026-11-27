@@ -39,7 +39,7 @@ class TicketTests(unittest.TestCase):
         cls.addClassCleanup(cls.cn.close)
         cls.cur = cls.cn.cursor()
         cls.addClassCleanup(cls.cur.close)
-        for filename in ("schema.sql", "ticket_schema.sql", "settings_schema.sql", "followup_schema.sql"):
+        for filename in ("schema.sql", "ticket_schema.sql", "training_schema.sql", "settings_schema.sql", "followup_schema.sql"):
             cls.cur.execute((SRC / "collector" / filename).read_text(encoding="utf-8"))
         password_hash = PasswordHasher().hash("SamplePass1!")
         cls.employees = []
@@ -661,6 +661,57 @@ class TicketTests(unittest.TestCase):
         route = send.call_args.args[0]
         self.assertEqual((route["source_conversation_id"], route["rfc_message_id"], route["original_subject"]),
                          ("thread", "<original@example.com>", "원래 제목"))
+
+    def test_explicit_label_becomes_gold_on_first_successful_reply(self):
+        self.login()
+        self.grant_conduct()
+        source = str(uuid4())
+        self.cur.execute("SELECT clock_timestamp()")
+        arrival = self.cur.fetchone()[0]
+        self.cur.execute("""
+            INSERT INTO voc.bronze_messages VALUES (%s,'tenant-1','gmail','account',%s,'test',%s,'{}','{}')
+        """, (source, source, arrival))
+        self.cur.execute("""
+            INSERT INTO voc.silver_messages(schema_version,event_id,company_id,channel,connection_id,
+                source_message_id,source_conversation_id,message_kind,sender_ref,body_text,
+                body_version,received_at,source_metadata)
+            VALUES (4,%s,'tenant-1','gmail','account',%s,'gold-thread','customer_inquiry','gold-customer',
+                '정제 입력입니다',1,%s,'{"label_ids":[],"to_addresses":[]}')
+        """, (source, source, arrival))
+        self.cur.execute("SELECT ticket_uuid,feature_uuid FROM voc.feature_snapshot WHERE silver_event_id=%s", (source,))
+        ticket, feature = self.cur.fetchone()
+        self.addCleanup(self.cur.execute, "UPDATE voc.silver_messages SET message_kind='other' WHERE event_id=%s",
+                        (source,))
+        self.addCleanup(self.cur.execute, "DELETE FROM ticket_message WHERE ticket_uuid=%s AND message_type='reply'",
+                        (ticket,))
+        self.addCleanup(self.cur.execute, "DELETE FROM voc.gold_label WHERE feature_uuid=%s", (feature,))
+        self.assign_unassigned_ticket(ticket)
+        changed = self.client.post(reverse("assignment:ticket-category", args=[ticket]),
+                                   {"sentiment": "매우 부정", "feature_uuid": str(feature)})
+        self.assertEqual(changed.status_code, 302, changed.text)
+        review = self.client.post(reverse("assignment:ticket-category", args=[ticket]),
+                                  {"is_urgent": "yes", "reason": "배송 확인 필요", "feature_uuid": str(feature)})
+        self.assertEqual(review.status_code, 302, review.text)
+        self.cur.execute("""
+            SELECT r.is_urgent,r.sentiment,e.transfer_reason
+            FROM voc.counselor_review r JOIN ticket_event e ON e.ticket_event_uuid::text=r.evidence_ref
+            WHERE r.feature_uuid=%s
+        """, (feature,))
+        self.assertEqual(self.cur.fetchall(), [(True, None, "배송 확인 필요")])
+        path = f"/api/tickets/{ticket}/messages"
+        payload = {"message_type": "reply", "body": "고객 답변", "request_key": str(uuid4())}
+        with patch("apps.tickets.delivery.send_reply", return_value="delivery-1") as send:
+            self.assertEqual(self.client.post(path, payload, content_type="application/json").status_code, 200)
+            self.assertEqual(self.client.post(path, payload, content_type="application/json").status_code, 200)
+        send.assert_called_once()
+        self.cur.execute("""
+            SELECT g.label_kind,g.sentiment_value,m.sent_at IS NOT NULL,g.evidence ? 'ticket_event_uuid'
+            FROM voc.gold_label g JOIN public.ticket_message m ON m.ticket_message_uuid=g.completion_message_uuid
+            WHERE g.feature_uuid=%s
+        """, (feature,))
+        self.assertEqual(self.cur.fetchall(), [("sentiment", "부정", True, True)])
+        self.cur.execute("SELECT sentiment FROM ticket WHERE ticket_uuid=%s", (ticket,))
+        self.assertEqual(self.cur.fetchone()[0], "매우 부정")
 
     def test_imported_csv_keeps_reply_internal_and_preserves_status(self):
         self.login()
