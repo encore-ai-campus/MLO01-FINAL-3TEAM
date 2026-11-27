@@ -8,7 +8,7 @@
   <p class="desk-sub">업무 홈에 표시할 카드와 좌측 패널 항목을 선택합니다.</p>
 </header>
 <form class="settings-display" method="post" data-display-settings
-      {% if use_local_cards %}data-local-cards="voc.work-home.{{ actor.company_uuid }}:{{ actor.staff_user_uuid }}.v1"{% endif %}>
+      {% if use_local_cards %}data-local-cards="voc.work-home.{{ actor.company_id }}:{{ actor.staff_user_id }}.v1"{% endif %}>
   {% csrf_token %}
   <input type="hidden" name="cards" value="{{ cards_json }}">
   {{ card_order|json_script:"display-default-order" }}

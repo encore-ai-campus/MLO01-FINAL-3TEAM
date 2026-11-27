@@ -134,7 +134,7 @@ def employee_permissions(request, staff_uuid):
     saving = request.method == "POST"
     with transaction.atomic(), connection.cursor() as cursor:
         actor = services.current_actor(session_token(request), cursor)
-        company = actor["company_uuid"]
+        company = actor["company_id"]
         targets = services.work_permission_targets(cursor, actor, staff_uuid=staff_uuid, lock=saving)
         if not targets:
             raise DeskError(404, "STAFF_NOT_FOUND", "직원을 찾을 수 없습니다.")

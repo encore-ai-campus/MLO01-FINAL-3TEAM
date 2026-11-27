@@ -15,11 +15,11 @@
         <td>
           <form method="post">
             {% csrf_token %}
-            <input type="hidden" name="category_uuid" value="{{ category.category_uuid }}">
+            <input type="hidden" name="category_id" value="{{ category.category_id }}">
             <label for="team-{{ forloop.counter }}">담당 부서</label>
-            <select id="team-{{ forloop.counter }}" name="team_uuid">
+            <select id="team-{{ forloop.counter }}" name="team_id">
               <option value="">미배정</option>
-              {% for team in teams %}<option value="{{ team.team_uuid }}"{% if team.team_uuid == category.team_uuid %} selected{% endif %}>{{ team.name }}</option>{% endfor %}
+              {% for team in teams %}<option value="{{ team.team_id }}"{% if team.team_id == category.team_id %} selected{% endif %}>{{ team.name }}</option>{% endfor %}
             </select>
             <button class="desk-button" type="submit">저장</button>
           </form>

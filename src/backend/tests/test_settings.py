@@ -61,16 +61,16 @@ class SettingsTests(TestCase):
 
     def make_company(self, email_domain, domain):
         company, team = str(uuid4()), str(uuid4())
-        self.cursor.execute("INSERT INTO company(company_uuid,email_domain,domain_uuid) VALUES (%s,%s,%s)",
+        self.cursor.execute("INSERT INTO company(company_id,email_domain,domain_id) VALUES (%s,%s,%s)",
                             (company, email_domain, domain))
-        self.cursor.execute("INSERT INTO team(team_uuid,company_uuid,name) VALUES (%s,%s,%s)",
+        self.cursor.execute("INSERT INTO team(team_id,company_id,name) VALUES (%s,%s,%s)",
                             (team, company, email_domain))
         return company, team
 
     def make_staff(self, name, domain, company, team, role=None):
         staff = str(uuid4())
         self.cursor.execute("""
-            INSERT INTO staff_user(staff_user_uuid, company_uuid, team_uuid, email, name, password_hash, role)
+            INSERT INTO staff_user(staff_user_id, company_id, team_id, email, name, password_hash, role)
             VALUES (%s,%s,%s,%s,%s,'unused',%s)
         """, (staff, company, team, f"{name.lower()}@{domain}", name, role))
         return staff
@@ -96,7 +96,7 @@ class SettingsTests(TestCase):
 
     def team_reply(self, client, scope="team", category=None):
         return client.post("/settings/replies/new/", {
-            "name": "배송 안내", "category_uuid": category or self.category, "scope": scope, "body": "확인해 드리겠습니다.",
+            "name": "배송 안내", "category_id": category or self.category, "scope": scope, "body": "확인해 드리겠습니다.",
         })
 
     def test_settings_load_styles_and_show_only_allowed_navigation(self):
@@ -297,7 +297,7 @@ class SettingsTests(TestCase):
         client = self.session(operator)
         name = "voc-training-" + uuid4().hex
         self.assertContains(client.get("/settings/"), 'href="/model-training/"')
-        self.cursor.execute("UPDATE staff_user SET role='admin' WHERE staff_user_uuid=%s", (operator,))
+        self.cursor.execute("UPDATE staff_user SET role='admin' WHERE staff_user_id=%s", (operator,))
         self.assertNotContains(client.get("/settings/"), 'href="/model-training/"')
         with patch("apps.preferences.training.argo_request") as argo:
             for path in ("/model-training/", "/model-training/runs/",
@@ -350,7 +350,7 @@ class SettingsTests(TestCase):
 
     def test_independent_permission_changes_take_effect_for_current_sessions(self):
         self.cursor.execute("""
-            INSERT INTO staff_permission SELECT %s, permission_uuid FROM permission WHERE code='ticket.read'
+            INSERT INTO staff_permission SELECT %s, permission_id FROM permission WHERE code='ticket.read'
         """, (self.agent,))
         self.assertEqual(self.change_rights(self.agent, "analytics.read").status_code, 302)
         response = self.client.get(f"/settings/permissions/{self.agent}/")
@@ -361,8 +361,8 @@ class SettingsTests(TestCase):
         self.assertEqual(self.team_reply(agent).status_code, 302)
         self.assertEqual(agent.get("/analytics/").status_code, 403)
         self.cursor.execute("""
-            SELECT code FROM staff_permission JOIN permission USING(permission_uuid)
-            WHERE staff_user_uuid=%s ORDER BY code
+            SELECT code FROM staff_permission JOIN permission USING(permission_id)
+            WHERE staff_user_id=%s ORDER BY code
         """, (self.agent,))
         self.assertEqual(self.cursor.fetchall(), [("quick_reply.team.edit",), ("ticket.read",)])
         self.assertEqual(self.change_rights(self.admin).status_code, 302)
@@ -373,7 +373,7 @@ class SettingsTests(TestCase):
     def test_incomplete_permission_catalog_rejects_save(self):
         self.cursor.execute("DELETE FROM permission WHERE code='chat.handle'")
         self.assertEqual(self.change_rights(self.agent, "ticket.handle").status_code, 503)
-        self.cursor.execute("SELECT 1 FROM staff_permission WHERE staff_user_uuid=%s", (self.agent,))
+        self.cursor.execute("SELECT 1 FROM staff_permission WHERE staff_user_id=%s", (self.agent,))
         self.assertIsNone(self.cursor.fetchone())
 
     def test_assignment_policy_is_saved_for_task10_and_scoped_to_company(self):
@@ -405,7 +405,7 @@ class SettingsTests(TestCase):
         self.assertNotContains(self.client.get("/settings/replies/"), "배송 안내")
         self.assertEqual(self.client.get(personal["Location"]).status_code, 404)
         edit = agent.post(personal["Location"], {
-            "name": "배송 확인", "category_uuid": self.category, "body": "배송 상태를 확인했습니다.",
+            "name": "배송 확인", "category_id": self.category, "body": "배송 상태를 확인했습니다.",
         })
         self.assertEqual(edit.status_code, 302)
         self.assertContains(agent.get("/settings/replies/"), "배송 확인")
@@ -422,7 +422,7 @@ class SettingsTests(TestCase):
         self.assertEqual(self.change_rights(self.agent, "quick_reply.team.edit").status_code, 302)
         author = self.session(self.agent)
         self.assertEqual(self.team_reply(author).status_code, 302)
-        self.cursor.execute("DELETE FROM staff_user WHERE staff_user_uuid=%s", (self.agent,))
+        self.cursor.execute("DELETE FROM staff_user WHERE staff_user_id=%s", (self.agent,))
         self.assertContains(self.client.get("/settings/replies/", {"scope": "team"}), "배송 안내")
 
     def test_analytics_menu_follows_work_permission_and_saved_preference(self):
@@ -434,7 +434,7 @@ class SettingsTests(TestCase):
                 for saved in (None, ["tickets", "analytics"], []):
                     with self.subTest(staff=staff, granted=granted, sidebar=saved):
                         preferences = {} if saved is None else {"sidebar": saved}
-                        self.cursor.execute("UPDATE staff_user SET display_preferences=%s WHERE staff_user_uuid=%s",
+                        self.cursor.execute("UPDATE staff_user SET display_preferences_json=%s WHERE staff_user_id=%s",
                                             (json.dumps(preferences), staff))
                         visible = granted and (saved is None or "analytics" in saved)
                         display = client.get("/settings/display/")

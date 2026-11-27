@@ -8,11 +8,11 @@
       <p>#{{ ticket.ticket_number }}</p>
       <h1>분석·배정 수정</h1>
     </div>
-    <a class="desk-button" href="{% url 'tickets:detail' ticket.ticket_uuid %}{% querystring %}">티켓으로 돌아가기</a>
+    <a class="desk-button" href="{% url 'tickets:detail' ticket.ticket_id %}{% querystring %}">티켓으로 돌아가기</a>
   </header>
   <form method="post" class="ticket-analysis-form">
     {% csrf_token %}
-    {% if ticket.feature_uuid %}<input type="hidden" name="feature_uuid" value="{{ ticket.feature_uuid }}">{% endif %}
+    {% if ticket.feature_snapshot_id %}<input type="hidden" name="feature_snapshot_id" value="{{ ticket.feature_snapshot_id }}">{% endif %}
     <div class="ticket-analysis-labels">
       <label for="analysis-sentiment">감성 분석
         <select id="analysis-sentiment" name="sentiment">
@@ -23,24 +23,24 @@
         </select>
       </label>
       <label for="category-uuid">카테고리 분석
-        <select id="category-uuid" name="category_uuid">
+        <select id="category-uuid" name="category_id">
           <option value="">{{ ticket|analysis_label:"category" }} (현재)</option>
           {% for category in categories %}
-            {% if category.category_uuid != ticket.category_uuid %}<option value="{{ category.category_uuid }}">{{ category.name }}</option>{% endif %}
+            {% if category.category_id != ticket.category_id %}<option value="{{ category.category_id }}">{{ category.name }}</option>{% endif %}
           {% endfor %}
         </select>
       </label>
     </div>
     <label for="analysis-team">담당 부서
-      <select id="analysis-team" name="team_uuid" aria-describedby="analysis-team-help">
+      <select id="analysis-team" name="team_id" aria-describedby="analysis-team-help">
         <option value="">{{ current_team }} (현재)</option>
         {% for team in teams %}
-          {% if team.team_uuid != ticket.assigned_team_uuid %}<option value="{{ team.team_uuid }}">{{ team.name }}</option>{% endif %}
+          {% if team.team_id != ticket.assigned_team_id %}<option value="{{ team.team_id }}">{{ team.name }}</option>{% endif %}
         {% endfor %}
       </select>
     </label>
     <p id="analysis-team-help">담당 부서를 변경하면 기존 상담사 배정이 해제됩니다.</p>
-    {% if ticket.feature_uuid %}
+    {% if ticket.feature_snapshot_id %}
     <label for="analysis-urgency">긴급 여부 (선택)
       <select id="analysis-urgency" name="is_urgent">
         <option value="">기록하지 않음</option>
@@ -49,7 +49,7 @@
       </select>
     </label>
     {% endif %}
-    <label for="category-reason">{% if ticket.feature_uuid %}변경·검수 사유{% else %}변경 사유 (선택){% endif %}
+    <label for="category-reason">{% if ticket.feature_snapshot_id %}변경·검수 사유{% else %}변경 사유 (선택){% endif %}
       <textarea id="category-reason" name="reason" maxlength="1000" rows="3"></textarea>
     </label>
     <div><button class="desk-button desk-button-solid" type="submit">변경 사항 저장</button></div>

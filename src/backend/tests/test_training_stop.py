@@ -21,9 +21,9 @@ class StopTrainingTests(TestCase):
         self.cursor = self.enterContext(connection.cursor())
         self.company, self.staff = str(uuid4()), str(uuid4())
         self.name, self.uid = "voc-training-"+uuid4().hex, str(uuid4())
-        self.actor = {"company_uuid": self.company, "staff_user_uuid": self.staff, "role": "super_admin"}
-        self.cursor.execute("INSERT INTO public.company(company_uuid,email_domain) VALUES (%s,'local.test')", (self.company,))
-        self.cursor.execute("""INSERT INTO public.staff_user(staff_user_uuid,company_uuid,email,password_hash,name,role)
+        self.actor = {"company_id": self.company, "staff_user_id": self.staff, "role": "super_admin"}
+        self.cursor.execute("INSERT INTO public.company(company_id,email_domain) VALUES (%s,'local.test')", (self.company,))
+        self.cursor.execute("""INSERT INTO public.staff_user(staff_user_id,company_id,email,password_hash,name,role)
             VALUES (%s,%s,'stop@local.test','!','중지 담당','super_admin')""", (self.staff,self.company))
         self.token = uuid4().hex
         self.cursor.execute("INSERT INTO public.staff_session VALUES (%s,%s,now()+interval '1 hour')",
@@ -104,7 +104,7 @@ class StopTrainingTests(TestCase):
         self.api.assert_not_called()
         self.flow["metadata"]["labels"]["voc.company"] = str(uuid4())
         self.assertEqual(self.client.post(self.path).status_code, 404)
-        self.cursor.execute("UPDATE public.staff_user SET role='staff' WHERE staff_user_uuid=%s", (self.staff,))
+        self.cursor.execute("UPDATE public.staff_user SET role='staff' WHERE staff_user_id=%s", (self.staff,))
         self.api.reset_mock()
         self.assertEqual(self.client.post(self.path).status_code, 403)
         self.api.assert_not_called()

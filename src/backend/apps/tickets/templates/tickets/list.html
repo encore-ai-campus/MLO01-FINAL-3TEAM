@@ -53,7 +53,7 @@
         {% for ticket in items %}
           <tr data-ticket="{{ ticket.ticket_number }}">
             <td class="ticket-row-number">{{ forloop.counter|add:ui.offset }}</td><td>#{{ ticket.ticket_number }}</td>
-            <th scope="row"><a class="ticket-detail-link" href="{% url 'tickets:detail' ticket.ticket_uuid %}{% querystring %}">{{ ticket.title }}</a></th>
+            <th scope="row"><a class="ticket-detail-link" href="{% url 'tickets:detail' ticket.ticket_id %}{% querystring %}">{{ ticket.title }}</a></th>
             <td>{% include 'tickets/includes/badge.html' with value=ticket|analysis_label:'category' %}</td>
             <td>{% if ticket.team_name %}{{ ticket.team_name }}{% else %}{% include 'tickets/includes/badge.html' with value='미배정' %}{% endif %}</td>
             <td>{{ ticket.assignee_name|default:'미지정' }}</td>

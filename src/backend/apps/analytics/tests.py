@@ -34,23 +34,23 @@ class AnalyticsPageTests(TestCase):
         self.addCleanup(cn.close)
         self.cur = self.enterContext(cn.cursor())
         self.cur.execute("""
-            CREATE TABLE company (company_uuid uuid PRIMARY KEY, email_domain text);
-            CREATE TABLE team (team_uuid uuid PRIMARY KEY, company_uuid uuid, name text);
+            CREATE TABLE company (company_id uuid PRIMARY KEY, email_domain text);
+            CREATE TABLE team (team_id uuid PRIMARY KEY, company_id uuid, name text);
             CREATE TABLE staff_user (
-                staff_user_uuid uuid PRIMARY KEY, company_uuid uuid, team_uuid uuid,
+                staff_user_id uuid PRIMARY KEY, company_id uuid, team_id uuid,
                 name text, email text, password_hash text, role text
             );
-            CREATE TABLE staff_session (token_hash text PRIMARY KEY, staff_user_uuid uuid, expires_at timestamptz);
-            CREATE TABLE permission (permission_uuid uuid PRIMARY KEY, code text);
-            CREATE TABLE staff_permission (staff_user_uuid uuid, permission_uuid uuid);
-            CREATE TABLE category (category_uuid uuid PRIMARY KEY, domain_uuid uuid, name text);
+            CREATE TABLE staff_session (token_hash text PRIMARY KEY, staff_user_id uuid, expires_at timestamptz);
+            CREATE TABLE permission (permission_id uuid PRIMARY KEY, code text);
+            CREATE TABLE staff_permission (staff_user_id uuid, permission_id uuid);
+            CREATE TABLE category (category_id uuid PRIMARY KEY, domain_id uuid, name text);
             CREATE TABLE ticket (
-                ticket_uuid uuid PRIMARY KEY, company_uuid uuid, assigned_team_uuid uuid, assignee_uuid uuid,
-                category_uuid uuid, domain_uuid uuid, status text, sentiment text, created_at timestamptz, visible boolean
+                ticket_id uuid PRIMARY KEY, company_id uuid, assigned_team_id uuid, assignee_id uuid,
+                category_id uuid, domain_id uuid, status text, sentiment text, created_at timestamptz, visible boolean
             );
             CREATE VIEW visible_ticket AS SELECT * FROM ticket WHERE visible;
             CREATE TABLE ticket_message (
-                ticket_message_uuid uuid PRIMARY KEY, ticket_uuid uuid, staff_user_uuid uuid,
+                ticket_message_id uuid PRIMARY KEY, ticket_id uuid, staff_user_id uuid,
                 sender_type text, message_type text
             );
         """)
@@ -101,14 +101,14 @@ class AnalyticsPageTests(TestCase):
 
     def events(self):
         self.cur.execute("""
-            CREATE TABLE event_type (event_type_uuid uuid PRIMARY KEY, code text);
+            CREATE TABLE event_type (event_type_id uuid PRIMARY KEY, code text);
             CREATE TABLE ticket_event (
-                ticket_event_uuid uuid PRIMARY KEY, ticket_uuid uuid, event_type_uuid uuid, actor_uuid uuid,
-                recipient_uuid uuid, from_status text, to_status text, created_at timestamptz
+                ticket_event_id uuid PRIMARY KEY, ticket_id uuid, event_type_id uuid, actor_id uuid,
+                recipient_id uuid, from_status text, to_status text, created_at timestamptz
             );
             ALTER TABLE ticket_message ADD COLUMN sent_at timestamptz;
             CREATE TABLE collab_request (
-                collab_request_uuid uuid PRIMARY KEY, ticket_uuid uuid, recipient_uuid uuid,
+                collab_request_id uuid PRIMARY KEY, ticket_id uuid, recipient_id uuid,
                 request_type text, status text
             );
         """)
@@ -184,7 +184,7 @@ class AnalyticsPageTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn(operator, [row["id"] for row in response.context["agents"]])
         self.assertEqual(self.client.get("/analytics/", {"scope": self.other_team}).status_code, 400)
-        self.cur.execute("DELETE FROM staff_permission WHERE staff_user_uuid=%s", (operator,))
+        self.cur.execute("DELETE FROM staff_permission WHERE staff_user_id=%s", (operator,))
         self.assertEqual(self.client.get("/analytics/").status_code, 403)
 
     def test_non_admin_and_missing_role_fail_closed(self):
@@ -192,7 +192,7 @@ class AnalyticsPageTests(TestCase):
         self.login("agent1@qa.test")
         self.assertEqual(self.client.get("/analytics/", {"preview": "administrator"}).status_code, 403)
         self.login()
-        self.cur.execute("UPDATE staff_user SET role = 'counselor' WHERE staff_user_uuid = %s", (self.admin,))
+        self.cur.execute("UPDATE staff_user SET role = 'counselor' WHERE staff_user_id = %s", (self.admin,))
         self.assertEqual(self.client.get("/analytics/").status_code, 403)
         self.cur.execute("ALTER TABLE staff_user DROP COLUMN role")
         self.assertEqual(self.client.get("/analytics/").status_code, 403)
@@ -212,9 +212,9 @@ class AnalyticsPageTests(TestCase):
         self.assertEqual(self.client.get("/analytics/", {"scope": unrelated_team}).status_code, 400)
         self.assertEqual(self.client.get("/analytics/", {"scope": self.other_team}).status_code, 400)
         self.assertEqual(self.client.get("/analytics/", {"tab": "agents", "agent": self.agent}).status_code, 403)
-        self.cur.execute("UPDATE staff_user SET role='team_lead' WHERE staff_user_uuid=%s", (self.agent,))
+        self.cur.execute("UPDATE staff_user SET role='team_lead' WHERE staff_user_id=%s", (self.agent,))
         self.assertEqual(self.client.get("/analytics/", {"tab": "agents"}).status_code, 200)
-        self.cur.execute("DELETE FROM staff_permission WHERE staff_user_uuid=%s AND permission_uuid=%s",
+        self.cur.execute("DELETE FROM staff_permission WHERE staff_user_id=%s AND permission_id=%s",
                          (self.agent, permission))
         self.assertEqual(self.client.get("/analytics/").status_code, 403)
         self.login()

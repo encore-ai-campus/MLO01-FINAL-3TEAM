@@ -93,7 +93,7 @@ class TrainingBusy(ValueError):
 
 
 def workflow_name(actor, selection):
-    return "voc-training-" + uuid5(NAMESPACE_URL, f"{actor['company_uuid']}/{actor['staff_user_uuid']}/{selection['request_id']}").hex
+    return "voc-training-" + uuid5(NAMESPACE_URL, f"{actor['company_id']}/{actor['staff_user_id']}/{selection['request_id']}").hex
 
 
 def check_training_slot(company, name, parameters):
@@ -123,7 +123,7 @@ def check_training_slot(company, name, parameters):
 
 @transaction.atomic
 def submit(actor, selection):
-    company, staff = actor["company_uuid"], actor["staff_user_uuid"]
+    company, staff = actor["company_id"], actor["staff_user_id"]
     name = workflow_name(actor, selection)
     parameters = {
         "company": str(company), "eval-dataset": selection["eval_dataset"], "base-model-uri": selection["model"],
@@ -134,9 +134,9 @@ def submit(actor, selection):
         cursor.execute("SELECT to_regclass('voc.retraining_policy')")
         has_schedule = False
         if cursor.fetchone()[0]:
-            cursor.execute("""SELECT EXISTS(SELECT 1 FROM voc.retraining_policy p WHERE p.company_uuid=%s
-                AND (p.enabled OR EXISTS (SELECT 1 FROM voc.retraining_dispatch d
-                     WHERE d.company_uuid=p.company_uuid AND d.state IN ('pending','running'))))""", (company,))
+            cursor.execute("""SELECT EXISTS(SELECT 1 FROM voc.retraining_policy p WHERE p.company_id=%s
+                AND (p.is_enabled OR EXISTS (SELECT 1 FROM voc.retraining_dispatch d
+                     WHERE d.company_id=p.company_id AND d.state IN ('pending','running'))))""", (company,))
             has_schedule = cursor.fetchone()[0]
     if has_schedule or actor.get("scheduled"):
         existing = check_training_slot(company, name, parameters)
@@ -216,15 +216,15 @@ def _has_registered(cursor, uid):
 def _stop_record(cursor, name, company, *, lock=False):
     cursor.execute("""SELECT s.workflow_uid,s.state,coalesce(u.name,u.email) AS requested_by,s.requested_at,s.confirmed_at
         FROM voc.training_stop_request s JOIN public.staff_user u
-          ON u.company_uuid=s.company_uuid AND u.staff_user_uuid=s.requested_by
-        WHERE s.workflow_name=%s AND s.company_uuid=%s""" + (" FOR UPDATE OF s" if lock else ""), (name, company))
+          ON u.company_id=s.company_id AND u.staff_user_id=s.requested_by
+        WHERE s.workflow_name=%s AND s.company_id=%s""" + (" FOR UPDATE OF s" if lock else ""), (name, company))
     row = cursor.fetchone()
     return dict(zip((col.name for col in cursor.description), row)) if row else None
 
 
 def _confirm_stop(cursor, name, company, record, state):
     cursor.execute("""UPDATE voc.training_stop_request SET state=%s,confirmed_at=clock_timestamp()
-        WHERE workflow_name=%s AND company_uuid=%s AND state='requested' RETURNING confirmed_at""",
+        WHERE workflow_name=%s AND company_id=%s AND state='requested' RETURNING confirmed_at""",
         (state, name, company))
     record.update(state=state, confirmed_at=cursor.fetchone()[0])
     return record
@@ -260,7 +260,7 @@ def reconcile_stop_request(name, company):
 def request_stop(actor, name):
     if actor.get("role") != "super_admin":
         raise DeskError(403, "TRAINING_FORBIDDEN", "모델 학습 권한이 필요합니다.")
-    company = actor["company_uuid"]
+    company = actor["company_id"]
     flow = get_workflow(name, company)
     uid = flow["metadata"]["uid"]
     # Commit intent before calling Argo, including when a response is lost or this process exits.
@@ -283,8 +283,8 @@ def request_stop(actor, name):
             except ValueError as exc:
                 raise DeskError(409, "INVALID_CUTOFF", "학습 기준 시각을 확인할 수 없습니다.") from exc
             cursor.execute("""INSERT INTO voc.training_stop_request
-                (workflow_name,workflow_uid,company_uuid,requested_by,cutoff) VALUES (%s,%s,%s,%s,%s)
-                ON CONFLICT (workflow_name) DO NOTHING""", (name,uid,company,actor["staff_user_uuid"],cutoff))
+                (workflow_name,workflow_uid,company_id,requested_by,cutoff) VALUES (%s,%s,%s,%s,%s)
+                ON CONFLICT (workflow_name) DO NOTHING""", (name,uid,company,actor["staff_user_id"],cutoff))
         record = _stop_record(cursor, name, company)
         if not record:
             raise DeskError(409, "WORKFLOW_REPLACED", "중지 요청의 학습 실행을 확인할 수 없습니다.")
@@ -351,10 +351,10 @@ def progress_and_result(ref, company):
                    r.sentiment_macro_f1,r.category_macro_f1,r.mlflow_run_id,
                    m.model_name,m.registry_version
             FROM voc.training_run r
-            JOIN voc.training_dataset train ON train.dataset_uuid=r.train_dataset_uuid
-            JOIN voc.training_dataset eval ON eval.dataset_uuid=r.eval_dataset_uuid
+            JOIN voc.training_dataset train ON train.dataset_id=r.train_dataset_id
+            JOIN voc.training_dataset eval ON eval.dataset_id=r.eval_dataset_id
             LEFT JOIN voc.model_version m ON m.workflow_ref=r.workflow_ref
-            WHERE r.workflow_ref=%s AND train.company_uuid=%s AND eval.company_uuid=train.company_uuid
+            WHERE r.workflow_ref=%s AND train.company_id=%s AND eval.company_id=train.company_id
         """, (ref, company))
         row = cursor.fetchone()
         return progress, dict(zip([item.name for item in cursor.description], row)) if row else {}

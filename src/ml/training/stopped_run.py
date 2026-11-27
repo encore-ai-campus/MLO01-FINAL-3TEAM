@@ -11,7 +11,7 @@ def interrupted_run_id(connection, workflow_uid):
     row = connection.execute("""
         SELECT r.mlflow_run_id FROM voc.training_stop_request s
         JOIN voc.training_run r ON r.workflow_ref=s.workflow_uid
-        JOIN voc.training_dataset d ON d.dataset_uuid=r.train_dataset_uuid AND d.company_uuid=s.company_uuid
+        JOIN voc.training_dataset d ON d.dataset_id=r.train_dataset_id AND d.company_id=s.company_id
         WHERE s.workflow_uid=%s AND s.state IN ('requested','stopped') AND r.mlflow_run_id IS NOT NULL
           AND NOT EXISTS (SELECT FROM voc.model_version v WHERE v.workflow_ref=r.workflow_ref)
     """, (workflow_uid,)).fetchone()

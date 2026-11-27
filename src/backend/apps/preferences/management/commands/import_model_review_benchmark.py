@@ -93,15 +93,15 @@ class Command(BaseCommand):
         except (BadZipFile, KeyError, OSError, TypeError, ValueError) as error:
             raise CommandError(f"원본 평가 자료를 읽을 수 없습니다. {error}") from error
         with transaction.atomic(), connection.cursor() as cursor:
-            cursor.execute("SELECT 1 FROM public.company WHERE company_uuid=%s", (company,))
+            cursor.execute("SELECT 1 FROM public.company WHERE company_id=%s", (company,))
             if not cursor.fetchone():
                 raise CommandError("회사 UUID를 확인해 주세요.")
             cursor.executemany("""
                 INSERT INTO voc.model_review_benchmark
-                    (company_uuid, task_code, model_code, model_sha256, report_sha256, split_sha256,
+                    (company_id, task_code, model_code, model_sha256, report_sha256, split_sha256,
                      row_count, macro_f1, label_counts, label_order, confusion_matrix)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb)
-                ON CONFLICT (company_uuid,task_code,model_code) DO UPDATE SET
+                ON CONFLICT (company_id,task_code,model_code) DO UPDATE SET
                     model_sha256=excluded.model_sha256,report_sha256=excluded.report_sha256,
                     split_sha256=excluded.split_sha256,row_count=excluded.row_count,macro_f1=excluded.macro_f1,
                     label_counts=excluded.label_counts,label_order=excluded.label_order,confusion_matrix=excluded.confusion_matrix

@@ -1,3 +1,4 @@
+collector/rename_schema.sql
 collector/schema.sql
 collector/ticket_schema.sql
 collector/training_schema.sql

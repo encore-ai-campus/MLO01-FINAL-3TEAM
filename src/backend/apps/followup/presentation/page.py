@@ -9,7 +9,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 from apps.accounts.presentation.views import session_token
-from config.http import DeskError
+from config.http import DeskError, record_input
 
 from ..services import open_desk
 from .forms import CompleteForm, TrackScheduleForm
@@ -22,11 +22,11 @@ NOTICES = {"registered": "추적을 등록했습니다.", "removed": "추적을 
 
 
 class CompleteContactForm(CompleteForm):
-    contact_uuid = forms.UUIDField()
+    contact_id = forms.UUIDField()
 
 
 class RemoveTrackForm(forms.Form):
-    ticket_uuid = forms.UUIDField()
+    ticket_id = forms.UUIDField()
 
 
 def page_url(tab, *, selected="", query="", notice=""):
@@ -37,26 +37,26 @@ def page_url(tab, *, selected="", query="", notice=""):
 def save(desk, action, data):
     if action == "register":
         desk.track_and_schedule(data)
-        return page_url("tracked", selected=data["ticket_uuid"], notice="registered")
+        return page_url("tracked", selected=data["ticket_id"], notice="registered")
     if action == "untrack":
-        desk.untrack(data["ticket_uuid"])
+        desk.untrack(data["ticket_id"])
         return page_url("tracked", notice="removed")
-    desk.complete(data["contact_uuid"], data)
-    return page_url("completed", selected=data["contact_uuid"], notice="completed")
+    desk.complete(data["contact_id"], data)
+    return page_url("completed", selected=data["contact_id"], notice="completed")
 
 
 def contact_row(row):
-    ticket = row["ticket_uuid"]
-    return {**row, "id": row["contact_uuid"],
-            "number": f'#{row["ticket_number"]}' if ticket else f'채팅 #{str(row["chat_uuid"])[:8]}',
+    ticket = row["ticket_id"]
+    return {**row, "id": row["contact_id"],
+            "number": f'#{row["ticket_number"]}' if ticket else f'채팅 #{str(row["chat_id"])[:8]}',
             "title": row["title"] or "1:1 상담",
             "source_url": (reverse("tickets:detail", args=[ticket]) if ticket
-                           else reverse("followup:chat-page", args=[row["chat_uuid"]]))}
+                           else reverse("followup:chat-page", args=[row["chat_id"]]))}
 
 
 def activity(tracks, contacts, events):
     history = list(events)
-    tracked = {row["ticket_uuid"] for row in tracks}
+    tracked = {row["ticket_id"] for row in tracks}
     for row in contacts:
         started, stopped = row["reminders_started_at"], row["reminders_stopped_at"]
         if started is None:
@@ -65,7 +65,7 @@ def activity(tracks, contacts, events):
             moment = row["scheduled_at"] - timedelta(minutes=minutes)
             if moment >= started and (stopped is None or moment <= stopped):
                 history.append({**row, "occurred_at": moment, "label": f"후속 연락 {label} 알림",
-                                "unread": row["ticket_uuid"] in tracked and stopped is None})
+                                "unread": row["ticket_id"] in tracked and stopped is None})
     return sorted(history, key=lambda item: item["occurred_at"], reverse=True)
 
 
@@ -85,9 +85,9 @@ def page_context(desk, request):
             event = {**event, "number": f'#{event["ticket_number"]}', "unread": True,
                      "label": (f'{event["author"]} 상담사 메모' if event["kind"] == "memo" else "고객 후속 메시지")}
             events.append(event)
-            events_by_ticket[event["ticket_uuid"]].append(event)
+            events_by_ticket[event["ticket_id"]].append(event)
         for track in desk.tracks():
-            ticket = track["ticket_uuid"]
+            ticket = track["ticket_id"]
             tracks.append({**track, "id": ticket, "number": f'#{track["ticket_number"]}',
                            "source_url": reverse("tickets:detail", args=[ticket]), "events": events_by_ticket[ticket]})
 
@@ -123,7 +123,7 @@ def index(request):
         form_type = {"register": TrackScheduleForm, "untrack": RemoveTrackForm, "complete": CompleteContactForm}.get(action)
         if form_type is None:
             raise DeskError(400, "INVALID_ACTION", "잘못된 팔로업 요청입니다.")
-        form = form_type(request.POST)
+        form = form_type(record_input(request.POST, form_type.base_fields))
         try:
             with open_desk(token) as desk:
                 if form.is_valid():

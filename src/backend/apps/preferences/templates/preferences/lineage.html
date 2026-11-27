@@ -43,14 +43,14 @@
     <tbody>
       <tr><th scope="row">수집</th><td>{{ event.channel }} · {{ event.source_message_id }}</td><td>{{ event.received_at|date:"Y/m/d H:i:s"|default:"미확인" }}</td></tr>
       <tr><th scope="row">표준화</th><td>스키마 {{ event.schema_version|default:"미확인" }} · 본문 {{ event.body_version|default:"미확인" }}</td><td>{{ event.standardized_at|date:"Y/m/d H:i:s"|default:"미확인" }}</td></tr>
-      <tr><th scope="row">티켓</th><td>{% if event.ticket_uuid %}<a href="{% url 'tickets:detail' event.ticket_uuid %}">#{{ event.ticket_number }}</a>{% else %}미확인{% endif %}</td><td>{{ event.ticket_created_at|date:"Y/m/d H:i:s"|default:"미확인" }}</td></tr>
+      <tr><th scope="row">티켓</th><td>{% if event.ticket_id %}<a href="{% url 'tickets:detail' event.ticket_id %}">#{{ event.ticket_number }}</a>{% else %}미확인{% endif %}</td><td>{{ event.ticket_created_at|date:"Y/m/d H:i:s"|default:"미확인" }}</td></tr>
       <tr><th scope="row">분류</th><td>감성 {{ event.sentiment_status|default:"미확인" }} · 카테고리 {{ event.category_status|default:"미확인" }}</td><td>—</td></tr>
     </tbody>
   </table></div>
   <h3>피처 스냅샷</h3>
   <div class="settings-table-wrap"><table class="desk-table">
     <thead><tr><th scope="col">식별자</th><th scope="col">본문 버전</th><th scope="col">전처리 버전</th></tr></thead>
-    <tbody>{% for feature in features %}<tr><td>{{ feature.feature_uuid }}</td><td>{{ feature.body_version }}</td><td>{{ feature.preprocess_version }}</td></tr>{% empty %}<tr><td colspan="3">연결된 피처 스냅샷이 없습니다.</td></tr>{% endfor %}</tbody>
+    <tbody>{% for feature in features %}<tr><td>{{ feature.feature_snapshot_id }}</td><td>{{ feature.body_version }}</td><td>{{ feature.preprocess_version }}</td></tr>{% empty %}<tr><td colspan="3">연결된 피처 스냅샷이 없습니다.</td></tr>{% endfor %}</tbody>
   </table></div>
   <h3>포함된 학습·평가 데이터셋</h3>
   <div class="settings-table-wrap"><table class="desk-table">

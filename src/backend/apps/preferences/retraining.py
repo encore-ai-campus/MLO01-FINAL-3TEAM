@@ -50,31 +50,31 @@ def _one(cursor):
 
 
 def _policy(cursor, company, *, lock=False):
-    query = "SELECT * FROM voc.retraining_policy WHERE company_uuid=%s"
+    query = "SELECT *, is_enabled AS enabled FROM voc.retraining_policy WHERE company_id=%s"
     cursor.execute(query + (" FOR UPDATE" if lock else ""), (company,))
     return _one(cursor)
 
 
 def _last(cursor, company):
     cursor.execute("""SELECT d.*, s.state AS stop_state FROM voc.retraining_dispatch d
-        LEFT JOIN voc.training_stop_request s USING (company_uuid,workflow_name)
-        WHERE d.company_uuid=%s ORDER BY d.cutoff DESC LIMIT 1""", (company,))
+        LEFT JOIN voc.training_stop_request s USING (company_id,workflow_name)
+        WHERE d.company_id=%s ORDER BY d.cutoff DESC LIMIT 1""", (company,))
     return _one(cursor)
 
 
 def _completed_cutoff(cursor, company, until):
-    cursor.execute("""SELECT max(r.label_cutoff) FROM voc.training_run r JOIN voc.model_version v USING(workflow_ref)
-        JOIN voc.training_dataset d ON d.dataset_uuid=r.train_dataset_uuid
-        WHERE d.company_uuid=%s AND r.label_cutoff<=%s""", (company,until))
+    cursor.execute("""SELECT max(r.label_cutoff_at) FROM voc.training_run r JOIN voc.model_version v USING(workflow_ref)
+        JOIN voc.training_dataset d ON d.dataset_id=r.train_dataset_id
+        WHERE d.company_id=%s AND r.label_cutoff_at<=%s""", (company,until))
     return cursor.fetchone()[0]
 
 
 def _watermark(cursor, policy, until):
     # A stop suppresses automatic resubmission of the same Gold. The data remains eligible
     # for training. If natural completion wins the race, its actual completion cutoff applies.
-    company = policy["company_uuid"]
+    company = policy["company_id"]
     cursor.execute("""SELECT max(requested_at) FROM voc.training_stop_request
-        WHERE company_uuid=%s AND state IN ('requested','stopped') AND requested_at<=%s""", (company,until))
+        WHERE company_id=%s AND state IN ('requested','stopped') AND requested_at<=%s""", (company,until))
     stop_cutoff = cursor.fetchone()[0]
     times = [policy["counting_since"], _completed_cutoff(cursor, company, until), stop_cutoff]
     return max((value for value in times if value is not None), default=None)
@@ -86,20 +86,20 @@ def _new_gold(cursor, policy, since, until):
     # Gold for two heads on the same input contributes one training example. Exclude the
     # frozen evaluation conversations/texts, as the training dataset builder does.
     cursor.execute("""WITH frozen AS MATERIALIZED (
-          SELECT s.feature_uuid,s.source_conversation,lower(btrim(regexp_replace(s.body,'\\s+',' ','g'))) AS body
-          FROM voc.training_dataset d JOIN voc.training_dataset_item i USING(dataset_uuid)
-          JOIN voc.feature_snapshot s USING(feature_uuid)
-          WHERE d.company_uuid=%s AND d.dataset_version=%s AND d.purpose='eval'
+          SELECT s.feature_snapshot_id,s.source_conversation,lower(btrim(regexp_replace(s.body,'\\s+',' ','g'))) AS body
+          FROM voc.training_dataset d JOIN voc.training_dataset_item i USING(dataset_id)
+          JOIN voc.feature_snapshot s USING(feature_snapshot_id)
+          WHERE d.company_id=%s AND d.dataset_version=%s AND d.purpose='eval'
         )
-        SELECT count(DISTINCT f.feature_uuid) FROM voc.gold_label g JOIN voc.feature_snapshot f USING(feature_uuid)
-        WHERE f.company_uuid=%s AND g.confirmed_at>%s AND g.confirmed_at<=%s
+        SELECT count(DISTINCT f.feature_snapshot_id) FROM voc.feature_snapshot_label g JOIN voc.feature_snapshot f USING(feature_snapshot_id)
+        WHERE f.company_id=%s AND g.confirmed_at>%s AND g.confirmed_at<=%s
           AND g.label_origin='counselor' AND f.available_at<=g.as_of_at
           AND (g.label_kind<>'category' OR EXISTS(SELECT FROM public.category c
-               WHERE c.category_uuid=g.category_uuid AND c.domain_uuid=f.domain_uuid))
-          AND NOT EXISTS (SELECT FROM frozen e WHERE e.feature_uuid=f.feature_uuid
+               WHERE c.category_id=g.category_id AND c.domain_id=f.domain_id))
+          AND NOT EXISTS (SELECT FROM frozen e WHERE e.feature_snapshot_id=f.feature_snapshot_id
                OR (e.source_conversation<>'' AND e.source_conversation=f.source_conversation)
                OR e.body=lower(btrim(regexp_replace(f.body,'\\s+',' ','g'))))""",
-        (policy["company_uuid"], policy["eval_dataset"], policy["company_uuid"], since, until))
+        (policy["company_id"], policy["eval_dataset"], policy["company_id"], since, until))
     return cursor.fetchone()[0]
 
 
@@ -162,7 +162,7 @@ def _validated(current, data):
 def save_policy(actor, data):
     if actor.get("role") != "super_admin":
         raise DeskError(403,"TRAINING_FORBIDDEN","모델 학습 권한이 필요합니다.")
-    company = actor["company_uuid"]
+    company = actor["company_id"]
     with transaction.atomic(), connection.cursor() as cursor:
         cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended('voc-retraining-policy/'||%s::text,0))",(company,))
         old = _policy(cursor,company,lock=True)
@@ -180,14 +180,14 @@ def save_policy(actor, data):
             now = timezone.now()
             since = _completed_cutoff(cursor,company,now) or now
         cursor.execute("""INSERT INTO voc.retraining_policy
-            (company_uuid,requested_by,revision,counting_since,enabled,trigger_mode,interval_days,min_new_gold,
+            (company_id,requested_by,revision,counting_since,is_enabled,trigger_mode,interval_days,min_new_gold,
              window_start,window_end,model,eval_dataset)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            ON CONFLICT (company_uuid) DO UPDATE SET
-             (requested_by,revision,counting_since,enabled,trigger_mode,interval_days,min_new_gold,window_start,window_end,model,eval_dataset)=
-             (EXCLUDED.requested_by,EXCLUDED.revision,EXCLUDED.counting_since,EXCLUDED.enabled,EXCLUDED.trigger_mode,
+            ON CONFLICT (company_id) DO UPDATE SET
+             (requested_by,revision,counting_since,is_enabled,trigger_mode,interval_days,min_new_gold,window_start,window_end,model,eval_dataset)=
+             (EXCLUDED.requested_by,EXCLUDED.revision,EXCLUDED.counting_since,EXCLUDED.is_enabled,EXCLUDED.trigger_mode,
               EXCLUDED.interval_days,EXCLUDED.min_new_gold,EXCLUDED.window_start,EXCLUDED.window_end,EXCLUDED.model,EXCLUDED.eval_dataset)""",
-            (company,actor["staff_user_uuid"],revision+1,since,*(values[k] for k in DEFAULTS)))
+            (company,actor["staff_user_id"],revision+1,since,*(values[k] for k in DEFAULTS)))
     return read_policy(company)
 
 
@@ -208,10 +208,10 @@ def _reserve(company,now):
         if not due(policy,now,cutoff,_new_gold(cursor,policy,cutoff,now)):
             return None
         request = uuid4()
-        actor = {"company_uuid":company, "staff_user_uuid":policy["requested_by"]}
+        actor = {"company_id":company, "staff_user_id":policy["requested_by"]}
         name = training.workflow_name(actor,{"request_id":request})
         cursor.execute("""INSERT INTO voc.retraining_dispatch
-            (request_id,company_uuid,revision,requested_by,model,eval_dataset,cutoff,workflow_name,state)
+            (request_id,company_id,revision,requested_by,model,eval_dataset,cutoff,workflow_name,state)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending')""",
             (request,company,policy["revision"],policy["requested_by"],policy["model"],policy["eval_dataset"],now,name))
         return request
@@ -235,7 +235,7 @@ def _record_remote(cursor, request, flow, now):
     if state in ("succeeded", "stopped"):
         # This also covers a stop initiated directly in Argo, for which there is no TiCats audit.
         cursor.execute("""UPDATE voc.retraining_policy SET counting_since=greatest(counting_since,%s)
-            WHERE company_uuid=%s""",(request["cutoff"],request["company_uuid"]))
+            WHERE company_id=%s""",(request["cutoff"],request["company_id"]))
     return state
 
 
@@ -244,7 +244,7 @@ def _reconcile_stop_requests(company):
         return
     with connection.cursor() as cursor:
         cursor.execute("""SELECT workflow_name FROM voc.training_stop_request
-            WHERE company_uuid=%s AND state='requested' ORDER BY requested_at""", (company,))
+            WHERE company_id=%s AND state='requested' ORDER BY requested_at""", (company,))
         names = [row[0] for row in cursor.fetchall()]
     for name in names:
         try:
@@ -263,7 +263,7 @@ def process_company(company, now=None):
     with transaction.atomic(), connection.cursor() as cursor:
         policy = _policy(cursor,company,lock=True)
         cursor.execute("""SELECT d.*, s.state AS stop_state, s.workflow_uid AS stop_uid
-            FROM voc.retraining_dispatch d LEFT JOIN voc.training_stop_request s USING (company_uuid,workflow_name)
+            FROM voc.retraining_dispatch d LEFT JOIN voc.training_stop_request s USING (company_id,workflow_name)
             WHERE d.request_id=%s FOR UPDATE OF d""",(req,))
         request = _one(cursor)
         if request["state"] not in ("pending","running"):
@@ -302,7 +302,7 @@ def process_company(company, now=None):
                 cursor.execute("SELECT 1 FROM voc.model_version WHERE workflow_ref=%s",(request["argo_uid"],))
                 phase = "Succeeded" if cursor.fetchone() else "Failed"
                 return _record_remote(cursor,request,{"metadata":{"uid":request["argo_uid"]},"status":{"phase":phase}},moment)
-            cursor.execute("""SELECT 1 FROM public.staff_user WHERE staff_user_uuid=%s AND company_uuid=%s
+            cursor.execute("""SELECT 1 FROM public.staff_user WHERE staff_user_id=%s AND company_id=%s
                 AND role='super_admin'""",(request["requested_by"],company))
             if not cursor.fetchone() or not policy["enabled"] or policy["revision"]!=request["revision"]:
                 _set_dispatch(cursor,req,"cancelled","예약 설정 또는 담당자 권한 변경",finished=moment)
@@ -329,7 +329,7 @@ def process_company(company, now=None):
             closing = datetime.combine(opening.date(),policy["window_end"],SEOUL)
             if closing <= opening:
                 closing += timedelta(days=1)
-            actor = {"company_uuid":company,"staff_user_uuid":request["requested_by"],"role":"super_admin",
+            actor = {"company_id":company,"staff_user_id":request["requested_by"],"role":"super_admin",
                      "scheduled":True,"submit_before":closing}
             selection = {"request_id":req,"as_of_at":request["cutoff"],"model":request["model"],"eval_dataset":request["eval_dataset"]}
             training.submit(actor,selection)

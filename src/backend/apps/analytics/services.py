@@ -240,13 +240,13 @@ def counselor_context(cursor, filters, history, first_answers, review_counts, se
 
 
 def analytics_context(cursor, actor, params):
-    company = actor["company_uuid"]
+    company = actor["company_id"]
     role = actor.get("role")
     admin = actor["is_company_admin"]
-    team_uuid = actor.get("team_uuid")
+    team_id = actor.get("team_id")
     scopes = {"org": "조직 전체"} if admin else {}
     scopes.update((team["id"], team["name"]) for team in repository.teams(cursor, company)
-                  if admin or team["id"] == team_uuid)
+                  if admin or team["id"] == team_id)
     if not scopes:
         raise DeskError(403, "ANALYTICS_TEAM_REQUIRED", "조회할 수 있는 소속 팀이 없습니다.")
     scope = params.get("scope", next(iter(scopes)))

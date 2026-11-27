@@ -9,15 +9,15 @@ class ContactQueryForm(forms.Form):
 
 
 class ContactForm(forms.Form):
-    ticket_uuid = forms.UUIDField(required=False)
-    chat_uuid = forms.UUIDField(required=False)
-    assignee_uuid = forms.UUIDField()
+    ticket_id = forms.UUIDField(required=False)
+    chat_id = forms.UUIDField(required=False)
+    assignee_id = forms.UUIDField()
     reason = forms.CharField(max_length=1000)
     scheduled_at = forms.DateTimeField()
 
     def clean(self):
         data = super().clean()
-        if bool(data.get("ticket_uuid")) == bool(data.get("chat_uuid")):
+        if bool(data.get("ticket_id")) == bool(data.get("chat_id")):
             raise forms.ValidationError("원본 티켓과 상담 중 하나를 선택해 주세요.")
         return data
 
@@ -28,7 +28,7 @@ class CompleteForm(forms.Form):
 
 
 class TrackScheduleForm(forms.Form):
-    ticket_uuid = forms.UUIDField()
+    ticket_id = forms.UUIDField()
     scheduled_at = forms.DateTimeField()
 
     def clean_scheduled_at(self):

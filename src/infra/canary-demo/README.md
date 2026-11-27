@@ -31,7 +31,7 @@ Grafana의 관측 데이터는 Prometheus Pod의 임시 볼륨에 최대 6시간
 1. 기존 Flink 파이프라인이 Silver v4에 고객 문의를 저장하면 PostgreSQL 트리거가 티켓과 `voc.model_text_history`, `voc.ticket_analysis_outbox`를 같은 트랜잭션에 기록한다. 시연 도구는 이 트리거의 입력인 Silver 레코드와 연결된 Bronze 레코드를 합성한다. Discord·Gmail 수집과 Flink 실행은 별도 파이프라인이다.
 2. 워커는 지정한 회사의 outbox에서 감성·카테고리 작업을 읽고, 해당 본문 버전의 `model_text`(Silver `body_text`)를 가져온다. 감성은 회사·이벤트 ID의 해시를 0~99로 나눈 값이 설정 비율보다 작으면 Canary로 간다. 작업마다 모델 버전·주소·요청 ID를 DB에 고정한다.
 3. `POST /v1/predict`에는 작업 ID·분석 항목·도메인·본문을 보내고, 응답의 작업 ID·항목·모델 버전과 레이블을 검증한다. 카테고리 코드는 도메인별 `voc.classification_category_map`에서 업무 카테고리 UUID로 바꾼다. [요청·응답 예시 및 레이블 계약](../../contracts/classification-v1.md)
-4. 작업 결과와 호출 이력은 각각 `voc.classification_job`과 `voc.classification_attempt`에 기록한다. 최신 버전이면서 상담사가 결과를 수정하지 않은 경우 `public.ticket`의 `sentiment`, `category_uuid`, 해당 처리 상태를 반영한다. Django 목록·상세가 이 값을 조회한다.
+4. 작업 결과와 호출 이력은 각각 `voc.classification_job`과 `voc.classification_attempt`에 기록한다. 최신 버전이면서 상담사가 결과를 수정하지 않은 경우 `public.ticket`의 `sentiment`, `category_id`, 해당 처리 상태를 반영한다. Django 목록·상세가 이 값을 조회한다.
 
 재시작 후에는 처리 기한이 지난 작업을 다시 획득한다. HTTP 호출은 실패 시 같은 작업 ID·버전으로 반복될 수 있고, 업무 DB는 회사·이벤트·전처리 버전·본문 버전·분석 항목 조합으로 작업을 한 번 생성한다. 이전 실행의 늦은 응답은 현재 시도 번호를 확인한 후 처리한다.
 

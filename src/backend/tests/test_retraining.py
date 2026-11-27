@@ -40,17 +40,17 @@ class SchedulerTests(TestCase):
         self.company,self.staff,self.domain=uuid4(),uuid4(),uuid4()
         self.now=datetime(2026,1,12,3,tzinfo=sched.SEOUL)
         self.clock=self.enterContext(patch("django.utils.timezone.now",return_value=self.now))
-        self.actor={"role":"super_admin","staff_user_uuid":self.staff,"company_uuid":self.company}
+        self.actor={"role":"super_admin","staff_user_id":self.staff,"company_id":self.company}
         self.model="models:/voc-bert-base/1"
         self.eval=str(uuid4())
         self.cursor=self.enterContext(connection.cursor())
-        self.cursor.execute("INSERT INTO public.domain(domain_uuid,name) VALUES (%s,'시험')",(self.domain,))
-        self.cursor.execute("INSERT INTO public.company(company_uuid,email_domain) VALUES (%s,'schedule.test')",(self.company,))
-        self.cursor.execute("INSERT INTO public.staff_user(staff_user_uuid,company_uuid,email,password_hash,role) VALUES (%s,%s,'qa','!','super_admin')",(self.staff,self.company))
-        self.cursor.execute("""INSERT INTO voc.training_dataset(company_uuid,dataset_version,purpose,selection_sha256,
-            snapshot_ref,sha256,row_count,finalized_at) VALUES(%s,%s,'eval',%s,'s3://tests/frozen.parquet',repeat('a',64),1,now()) RETURNING dataset_uuid""",
+        self.cursor.execute("INSERT INTO public.domain(domain_id,name) VALUES (%s,'시험')",(self.domain,))
+        self.cursor.execute("INSERT INTO public.company(company_id,email_domain) VALUES (%s,'schedule.test')",(self.company,))
+        self.cursor.execute("INSERT INTO public.staff_user(staff_user_id,company_id,email,password_hash,role) VALUES (%s,%s,'qa','!','super_admin')",(self.staff,self.company))
+        self.cursor.execute("""INSERT INTO voc.training_dataset(company_id,dataset_version,purpose,selection_sha256,
+            snapshot_ref,sha256,row_count,finalized_at) VALUES(%s,%s,'eval',%s,'s3://tests/frozen.parquet',repeat('a',64),1,now()) RETURNING dataset_id""",
             (self.company,self.eval,self.eval))
-        self.dataset_uuid=self.cursor.fetchone()[0]
+        self.dataset_id=self.cursor.fetchone()[0]
         self.options={"enabled":True,"revision":0,"trigger_mode":"volume","min_new_gold":2,"model":self.model,"eval_dataset":self.eval}
         self.flows={}
         self.submits=0
@@ -86,10 +86,10 @@ class SchedulerTests(TestCase):
 
     def gold(self,when,body):
         feature=uuid4()
-        self.cursor.execute("""INSERT INTO voc.feature_snapshot(feature_uuid,company_uuid,domain_uuid,body,received_at,available_at,seed_ref)
+        self.cursor.execute("""INSERT INTO voc.feature_snapshot(feature_snapshot_id,company_id,domain_id,body,received_at,available_at,seed_ref)
             VALUES (%s,%s,%s,%s,%s,%s,%s)""",(feature,self.company,self.domain,body,when,when,str(feature)))
-        self.cursor.execute("""INSERT INTO voc.gold_label(feature_uuid,label_kind,sentiment_value,label_origin,as_of_at,confirmed_at,evidence)
-            VALUES(%s,'sentiment','중립','counselor',%s,%s,'{}') RETURNING gold_label_uuid""",(feature,when,when))
+        self.cursor.execute("""INSERT INTO voc.feature_snapshot_label(feature_snapshot_id,label_kind,sentiment_value,label_origin,as_of_at,confirmed_at,evidence)
+            VALUES(%s,'sentiment','중립','counselor',%s,%s,'{}') RETURNING feature_snapshot_label_id""",(feature,when,when))
         return feature,self.cursor.fetchone()[0]
 
     def test_window_volume_retry_and_success_watermark(self):
@@ -137,8 +137,8 @@ class SchedulerTests(TestCase):
         sched.save_policy(self.actor,self.options)
         tick=self.now+timedelta(minutes=5)
         feature,label=self.gold(tick,"  같은  본문 ")
-        self.cursor.execute("""INSERT INTO voc.training_dataset_item(dataset_uuid,feature_uuid,as_of_at,sentiment_label_uuid)
-            VALUES (%s,%s,%s,%s)""",(self.dataset_uuid,feature,tick,label))
+        self.cursor.execute("""INSERT INTO voc.training_dataset_item(dataset_id,feature_snapshot_id,as_of_at,sentiment_label_id)
+            VALUES (%s,%s,%s,%s)""",(self.dataset_id,feature,tick,label))
         self.gold(tick,"같은 본문")
         self.gold(tick,"신규 상담")
         self.assertEqual(sched.read_policy(self.company,tick)["new_gold"],1)
@@ -168,11 +168,11 @@ class SchedulerTests(TestCase):
 
     def test_cannot_enable_using_another_companys_evaluation_set(self):
         other_company, other_admin = uuid4(), uuid4()
-        self.cursor.execute("INSERT INTO public.company(company_uuid,email_domain) VALUES (%s,'other.test')",
+        self.cursor.execute("INSERT INTO public.company(company_id,email_domain) VALUES (%s,'other.test')",
                             (other_company,))
-        self.cursor.execute("""INSERT INTO public.staff_user(staff_user_uuid,company_uuid,email,password_hash,role)
+        self.cursor.execute("""INSERT INTO public.staff_user(staff_user_id,company_id,email,password_hash,role)
             VALUES (%s,%s,'qa','!','super_admin')""", (other_admin, other_company))
-        actor = {**self.actor, "company_uuid": other_company, "staff_user_uuid": other_admin}
+        actor = {**self.actor, "company_id": other_company, "staff_user_id": other_admin}
         with self.assertRaisesRegex(ValueError, "고정 평가셋"):
             sched.save_policy(actor, self.options)
         self.assertEqual(sched.read_policy(other_company)["revision"], 0)
@@ -194,7 +194,7 @@ class SchedulerTests(TestCase):
 
     def insert_stop_intent(self, name, requested_at, cutoff):
         self.cursor.execute("""INSERT INTO voc.training_stop_request
-            (workflow_name,workflow_uid,company_uuid,requested_by,requested_at,cutoff)
+            (workflow_name,workflow_uid,company_id,requested_by,requested_at,cutoff)
             VALUES (%s,%s,%s,%s,%s,%s)""",
             (name, self.flows[name]["metadata"]["uid"], self.company, self.staff, requested_at, cutoff))
 
@@ -232,8 +232,8 @@ class SchedulerTests(TestCase):
         self.gold(tomorrow, "중지 후 둘째 표본")
         self.assertEqual(sched.process_company(self.company, tomorrow), "submitted")
         self.assertEqual(self.submits, 3)
-        self.cursor.execute("""SELECT count(*) FROM voc.gold_label g JOIN voc.feature_snapshot f USING(feature_uuid)
-            WHERE f.company_uuid=%s""", (self.company,))
+        self.cursor.execute("""SELECT count(*) FROM voc.feature_snapshot_label g JOIN voc.feature_snapshot f USING(feature_snapshot_id)
+            WHERE f.company_id=%s""", (self.company,))
         self.assertEqual(self.cursor.fetchone()[0], 4)
 
     def test_command_recovers_manual_stop_without_policy(self):

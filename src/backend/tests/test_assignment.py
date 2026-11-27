@@ -25,7 +25,7 @@ class WorkerEndpointTests(SimpleTestCase):
         client = Client(enforce_csrf_checks=True)
         with patch("apps.assignment.presentation.views.apply_category_result") as apply:
             self.assertEqual(client.post(RESULT_URL, {}, content_type="application/json").status_code, 403)
-            for body in ({}, {"category_uuid": []}, {"category_uuid": ""}):
+            for body in ({}, {"category_id": []}, {"category_id": ""}):
                 response = client.post(RESULT_URL, body, content_type="application/json",
                                        HTTP_AUTHORIZATION=f"Bearer {TEST_TOKEN}")
                 self.assertEqual(response.status_code, 422)
@@ -67,28 +67,28 @@ class AssignmentTests(unittest.TestCase):
         self.client = Client()
         self.tenant = "qa" + uuid4().hex
         self.email = f"admin@{self.tenant}.test"
-        self.domain = self.insert("INSERT INTO domain(name) VALUES ('업종') RETURNING domain_uuid")
+        self.domain = self.insert("INSERT INTO domain(name) VALUES ('업종') RETURNING domain_id")
         self.company = self.insert("""
-            INSERT INTO company(email_domain,domain_uuid) VALUES (%s,%s) RETURNING company_uuid
+            INSERT INTO company(email_domain,domain_id) VALUES (%s,%s) RETURNING company_id
         """, f"{self.tenant}.test", self.domain)
         self.channel = self.insert("""
-            INSERT INTO channel(company_uuid,type,name) VALUES (%s,'gmail','Gmail') RETURNING channel_uuid
+            INSERT INTO channel(company_id,type,name) VALUES (%s,'gmail','Gmail') RETURNING channel_id
         """, self.company)
         self.cursor.execute("INSERT INTO voc.ticket_source_connection VALUES(%s,'gmail','account','',%s,%s)",
                             (self.tenant, self.company, self.channel))
-        self.teams = [self.insert("INSERT INTO team(company_uuid,name) VALUES (%s,%s) RETURNING team_uuid",
+        self.teams = [self.insert("INSERT INTO team(company_id,name) VALUES (%s,%s) RETURNING team_id",
                                   self.company, name) for name in ("배송", "환불")]
-        self.categories = [self.insert("INSERT INTO category(domain_uuid,name) VALUES (%s,%s) RETURNING category_uuid",
+        self.categories = [self.insert("INSERT INTO category(domain_id,name) VALUES (%s,%s) RETURNING category_id",
                                        self.domain, name) for name in ("배송 지연", "환불 지연", "기타")]
         self.staff = []
         for team, email in zip(self.teams, (self.email, f"agent@{self.tenant}.test")):
             self.staff.append(self.insert("""
-                INSERT INTO staff_user(company_uuid,team_uuid,email,password_hash,role)
-                VALUES (%s,%s,%s,%s,'admin') RETURNING staff_user_uuid
+                INSERT INTO staff_user(company_id,team_id,email,password_hash,role)
+                VALUES (%s,%s,%s,%s,'admin') RETURNING staff_user_id
             """, self.company, team, email, PasswordHasher().hash("TestPass12!")))
         for employee in self.staff:
             self.cursor.execute("""
-                INSERT INTO staff_permission SELECT %s,permission_uuid FROM permission
+                INSERT INTO staff_permission SELECT %s,permission_id FROM permission
                 WHERE code IN ('ticket.read','ticket.handle')
             """, (employee,))
             self.cursor.execute("INSERT INTO staff_assignment_policy VALUES (%s,%s,true,1,'after_all')",
@@ -97,26 +97,26 @@ class AssignmentTests(unittest.TestCase):
                                           content_type="application/json").status_code, 200)
         for category, team in zip(self.categories, self.teams):
             response = self.client.post("/settings/assignment/category-routes/", {
-                "category_uuid": category, "team_uuid": team,
+                "category_id": category, "team_id": team,
             })
             self.assertEqual(response.status_code, 302, response.content)
 
     def ticket(self):
         event_id = str(uuid4())
-        self.cursor.execute("INSERT INTO voc.bronze_messages VALUES(%s,%s,'gmail','account',%s,'qa',now(),'{}','{}')",
+        self.cursor.execute("INSERT INTO voc.bronze_message VALUES(%s,%s,'gmail','account',%s,'qa',now(),'{}','{}')",
                             (event_id, self.tenant, event_id))
         self.cursor.execute("""
-            INSERT INTO voc.silver_messages(schema_version,event_id,company_id,channel,connection_id,
-                source_message_id,source_conversation_id,message_kind,sender_ref,body_text,body_version,received_at,source_metadata)
+            INSERT INTO voc.silver_message(schema_version,event_id,source_company_id,source_channel_type,source_connection_id,
+                source_message_id,source_conversation_id,message_kind,sender_ref,body_text,body_version,received_at,source_metadata_json)
             VALUES (4,%s,%s,'gmail','account',%s,'thread','customer_inquiry','customer_qa','배송 상담',1,now(),
                    '{"label_ids":[],"to_addresses":[]}')
         """, (event_id, self.tenant, event_id))
-        ticket_id = self.insert("SELECT ticket_uuid FROM ticket WHERE source_event_id=%s", event_id)
+        ticket_id = self.insert("SELECT ticket_id FROM ticket WHERE source_event_id=%s", event_id)
         return event_id, ticket_id
 
-    def result(self, event_id, category_uuid, body_version=1, status=200):
+    def result(self, event_id, category_id, body_version=1, status=200):
         response = self.client.post(RESULT_URL, {
-            "company_uuid": self.company, "event_id": event_id, "category_uuid": category_uuid,
+            "company_uuid": self.company, "event_id": event_id, "category_uuid": category_id,
             "preprocess_version": 1, "body_version": body_version,
         }, content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {TEST_TOKEN}")
         self.assertEqual(response.status_code, status, response.content)
@@ -124,7 +124,7 @@ class AssignmentTests(unittest.TestCase):
 
     @override_settings(VOC_POC_RANDOM_ASSIGNMENT=True)
     def test_random_assignment_respects_team_slots_and_duplicate_delivery(self):
-        self.cursor.execute("UPDATE staff_user SET team_uuid=%s WHERE staff_user_uuid=%s", (self.teams[0], self.staff[1]))
+        self.cursor.execute("UPDATE staff_user SET team_id=%s WHERE staff_user_id=%s", (self.teams[0], self.staff[1]))
         first, _ = self.ticket()
         second, _ = self.ticket()
         waiting, _ = self.ticket()
@@ -145,8 +145,8 @@ class AssignmentTests(unittest.TestCase):
         self.assertEqual(self.result(event, self.categories[0])["outcome"], "already_applied")
         self.result(event, self.categories[1], status=409)
         assigned_count = self.insert("""
-            SELECT count(*) FROM ticket_event JOIN event_type USING (event_type_uuid)
-            WHERE ticket_uuid=%s AND code='assigned'
+            SELECT count(*) FROM ticket_event JOIN event_type USING (event_type_id)
+            WHERE ticket_id=%s AND code='assigned'
         """, ticket)
         self.assertEqual(assigned_count, 1)
         self.assertIsNone(self.result(wait_event, self.categories[0])["assignee_uuid"])
@@ -161,33 +161,33 @@ class AssignmentTests(unittest.TestCase):
         retry = self.client.post(url, payload, content_type="application/json")
         self.assertEqual(retry.json()["outcome"], "already_applied")
         self.assertEqual(self.insert("""
-            SELECT count(*) FROM ticket_event JOIN event_type USING (event_type_uuid)
-            WHERE ticket_uuid=%s AND code='ticket_category_changed' AND actor_uuid=%s
+            SELECT count(*) FROM ticket_event JOIN event_type USING (event_type_id)
+            WHERE ticket_id=%s AND code='ticket_category_changed' AND actor_id=%s
         """, ticket, self.staff[0]), 1)
 
         detail_url = f"/tickets/{ticket}/"
-        response = self.client.post(detail_url + "category/", {"category_uuid": self.categories[2]})
+        response = self.client.post(detail_url + "category/", {"category_id": self.categories[2]})
         self.assertEqual((response.status_code, response.url), (302, detail_url))
         self.cursor.execute("""
-            SELECT category_uuid::text,assigned_team_uuid::text,assignee_uuid::text,category_review_reason
-            FROM ticket WHERE ticket_uuid=%s
+            SELECT category_id::text,assigned_team_id::text,assignee_id::text,category_review_reason
+            FROM ticket WHERE ticket_id=%s
         """, (ticket,))
         self.assertEqual(self.cursor.fetchone(), (self.categories[2], self.teams[0], self.staff[0], None))
         invalid = self.client.post(url, {"category_uuid": str(uuid4())}, content_type="application/json")
         self.assertEqual(invalid.status_code, 422)
         self.assertEqual(self.result(event, self.categories[0])["outcome"], "manual_preserved")
-        self.assertIsNone(self.insert("SELECT assignee_uuid FROM ticket WHERE ticket_uuid=%s", wait_ticket))
+        self.assertIsNone(self.insert("SELECT assignee_id FROM ticket WHERE ticket_id=%s", wait_ticket))
 
     def test_abstention_missing_route_stale_and_completion_refill(self):
         event, ticket = self.ticket()
-        self.cursor.execute("UPDATE voc.silver_messages SET body_version=2 WHERE event_id=%s", (event,))
+        self.cursor.execute("UPDATE voc.silver_message SET body_version=2 WHERE event_id=%s", (event,))
         self.assertEqual(self.result(event, self.categories[0])["outcome"], "stale_result")
         self.assertEqual(self.result(event, None, 2)["review_reason"], "classification_abstained")
-        self.assertIsNone(self.insert("SELECT assigned_team_uuid FROM ticket WHERE ticket_uuid=%s", ticket))
+        self.assertIsNone(self.insert("SELECT assigned_team_id FROM ticket WHERE ticket_id=%s", ticket))
         manual = self.client.post(f"/api/tickets/{ticket}/category", {"category_uuid": self.categories[0]},
                                   content_type="application/json")
         self.assertEqual(manual.status_code, 403, manual.content)
-        self.assertEqual(self.insert("SELECT category_review_reason FROM ticket WHERE ticket_uuid=%s", ticket),
+        self.assertEqual(self.insert("SELECT category_review_reason FROM ticket WHERE ticket_id=%s", ticket),
                          "classification_abstained")
         other_event, _ = self.ticket()
         self.assertEqual(self.result(other_event, self.categories[2])["review_reason"], "no_team_mapping")
@@ -201,7 +201,7 @@ class AssignmentTests(unittest.TestCase):
                 "message_type": "reply", "body": "배송 안내", "request_key": str(uuid4()),
             }, content_type="application/json")
         self.assertEqual(response.status_code, 200, response.content)
-        self.assertEqual(self.insert("SELECT assignee_uuid FROM ticket WHERE ticket_uuid=%s", waiting),
+        self.assertEqual(self.insert("SELECT assignee_id FROM ticket WHERE ticket_id=%s", waiting),
                          self.staff[0])
 
     def test_analysis_form_saves_only_selected_values_and_unassigns_on_team_change(self):
@@ -211,28 +211,28 @@ class AssignmentTests(unittest.TestCase):
         detail_url = f"/tickets/{ticket}/?scope=mine"
         page = self.client.get(form, {"scope": "mine"})
         self.assertEqual(page.status_code, 200, page.content)
-        for field in ("sentiment", "category_uuid", "team_uuid"):
+        for field in ("sentiment", "category_id", "team_id"):
             self.assertIn(f'name="{field}"', page.text)
 
         def stored():
             self.cursor.execute("""
-                SELECT sentiment,sentiment_status,category_uuid::text,assigned_team_uuid::text,assignee_uuid::text
-                FROM ticket WHERE ticket_uuid=%s
+                SELECT sentiment,sentiment_status,category_id::text,assigned_team_id::text,assignee_id::text
+                FROM ticket WHERE ticket_id=%s
             """, (ticket,))
             return self.cursor.fetchone()
 
         self.assertEqual(self.client.post(form + "?scope=mine", {"sentiment": "중립"}).url, detail_url)
         self.assertEqual(stored(), ("중립", "succeeded", self.categories[0], self.teams[0], self.staff[0]))
-        invalid = self.client.post(form, {"team_uuid": str(uuid4()), "sentiment": "부정"})
+        invalid = self.client.post(form, {"team_id": str(uuid4()), "sentiment": "부정"})
         self.assertEqual(invalid.status_code, 422)
         self.assertEqual(stored()[0], "중립")
-        changed = self.client.post(form, {"team_uuid": self.teams[1], "category_uuid": self.categories[2]})
+        changed = self.client.post(form, {"team_id": self.teams[1], "category_id": self.categories[2]})
         self.assertEqual(changed.status_code, 302, changed.content)
         self.assertEqual(stored(), ("중립", "succeeded", self.categories[2], self.teams[1], None))
         self.assertEqual(self.client.post(form, {"sentiment": "긍정"}).status_code, 403)
         self.cursor.execute("""
-            SELECT code FROM event_type JOIN ticket_event USING(event_type_uuid)
-            WHERE ticket_uuid=%s AND actor_uuid=%s ORDER BY code
+            SELECT code FROM event_type JOIN ticket_event USING(event_type_id)
+            WHERE ticket_id=%s AND actor_id=%s ORDER BY code
         """, (ticket, self.staff[0]))
         self.assertEqual([row[0] for row in self.cursor.fetchall()],
                          ["ticket_category_changed", "ticket_sentiment_changed", "ticket_team_reassigned"])

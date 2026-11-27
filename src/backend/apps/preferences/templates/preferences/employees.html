@@ -7,7 +7,7 @@
     <thead><tr><th scope="col">이름</th><th scope="col">이메일</th><th scope="col">팀</th></tr></thead>
     <tbody>
       {% for employee in staff %}
-        <tr><th scope="row"><a class="settings-inline-link" href="{% url employee_url employee.staff_user_uuid %}">{{ employee.name }}</a></th><td>{{ employee.email }}</td><td>{{ employee.team|default:"—" }}</td></tr>
+        <tr><th scope="row"><a class="settings-inline-link" href="{% url employee_url employee.staff_user_id %}">{{ employee.name }}</a></th><td>{{ employee.email }}</td><td>{{ employee.team|default:"—" }}</td></tr>
       {% empty %}
         <tr><td colspan="3">조회할 직원이 없습니다.</td></tr>
       {% endfor %}

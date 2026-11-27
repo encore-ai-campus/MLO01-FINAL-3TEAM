@@ -57,12 +57,12 @@ def page(request):
         }, status=503 if request.method == "POST" else 200)
 
     try:
-        models = training.available_models(actor["company_uuid"])
+        models = training.available_models(actor["company_id"])
     except (OSError, ValueError, KeyError):
         return render(request, template, {
             **context, "notice": "MLflow에서 모델 버전을 가져오지 못했습니다.",
         }, status=503)
-    evaluations = evaluation_sets(actor["company_uuid"])
+    evaluations = evaluation_sets(actor["company_id"])
     form = TrainingForm(request.POST if request.method == "POST" else None, initial={
         "as_of_at": timezone.localtime(), "request_id": uuid4(),
     })
@@ -98,7 +98,7 @@ def page(request):
 def recent(request):
     actor = training_actor(request)
     try:
-        rows = training.recent_workflows(actor["company_uuid"])
+        rows = training.recent_workflows(actor["company_id"])
     except (OSError, ValueError, KeyError):
         return JsonResponse({"error": "최근 실행을 조회하지 못했습니다."}, status=503)
     for row in rows:
@@ -112,7 +112,7 @@ def detail(request, workflow_name):
     if not training.WORKFLOW_NAME.fullmatch(workflow_name):
         raise DeskError(404, "TRAINING_RUN_NOT_FOUND", "학습 실행을 찾을 수 없습니다.")
     try:
-        snapshot = training.snapshot(workflow_name, actor["company_uuid"])
+        snapshot = training.snapshot(workflow_name, actor["company_id"])
     except (OSError, ValueError, KeyError):
         snapshot = None
     return render(request, "preferences/model_training.html", {
@@ -125,7 +125,7 @@ def detail(request, workflow_name):
 def status(request, workflow_name):
     actor = training_actor(request)
     try:
-        return JsonResponse(training.snapshot(workflow_name, actor["company_uuid"]))
+        return JsonResponse(training.snapshot(workflow_name, actor["company_id"]))
     except (OSError, ValueError, KeyError):
         return JsonResponse({"error": "상태 조회 지연"}, status=503)
 

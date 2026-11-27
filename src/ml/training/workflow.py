@@ -37,8 +37,8 @@ def run_record(cn, ref):
     return row
 
 
-def load_by_id(cn, dataset_uuid):
-    item = cn.execute("SELECT * FROM voc.training_dataset WHERE dataset_uuid=%s", (dataset_uuid,)).fetchone()
+def load_by_id(cn, dataset_id):
+    item = cn.execute("SELECT * FROM voc.training_dataset WHERE dataset_id=%s", (dataset_id,)).fetchone()
     return item, load_snapshot(item)
 
 
@@ -46,14 +46,14 @@ def check_starting_model_history(cn, base_uri, company, eval_rows):
     while True:
         name, version = base_uri.removeprefix("models:/").rsplit("/", 1)
         parent = cn.execute("""
-            SELECT r.base_model_uri,r.train_dataset_uuid
+            SELECT r.base_model_uri,r.train_dataset_id
             FROM voc.model_version v JOIN voc.training_run r USING(workflow_ref)
             WHERE v.model_name=%s AND v.registry_version=%s
         """, (name, int(version))).fetchone()
         if parent is None:
             return
-        dataset, rows = load_by_id(cn, parent["train_dataset_uuid"])
-        if str(dataset["company_uuid"]) != str(company):
+        dataset, rows = load_by_id(cn, parent["train_dataset_id"])
+        if str(dataset["company_id"]) != str(company):
             raise ValueError("The starting model belongs to another company")
         if len(exclude_evaluation(rows, eval_rows)) != len(rows):
             raise ValueError("Evaluation examples overlap a starting model's training data")
@@ -74,11 +74,11 @@ def prepare(cn, args, progress=NO_PROGRESS):
             eval_rows = load_snapshot(evaluation)
             result["paths"] = {"eval": evaluation["snapshot_ref"]}
         if existing:
-            if (existing["eval_dataset_uuid"] != evaluation["dataset_uuid"]
+            if (existing["eval_dataset_id"] != evaluation["dataset_id"]
                     or existing["base_model_uri"] != args.base_model_uri or existing["model_name"] != args.model_name
-                    or existing["label_cutoff"] != cutoff):
+                    or existing["label_cutoff_at"] != cutoff):
                 raise ValueError("Workflow inputs changed")
-            trainer, _ = load_by_id(cn, existing["train_dataset_uuid"])
+            trainer, _ = load_by_id(cn, existing["train_dataset_id"])
             if args.train_dataset and trainer["dataset_version"] != args.train_dataset:
                 raise ValueError("Workflow training dataset changed")
             progress.write("dataset_save", "reused", paths={"train": trainer["snapshot_ref"]})
@@ -97,9 +97,9 @@ def prepare(cn, args, progress=NO_PROGRESS):
                     raise ValueError("No eligible dataset items")
             trainer = finalize_dataset(cn, args.company, "train", rows, progress)
         cn.execute("""
-            INSERT INTO voc.training_run(workflow_ref,train_dataset_uuid,eval_dataset_uuid,base_model_uri,model_name,label_cutoff)
+            INSERT INTO voc.training_run(workflow_ref,train_dataset_id,eval_dataset_id,base_model_uri,model_name,label_cutoff_at)
             VALUES (%s,%s,%s,%s,%s,%s)
-        """, (args.workflow_ref, trainer["dataset_uuid"], evaluation["dataset_uuid"],
+        """, (args.workflow_ref, trainer["dataset_id"], evaluation["dataset_id"],
               args.base_model_uri, args.model_name, cutoff))
         return trainer["dataset_version"]
 
@@ -112,8 +112,8 @@ def train(cn, args, progress=NO_PROGRESS):
                 progress.write(stage, "reused")
             return record["logged_model_uri"]
         with progress.stage("training_read") as result:
-            train_set, train_rows = load_by_id(cn, record["train_dataset_uuid"])
-            eval_set, eval_rows = load_by_id(cn, record["eval_dataset_uuid"])
+            train_set, train_rows = load_by_id(cn, record["train_dataset_id"])
+            eval_set, eval_rows = load_by_id(cn, record["eval_dataset_id"])
             result["paths"] = {"train": train_set["snapshot_ref"], "eval": eval_set["snapshot_ref"]}
         client = mlflow.MlflowClient()
         experiment = mlflow.set_experiment("voc-classification")
@@ -136,8 +136,8 @@ def train(cn, args, progress=NO_PROGRESS):
             mlflow.log_params({**options, "base_model_uri": record["base_model_uri"],
                 "preprocess_version": PREPROCESS_VERSION, "input_features": ",".join(MODEL_FIELDS),
                 "domain_config_sha256": checksum(canonical(config).encode())})
-            if record["label_cutoff"] is not None:
-                mlflow.log_param("label_cutoff", record["label_cutoff"].isoformat())
+            if record["label_cutoff_at"] is not None:
+                mlflow.log_param("label_cutoff", record["label_cutoff_at"].isoformat())
             for context, dataset in (("training", train_set), ("evaluation", eval_set)):
                 mlflow.log_input(mlflow.data.from_pandas(
                     _metadata_frame(dataset), source=dataset["snapshot_ref"],
@@ -148,7 +148,7 @@ def train(cn, args, progress=NO_PROGRESS):
             from .model import fit
 
             review_counts = {}
-            metrics = fit(record["base_model_uri"], str(train_set["company_uuid"]),
+            metrics = fit(record["base_model_uri"], str(train_set["company_id"]),
                 train_rows, eval_rows, config, output, progress=progress, review_counts=review_counts, **options)
             mlflow.log_metrics(metrics)
             mlflow.log_dict(review_counts, "evaluation-counts.json")
@@ -178,7 +178,7 @@ def train(cn, args, progress=NO_PROGRESS):
 
 def _dataset_ref(dataset):
     return {
-        "dataset_uuid": str(dataset["dataset_uuid"]),
+        "dataset_uuid": str(dataset["dataset_id"]),
         **{key: dataset[key] for key in ("dataset_version", "snapshot_ref", "sha256", "row_count")},
     }
 
@@ -186,7 +186,7 @@ def _dataset_ref(dataset):
 def _metadata_frame(dataset):
     import pandas as pd
 
-    return pd.DataFrame([{"dataset_uuid": str(dataset["dataset_uuid"]), "row_count": str(dataset["row_count"])}])
+    return pd.DataFrame([{"dataset_uuid": str(dataset["dataset_id"]), "row_count": str(dataset["row_count"])}])
 
 
 def register_candidate(cn, ref, progress=NO_PROGRESS):
@@ -212,11 +212,11 @@ def register_candidate(cn, ref, progress=NO_PROGRESS):
                 "input_features": ",".join(MODEL_FIELDS), "preprocess_version": PREPROCESS_VERSION}
         for purpose in ("train", "eval"):
             dataset = cn.execute("""
-                SELECT dataset_version,snapshot_ref,company_uuid FROM voc.training_dataset WHERE dataset_uuid=%s
-            """, (run[f"{purpose}_dataset_uuid"],)).fetchone()
+                SELECT dataset_version,snapshot_ref,company_id FROM voc.training_dataset WHERE dataset_id=%s
+            """, (run[f"{purpose}_dataset_id"],)).fetchone()
             tags[f"{purpose}_dataset"] = dataset["dataset_version"]
             tags[f"{purpose}_snapshot_ref"] = dataset["snapshot_ref"]
-            tags["company_uuid"] = str(dataset["company_uuid"])
+            tags["company_uuid"] = str(dataset["company_id"])
         version = prior or mlflow.register_model(run["logged_model_uri"], name, tags=tags, await_registration_for=0)
         uri = f"models:/{name}/{version.version}"
         # Resolve the registered artifact before exposing a successful version in the DB.
@@ -230,9 +230,9 @@ def register_candidate(cn, ref, progress=NO_PROGRESS):
         return uri
 
 
-def trace(cn, name, version, feature_uuid):
+def trace(cn, name, version, feature_snapshot_id):
     model = cn.execute("""
-        SELECT v.*,r.mlflow_run_id,r.base_model_uri,r.train_dataset_uuid,r.eval_dataset_uuid
+        SELECT v.*,r.mlflow_run_id,r.base_model_uri,r.train_dataset_id,r.eval_dataset_id
         FROM voc.model_version v JOIN voc.training_run r USING(workflow_ref)
         WHERE v.model_name=%s AND v.registry_version=%s
     """, (name, version)).fetchone()
@@ -241,11 +241,11 @@ def trace(cn, name, version, feature_uuid):
     lineage = {"model_uri": model["artifact_ref"], "run_id": model["mlflow_run_id"], "base": model["base_model_uri"]}
     found = False
     for purpose in ("train", "eval"):
-        dataset, rows = load_by_id(cn, model[f"{purpose}_dataset_uuid"])
+        dataset, rows = load_by_id(cn, model[f"{purpose}_dataset_id"])
         lineage[purpose] = _dataset_ref(dataset)
-        if feature_uuid:
+        if feature_snapshot_id:
             for row in rows:
-                if row["feature_uuid"] == feature_uuid:
+                if row["feature_uuid"] == feature_snapshot_id:
                     found = True
                     lineage[purpose]["source"] = {k: row[k] for k in (
                         "feature_uuid", "bronze_event_id", "silver_event_id", "silver_schema_version",
@@ -253,7 +253,7 @@ def trace(cn, name, version, feature_uuid):
                         "sentiment_label_uuid", "category_label_uuid", "seed_ref",
                     )}
                     break
-    if feature_uuid and not found:
+    if feature_snapshot_id and not found:
         raise ValueError("The feature does not belong to this model's datasets")
     return lineage
 

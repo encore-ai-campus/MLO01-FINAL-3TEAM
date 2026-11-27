@@ -122,9 +122,9 @@ def outcomes(run_id):
     statement = """
       SELECT coalesce(json_agg(r),'[]') FROM (
         SELECT j.event_id, j.analysis_kind, j.state, j.applied, j.route, j.model_version, a.served_version, a.outcome,
-               j.attempt_count,j.label, t.sentiment,t.category_uuid,t.sentiment_status,t.category_status,
+               j.attempt_count,j.label, t.sentiment,t.category_id,t.sentiment_status,t.category_status,
                extract(epoch FROM j.finished_at-j.queued_at) AS seconds
-        FROM voc.classification_job j JOIN voc.bronze_messages b USING(event_id)
+        FROM voc.classification_job j JOIN voc.bronze_message b USING(event_id)
         JOIN public.ticket t ON t.source_event_id=j.event_id
         LEFT JOIN voc.classification_attempt a ON (a.request_id,a.attempt_no)=(j.request_id,j.attempt_count)
         WHERE b.origin='synthetic-canary' AND split_part(b.source_message_id,'/',1)=:'run'
@@ -172,7 +172,7 @@ def verify(deadline_seconds):
         if (key in keys or row["outcome"] != "succeeded" or row["route"] not in allowed or row["served_version"] != version
                 or row["model_version"] != version or not row["applied"]
                 or row["label"] != {"category": "delivery", "sentiment": "중립"}[task]
-                or row["category_uuid"] != CATEGORY or row["sentiment"] != "중립"
+                or row["category_id"] != CATEGORY or row["sentiment"] != "중립"
                 or row["sentiment_status"] != "succeeded" or row["category_status"] != "succeeded"
                 or not 0 <= row["seconds"] <= deadline_seconds):
             raise RuntimeError(f"Unexpected result for {key}: {row}")

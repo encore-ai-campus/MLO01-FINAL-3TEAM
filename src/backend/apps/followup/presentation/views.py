@@ -4,20 +4,20 @@ from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
 from apps.accounts.presentation.views import session_token
-from config.http import DeskJSONEncoder, validate_form
+from config.http import DeskJSONEncoder, record_output, validate_form
 from ..services import open_desk
 from .forms import CompleteForm, ContactForm, ContactQueryForm, TrackScheduleForm
 
 
 def response(data, status=200):
-    return JsonResponse(data, status=status, encoder=DeskJSONEncoder)
+    return JsonResponse(record_output(data), status=status, encoder=DeskJSONEncoder)
 
 
 def with_source(row):
-    ticket = row["ticket_uuid"]
+    ticket = row["ticket_id"]
     if ticket:
         return {**row, "source": "ticket", "source_url": reverse("tickets:detail", args=[ticket])}
-    return {**row, "source": "chat", "source_url": reverse("followup:chat", args=[row["chat_uuid"]])}
+    return {**row, "source": "chat", "source_url": reverse("followup:chat", args=[row["chat_id"]])}
 
 
 @require_GET
@@ -26,10 +26,10 @@ def page_data(request):
         return response({
             "tickets": desk.track_options() if desk.can_read else [],
             "tracks": [{
-                **with_source(row), "remove_url": reverse("followup:track", args=[row["ticket_uuid"]]),
+                **with_source(row), "remove_url": reverse("followup:track", args=[row["ticket_id"]]),
             } for row in desk.tracks()] if desk.can_read else [],
             "contacts": [{
-                **with_source(row), "complete_url": reverse("followup:complete", args=[row["contact_uuid"]]),
+                **with_source(row), "complete_url": reverse("followup:complete", args=[row["contact_id"]]),
             } for row in desk.contacts()],
             "notifications": desk.notifications() if desk.can_read else [],
         })
@@ -43,9 +43,9 @@ def track_schedule(request):
 
 
 @require_GET
-def chat_page(request, chat_uuid):
+def chat_page(request, chat_id):
     with open_desk(session_token(request)) as desk:
-        context = {"actor": desk.actor, "active": "followup", "chat": desk.chat(chat_uuid)}
+        context = {"actor": desk.actor, "active": "followup", "chat": desk.chat(chat_id)}
     return render(request, "followup/chat.html", context)
 
 
@@ -56,13 +56,13 @@ def tracks(request):
 
 
 @require_http_methods(["POST", "DELETE"])
-def track(request, ticket_uuid):
+def track(request, ticket_id):
     with open_desk(session_token(request)) as desk:
         if request.method == "DELETE":
-            desk.untrack(ticket_uuid)
+            desk.untrack(ticket_id)
             return HttpResponse(status=204)
-        created = desk.track(ticket_uuid)
-        return response({"ticket_uuid": ticket_uuid}, 201 if created else 200)
+        created = desk.track(ticket_id)
+        return response({"ticket_id": ticket_id}, 201 if created else 200)
 
 
 @require_GET
@@ -84,18 +84,18 @@ def contacts(request):
 
 
 @require_GET
-def contact(request, contact_uuid):
+def contact(request, contact_id):
     with open_desk(session_token(request)) as desk:
-        return response(with_source(desk.contact(contact_uuid)))
+        return response(with_source(desk.contact(contact_id)))
 
 
 @require_POST
-def complete(request, contact_uuid):
+def complete(request, contact_id):
     with open_desk(session_token(request)) as desk:
-        return response(with_source(desk.complete(contact_uuid, validate_form(CompleteForm, request))))
+        return response(with_source(desk.complete(contact_id, validate_form(CompleteForm, request))))
 
 
 @require_GET
-def chat(request, chat_uuid):
+def chat(request, chat_id):
     with open_desk(session_token(request)) as desk:
-        return response(desk.chat(chat_uuid))
+        return response(desk.chat(chat_id))

@@ -18,7 +18,7 @@
         <tr>
           <th scope="row"><details><summary>{{ reply.name }}</summary>{{ reply.body|linebreaksbr }}</details></th>
           <td>{{ reply.category_name }}</td><td>{{ reply.updated_at|date:"Y-m-d H:i" }}</td>
-          <td>{% if reply.scope == "personal" or can_edit_team %}<a class="desk-button" href="{% url 'preferences:reply-edit' reply.reply_uuid %}">편집</a>{% endif %}</td>
+          <td>{% if reply.scope == "personal" or can_edit_team %}<a class="desk-button" href="{% url 'preferences:reply-edit' reply.reply_id %}">편집</a>{% endif %}</td>
         </tr>
       {% empty %}
         <tr><td colspan="4">조건에 맞는 신속답변이 없습니다.</td></tr>

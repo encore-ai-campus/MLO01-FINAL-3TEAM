@@ -25,7 +25,7 @@ class ChannelReplyTests(unittest.TestCase):
         self.addCleanup(env.stop)
 
     def test_gmail_reply_uses_original_thread_subject_and_rfc_message_id(self):
-        source = {'company_uuid': 'company-a', 'source_kind': 'gmail',
+        source = {'company_id': 'company-a', 'source_kind': 'gmail',
                   'connection_id': 'mailbox@example.com', 'source_conversation_id': 'thread-1',
                   'rfc_message_id': '<original@example.com>', 'original_subject': '배송 문의',
                   'reply_address': 'customer@example.com'}
@@ -47,7 +47,7 @@ class ChannelReplyTests(unittest.TestCase):
         self.assertEqual(message.get_content().strip(), '답변입니다 🙂')
 
     def test_discord_reply_references_original_message_without_mentions(self):
-        source = {'company_uuid': 'company-a', 'source_kind': 'discord', 'connection_id': 'guild-a',
+        source = {'company_id': 'company-a', 'source_kind': 'discord', 'connection_id': 'guild-a',
                   'source_channel_id': '123456789', 'source_message_id': '987654321'}
         with patch.object(delivery, 'post', return_value={'id': 'reply-2'}) as post:
             self.assertEqual(delivery.send_reply(source, '상담 답변 @everyone'), 'reply-2')

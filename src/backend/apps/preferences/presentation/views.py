@@ -32,7 +32,7 @@ def display(request):
     with connection.cursor() as cursor:
         actor = current_actor(session_token(request), cursor)
         defaults = [{"id": key, "visible": True} for key in HOME_CARD_LABELS]
-        saved = actor["display_preferences"]
+        saved = actor["display_preferences_json"]
         cards = saved.get("cards", defaults)
         sidebar = saved.get("sidebar", [key for key, _ in SIDEBAR_ITEMS])
         sidebar_items = available_sidebar_items(actor)
@@ -72,7 +72,7 @@ def home_cards(request):
 def replies(request):
     with connection.cursor() as cursor:
         actor = current_actor(session_token(request), cursor)
-        company, staff = actor["company_uuid"], actor["staff_user_uuid"]
+        company, staff = actor["company_id"], actor["staff_user_id"]
         categories = [(str(key), name) for key, name in repository.categories(cursor, company)]
         form = ReplySearchForm(request.GET, categories=categories)
         valid = form.is_valid()
@@ -88,29 +88,29 @@ def replies(request):
 
 
 @require_http_methods(["GET", "POST"])
-def reply(request, reply_uuid=None):
+def reply(request, reply_id=None):
     saving = request.method == "POST"
     with transaction.atomic(), connection.cursor() as cursor:
         actor = current_actor(session_token(request), cursor)
-        company = actor["company_uuid"]
+        company = actor["company_id"]
         existing = None
-        if reply_uuid:
-            rows = repository.visible_replies(cursor, actor, reply_uuid=reply_uuid, lock=saving)
+        if reply_id:
+            rows = repository.visible_replies(cursor, actor, reply_id=reply_id, lock=saving)
             if not rows:
                 raise DeskError(404, "QUICK_REPLY_NOT_FOUND", "신속답변을 찾을 수 없습니다.")
             existing = rows[0]
             if existing["scope"] == "team":
                 require_work_permission(cursor, actor, TEAM_REPLY_EDIT)
             if saving and request.POST.get("action") == "delete":
-                repository.delete_reply(cursor, company, reply_uuid)
+                repository.delete_reply(cursor, company, reply_id)
                 return redirect("preferences:replies")
         categories = [(str(key), name) for key, name in repository.categories(cursor, company)]
         initial = existing or {"scope": "team" if request.GET.get("scope") == "team" else "personal"}
         form = QuickReplyForm(request.POST if saving else None, initial=initial,
                               categories=categories, editing=bool(existing))
         if not saving and not existing:
-            can_edit_team = actor.get("team_uuid") and work_permissions(
-                cursor, company, actor["staff_user_uuid"], (TEAM_REPLY_EDIT,),
+            can_edit_team = actor.get("team_id") and work_permissions(
+                cursor, company, actor["staff_user_id"], (TEAM_REPLY_EDIT,),
             )
             if not can_edit_team:
                 form.fields["scope"].choices = [("personal", "내 신속답변")]
@@ -118,19 +118,19 @@ def reply(request, reply_uuid=None):
         if saving and form.is_valid():
             data = form.cleaned_data
             if existing:
-                saved = repository.update_reply(cursor, actor, reply_uuid, data)
+                saved = repository.update_reply(cursor, actor, reply_id, data)
             else:
                 shared = data["scope"] == "team"
-                team = actor.get("team_uuid") if shared else None
+                team = actor.get("team_id") if shared else None
                 if shared:
                     require_work_permission(cursor, actor, TEAM_REPLY_EDIT)
                     if team not in {str(key) for key, _ in repository.company_teams(cursor, company)}:
                         raise DeskError(400, "TEAM_REQUIRED", "소속 팀이 있어야 팀 신속답변을 등록할 수 있습니다.")
-                reply_uuid = repository.create_reply(cursor, actor, data, team)
-                saved = bool(reply_uuid)
+                reply_id = repository.create_reply(cursor, actor, data, team)
+                saved = bool(reply_id)
             if saved:
-                return redirect("preferences:reply-edit", reply_uuid=reply_uuid)
-            form.add_error("category_uuid", "현재 회사에서 사용할 수 있는 카테고리를 다시 선택해 주세요.")
+                return redirect("preferences:reply-edit", reply_id=reply_id)
+            form.add_error("category_id", "현재 회사에서 사용할 수 있는 카테고리를 다시 선택해 주세요.")
     return render(request, "preferences/form.html", {
         "actor": actor, "active": "settings", "title": "신속답변 편집" if existing else "신속답변 등록",
         "form": form, "back_url": "preferences:replies", "can_delete": bool(existing),
@@ -143,16 +143,16 @@ def messenger(request):
     with transaction.atomic(), connection.cursor() as cursor:
         actor = current_actor(session_token(request), cursor)
         require_settings_admin(actor)
-        company = actor["company_uuid"]
+        company = actor["company_id"]
         active_provider = repository.active_messenger(cursor, company)
         requested = (request.POST if saving else request.GET).get("provider")
         provider = requested if requested in dict(PROVIDERS) else (active_provider or "discord")
         routes = repository.messenger_routes(cursor, company, provider)
-        default = next((row["channel"] for row in routes if not row["team_uuid"] and not row["staff_user_uuid"]), "")
+        default = next((row["channel"] for row in routes if not row["team_id"] and not row["staff_user_id"]), "")
         targets = {
             "default": [],
             "team": [(str(key), name) for key, name in repository.company_teams(cursor, company)],
-            "staff": [(str(row["staff_user_uuid"]), f'{row["name"]} ({row["email"]})')
+            "staff": [(str(row["staff_user_id"]), f'{row["name"]} ({row["email"]})')
                       for row in company_staff(cursor, company)],
         }
         destination = request.POST.get("destination") if saving else None

@@ -59,7 +59,7 @@ def send_reply(source, body, *, files=()):
     kind = source['source_kind']
     try:
         credentials = json.loads(os.getenv('TASK3_REPLY_CONNECTIONS', '{}'))[
-            str(source['company_uuid'])][kind][source['connection_id']]
+            str(source['company_id'])][kind][source['connection_id']]
         if kind == 'gmail':
             mailbox = source['connection_id']
             address = source['reply_address']

@@ -17,20 +17,20 @@ class AssignmentPolicyForm(forms.Form):
 
 
 class CategoryRouteForm(forms.Form):
-    category_uuid = forms.UUIDField()
-    team_uuid = forms.UUIDField(required=False)
+    category_id = forms.UUIDField()
+    team_id = forms.UUIDField(required=False)
 
 
 class CategoryChangeForm(forms.Form):
-    category_uuid = forms.UUIDField()
+    category_id = forms.UUIDField()
     reason = forms.CharField(max_length=1000, required=False)
-    feature_uuid = forms.UUIDField(required=False)
+    feature_snapshot_id = forms.UUIDField(required=False)
 
 
 class AnalysisChangeForm(CategoryChangeForm):
-    category_uuid = forms.UUIDField(required=False)
+    category_id = forms.UUIDField(required=False)
     sentiment = forms.ChoiceField(choices=[(value, value) for value in SENTIMENTS], required=False)
-    team_uuid = forms.UUIDField(required=False)
+    team_id = forms.UUIDField(required=False)
     is_urgent = forms.TypedChoiceField(
         choices=(("", "기록하지 않음"), ("yes", "긴급"), ("no", "일반")),
         coerce=lambda value: value == "yes", empty_value=None, required=False,
@@ -38,8 +38,8 @@ class AnalysisChangeForm(CategoryChangeForm):
 
 
 class CategoryResultForm(forms.Form):
-    company_uuid = forms.UUIDField()
+    company_id = forms.UUIDField()
     event_id = forms.UUIDField()
     preprocess_version = forms.IntegerField(min_value=1, max_value=2147483647)
     body_version = forms.IntegerField(min_value=1, max_value=2147483647)
-    category_uuid = forms.UUIDField(required=False)
+    category_id = forms.UUIDField(required=False)

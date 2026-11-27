@@ -64,13 +64,13 @@ def require_settings_admin(actor):
 def work_permission_targets(cursor, actor, *, staff_uuid=None, lock=False):
     require_settings_admin(actor)
     return repository.company_staff(
-        cursor, actor["company_uuid"], include_super_admin=actor["role"] == "super_admin",
+        cursor, actor["company_id"], include_super_admin=actor["role"] == "super_admin",
         staff_uuid=staff_uuid, lock=lock,
     )
 
 
 def settings_employee(cursor, actor, staff_uuid, *, lock=False):
-    staff = repository.company_employee(cursor, actor["company_uuid"], staff_uuid, lock=lock)
+    staff = repository.company_employee(cursor, actor["company_id"], staff_uuid, lock=lock)
     if not staff:
         raise DeskError(404, "STAFF_NOT_FOUND", "직원을 찾을 수 없습니다.")
     return staff
@@ -80,7 +80,7 @@ def require_work_permission(cursor, actor, code):
     if code == DASHBOARD_READ:
         allowed = actor["can_read_dashboard"]
     else:
-        allowed = repository.work_permissions(cursor, actor["company_uuid"], actor["staff_user_uuid"], (code,))
+        allowed = repository.work_permissions(cursor, actor["company_id"], actor["staff_user_id"], (code,))
     if not allowed:
         raise DeskError(403, "WORK_PERMISSION_REQUIRED", "이 업무를 처리할 권한이 없습니다.")
 

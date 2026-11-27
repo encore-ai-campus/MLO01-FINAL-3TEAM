@@ -6,14 +6,14 @@ from . import page, views
 app_name = "followup"
 urlpatterns = [
     path("follow-up/", page.index, name="page"),
-    path("follow-up/chats/<uuid:chat_uuid>/", views.chat_page, name="chat-page"),
+    path("follow-up/chats/<uuid:chat_id>/", views.chat_page, name="chat-page"),
     path("api/follow-up/page-data", views.page_data, name="page-data"),
     path("api/follow-up/track-schedule", views.track_schedule, name="track-schedule"),
     path("api/follow-up/tracks", views.tracks, name="tracks"),
-    path("api/follow-up/tracks/<uuid:ticket_uuid>", views.track, name="track"),
+    path("api/follow-up/tracks/<uuid:ticket_id>", views.track, name="track"),
     path("api/follow-up/notifications", views.notifications, name="notifications"),
     path("api/follow-up/contacts", views.contacts, name="contacts"),
-    path("api/follow-up/contacts/<uuid:contact_uuid>", views.contact, name="contact"),
-    path("api/follow-up/contacts/<uuid:contact_uuid>/complete", views.complete, name="complete"),
-    path("api/chats/<uuid:chat_uuid>", views.chat, name="chat"),
+    path("api/follow-up/contacts/<uuid:contact_id>", views.contact, name="contact"),
+    path("api/follow-up/contacts/<uuid:contact_id>/complete", views.complete, name="complete"),
+    path("api/chats/<uuid:chat_id>", views.chat, name="chat"),
 ]

@@ -20,6 +20,34 @@ class DeskJSONEncoder(DjangoJSONEncoder):
         return super().default(value)
 
 
+# Desk endpoints expose UUID fields independently of PostgreSQL column names.
+_RECORD_UUID_FIELDS = (
+    "actor", "assignee", "assigned_team", "attachment", "category", "channel", "chat",
+    "chat_message", "collab_request", "collab_request_attachment", "company", "completed_by", "contact",
+    "created_by", "domain", "recipient", "requester", "review_channel", "staff_user", "team",
+    "ticket", "ticket_event", "ticket_message",
+)
+_RECORD_FIELD_NAMES = {f"{name}_id": f"{name}_uuid" for name in _RECORD_UUID_FIELDS}
+_RECORD_FIELD_NAMES.update(feature_snapshot_id="feature_uuid", is_category_manual="category_manually_set")
+
+
+def record_input(data, fields):
+    for current in fields:
+        previous = _RECORD_FIELD_NAMES.get(current)
+        if previous and current not in data and previous in data:
+            data = data.copy()
+            data[current] = data[previous]
+    return data
+
+
+def record_output(value):
+    if isinstance(value, dict):
+        return {_RECORD_FIELD_NAMES.get(key, key): record_output(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [record_output(item) for item in value]
+    return value
+
+
 class DeskError(Exception):
     def __init__(self, status, code, message):
         super().__init__(message)
@@ -38,7 +66,7 @@ def validate_form(form_type, request):
             raise DeskError(422, "INVALID_REQUEST", "요청 본문을 확인해 주세요.")
     else:
         data = request.POST
-    form = form_type(data)
+    form = form_type(record_input(data, form_type.base_fields))
     if not form.is_valid():
         raise DeskError(422, "INVALID_REQUEST", "입력값의 형식과 범위를 확인해 주세요.")
     return form.cleaned_data
