@@ -495,6 +495,8 @@ class TicketTests(unittest.TestCase):
             return response.json()
         data = detail(a)
         self.assertEqual([m["ticket_uuid"] for m in data["messages"]], [a])
+        self.assertNotIn("customer_email", data["ticket"])
+        self.assertNotIn("staff_user_uuid", data["messages"][0])
         self.assertEqual([row["ticket_uuid"] for row in data["customer_tickets"]], [b])
         self.assertEqual([c["ticket_uuid"] for c in data["duplicate_candidates"]], [discord])
         self.assertEqual([c["ticket_uuid"] for c in detail(discord)["duplicate_candidates"]], [a])
@@ -534,6 +536,7 @@ class TicketTests(unittest.TestCase):
         detail = browser.get(detail_path + "?scope=mine")
         self.assertContainsHTML(detail, "배송 요청 2")
         self.assertContainsHTML(detail, 'class="detail-meta"')
+        self.assertEqual(detail.context["conversation"][0]["body"], "배송 요청 2")
         self.grant_conduct()
         detail_url = f"/tickets/{self.tickets[1]}/"
         memo = {"message_type": "memo", "body": "브라우저 메모", "request_key": str(uuid4())}
