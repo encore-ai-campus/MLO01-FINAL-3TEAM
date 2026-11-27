@@ -86,3 +86,20 @@ def review_attachment(request, data):
             or (content_type == "image/webp" and image[8:12] != b"WEBP")):
         raise invalid("이미지 형식과 2 MiB 크기 제한을 확인해 주세요.")
     return {"content_type": content_type, "content": content}
+
+
+def uploaded_references(request):
+    signatures = {**IMAGE_SIGNATURES, "application/pdf": (b"%PDF-",)}
+    files = request.FILES.getlist("reference_files")
+    if sum(file.size for file in files) > 10 * 1024 * 1024:
+        raise invalid("첨부파일의 전체 크기는 10 MiB까지 허용됩니다.")
+    attachments = []
+    for file in files:
+        content = file.read()
+        content_type = file.content_type
+        if (content_type not in signatures or not content.startswith(signatures[content_type])
+                or (content_type == "image/webp" and content[8:12] != b"WEBP")):
+            raise invalid("PNG·JPEG·GIF·WebP 이미지 또는 PDF를 첨부해 주세요.")
+        attachments.append({"content_type": content_type, "filename": file.name,
+                            "content": base64.b64encode(content).decode("ascii")})
+    return attachments

@@ -8,6 +8,7 @@ from http.client import HTTPException
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+from uuid import uuid4
 
 
 class DeliveryError(Exception):
@@ -37,7 +38,24 @@ def post(url, data, content_type, authorization=None):
         raise DeliveryError('unknown') from None
 
 
-def send_reply(source, body):
+def discord_payload(payload, files):
+    if not files:
+        return json.dumps(payload).encode(), 'application/json'
+    boundary = uuid4().hex
+    payload["attachments"] = [{"id": index, "filename": file["filename"]} for index, file in enumerate(files)]
+    parts = [
+        f'--{boundary}\r\nContent-Disposition: form-data; name="payload_json"\r\n'
+        'Content-Type: application/json\r\n\r\n'.encode() + json.dumps(payload).encode() + b'\r\n',
+    ]
+    for index, file in enumerate(files):
+        header = (f'--{boundary}\r\nContent-Disposition: form-data; name="files[{index}]"; filename="file-{index}"\r\n'
+                  f'Content-Type: {file["content_type"]}\r\n\r\n')
+        parts.append(header.encode() + file["content"] + b'\r\n')
+    parts.append(f'--{boundary}--\r\n'.encode())
+    return b''.join(parts), f'multipart/form-data; boundary={boundary}'
+
+
+def send_reply(source, body, *, files=()):
     kind = source['source_kind']
     try:
         credentials = json.loads(os.getenv('TASK3_REPLY_CONNECTIONS', '{}'))[
@@ -56,6 +74,9 @@ def send_reply(source, body):
             message['In-Reply-To'] = message_id
             message['References'] = message_id
             message.set_content(body)
+            for file in files:
+                maintype, subtype = file["content_type"].split("/", 1)
+                message.add_attachment(file["content"], maintype, subtype, filename=file["filename"])
             token = post(
                 'https://oauth2.googleapis.com/token',
                 urlencode({'grant_type': 'refresh_token', 'client_id': credentials['client_id'],
@@ -79,7 +100,8 @@ def send_reply(source, body):
     except (KeyError, TypeError, ValueError, DeliveryError):
         raise DeliveryError('failed') from None
 
-    result = post(url, json.dumps(payload).encode(), 'application/json', authorization)
+    data, content_type = discord_payload(payload, files if kind == "discord" else ())
+    result = post(url, data, content_type, authorization)
     if not isinstance(result.get('id'), str):
         raise DeliveryError('unknown')
     if kind == 'gmail' and result.get('threadId') != source['source_conversation_id']:

@@ -8,14 +8,57 @@ if (composer) {
   function setMemo(enabled) {
     type.value = enabled ? "memo" : "reply";
     memoToggle.setAttribute("aria-pressed", String(enabled));
-    send.textContent = !enabled && send.hasAttribute('data-retry') ? '다시 보내기' : '전송';
+    send.textContent = enabled ? '메모 저장' : send.hasAttribute('data-retry') ? '다시 보내기' : '전송';
     responseBody.setAttribute("aria-label", enabled ? "내부 메모 내용" : "메시지 내용");
   }
+  const count = document.querySelector("#detail-character-count");
+  function updateCount() {
+    count.textContent = responseBody.value.length.toLocaleString("ko-KR") + " / 2,000";
+  }
+  responseBody.addEventListener("input", updateCount);
+  updateCount();
+  const upload = document.querySelector("#detail-message-upload");
+  const fileList = document.querySelector("#detail-selected-files");
+  function showFiles() {
+    fileList.replaceChildren();
+    Array.from(upload.files).forEach((file, index) => {
+      const row = document.createElement("li");
+      row.append(document.createTextNode(file.name + " "));
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "제거";
+      remove.setAttribute("aria-label", file.name + " 제거");
+      remove.addEventListener("click", () => {
+        const remaining = new DataTransfer();
+        Array.from(upload.files).forEach((entry, position) => {
+          if (position !== index) remaining.items.add(entry);
+        });
+        upload.files = remaining.files;
+        showFiles();
+      });
+      row.append(remove);
+      fileList.append(row);
+    });
+  }
+  upload.addEventListener("change", showFiles);
+  composer.querySelectorAll("[data-emoji]").forEach(button => {
+    button.addEventListener("click", () => {
+      const emoji = button.dataset.emoji;
+      const start = responseBody.selectionStart;
+      const end = responseBody.selectionEnd;
+      if (responseBody.value.length - (end - start) + emoji.length > responseBody.maxLength) return;
+      responseBody.setRangeText(emoji, start, end, "end");
+      button.closest("details").open = false;
+      responseBody.focus();
+      updateCount();
+    });
+  });
   memoToggle?.addEventListener("click", () => setMemo(type.value !== "memo"));
   suggestion?.addEventListener("change", () => {
     if (!suggestion.value) return;
     setMemo(false);
     responseBody.value = suggestion.value;
+    updateCount();
     responseBody.focus();
   });
 }
@@ -94,3 +137,20 @@ if (grip && responseBody) {
     resize(responseBody.offsetHeight + (event.key === 'ArrowUp' ? 16 : -16));
   });
 }
+
+document.querySelectorAll("[data-detail-dialog]").forEach(button => {
+  const dialog = document.getElementById(button.dataset.detailDialog);
+  button.addEventListener("click", () => dialog.showModal());
+  dialog.querySelector("[data-close-dialog]").addEventListener("click", () => dialog.close());
+});
+
+document.querySelectorAll("[data-recipient-search]").forEach(search => {
+  const recipients = document.getElementById(search.dataset.recipientSearch);
+  search.addEventListener("input", () => {
+    const query = search.value.trim().toLocaleLowerCase("ko-KR");
+    for (const option of recipients.options) {
+      option.hidden = Boolean(option.value && !option.textContent.toLocaleLowerCase("ko-KR").includes(query));
+    }
+    if (recipients.selectedOptions[0]?.hidden) recipients.value = "";
+  });
+});

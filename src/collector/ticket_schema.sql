@@ -141,6 +141,15 @@ CREATE TABLE IF NOT EXISTS public.ticket_message (
     created_at timestamptz NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ticket_message_history ON public.ticket_message(ticket_uuid,created_at);
+CREATE TABLE IF NOT EXISTS public.ticket_message_attachment (
+    attachment_uuid uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    ticket_message_uuid uuid NOT NULL REFERENCES public.ticket_message ON DELETE CASCADE,
+    filename text NOT NULL,
+    content_type text NOT NULL,
+    content bytea NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ticket_message_attachment_message
+    ON public.ticket_message_attachment(ticket_message_uuid);
 ALTER TABLE public.ticket_message ADD COLUMN IF NOT EXISTS request_key uuid;
 ALTER TABLE public.ticket_message ADD COLUMN IF NOT EXISTS provider_message_id text;
 CREATE UNIQUE INDEX IF NOT EXISTS ticket_message_request ON public.ticket_message(ticket_uuid,request_key)
