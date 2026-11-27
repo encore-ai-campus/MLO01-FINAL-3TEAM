@@ -47,24 +47,11 @@ def detail(request, ticket_uuid, as_json=False):
         result = desk.detail(ticket_uuid, with_controls=not as_json)
     if as_json:
         return JsonResponse(result, encoder=DeskJSONEncoder)
-    staff = desk.actor["staff_user_uuid"]
-    last_reply = next((row for row in reversed(result["messages"])
-                       if row["message_type"] == "reply" and row["staff_user_uuid"] == staff), None)
-    uncertain = any(row["delivery_status"] in ("sending", "unknown") for row in result["messages"])
-    retry_draft = last_reply["body"] if last_reply and last_reply["delivery_status"] == "failed" and not uncertain else ""
-    conversation = []
-    previous_customer = None
-    for entry in sorted(result["messages"] + result["memos"], key=lambda row: row["created_at"]):
-        customer = entry["sender_type"] == "customer"
-        author = entry["author_name"] if customer else None
-        conversation.append({**entry, "show_avatar": not customer or author != previous_customer})
-        previous_customer = author
     return render(request, "tickets/detail.html", {
-        **result, "conversation": conversation, "actor": desk.actor, "scope": request.GET.get("scope", "all"), "active": "detail",
-        "customer_tickets": sorted(result["customer_tickets"], key=lambda row: row["updated_at"], reverse=True),
+        **result, "actor": desk.actor, "scope": request.GET.get("scope", "all"), "active": "detail",
         "is_assignee": result["ticket"]["assignee_uuid"] == desk.actor["staff_user_uuid"],
         "show_memos": request.GET.get("memos") == "1",
-        "request_key": uuid4(), "retry_draft": retry_draft, "delivery_uncertain": uncertain,
+        "request_key": uuid4(),
     })
 
 

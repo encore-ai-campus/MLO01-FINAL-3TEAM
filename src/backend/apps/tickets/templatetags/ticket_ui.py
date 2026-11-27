@@ -147,8 +147,3 @@ def list_controls(query, options, page, page_size, total):
         "next_sort": orders[(orders.index(sort) + 1) % len(orders)],
         "today": timezone.now().astimezone(KST).date().isoformat(),
     }
-
-
-@register.filter
-def message_time(value):
-    return local_time(value).strftime("%H:%M")
