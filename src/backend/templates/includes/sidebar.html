@@ -30,6 +30,9 @@
         <a class="desk-nav-item desk-nav-subitem" href="{% url 'preferences:index' %}#work">업무 관리</a>
         <a class="desk-nav-item desk-nav-subitem" href="{% url 'preferences:index' %}#hr">인사 관리</a>
       {% endif %}
+      {% if actor.role == "admin" or actor.role == "super_admin" %}
+        <a class="desk-nav-item desk-nav-subitem" href="{% url 'preferences:lineage' %}"{% if request.resolver_match.url_name == "lineage" %} aria-current="page"{% endif %}>데이터 리니지</a>
+      {% endif %}
     </div>
   </details>
 </nav>
