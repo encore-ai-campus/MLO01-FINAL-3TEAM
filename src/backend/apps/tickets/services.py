@@ -55,8 +55,8 @@ class TicketDesk:
         source = repository.summary_source(self._cursor, self.actor["company_uuid"], ticket_uuid)
         if source is None:
             raise DeskError(404, "TICKET_NOT_FOUND", "티켓을 찾을 수 없습니다.")
-        if not source["assignee_uuid"]:
-            raise DeskError(409, "TICKET_UNASSIGNED", "상담사 배정 후 요약을 사용할 수 있습니다.")
+        if source["status"] == "문의 종료":
+            raise DeskError(409, "TICKET_CLOSED", "종료된 문의는 요약할 수 없습니다.")
         if not (source["body"] or "").strip():
             raise DeskError(422, "TICKET_BODY_EMPTY", "요약할 고객 문의 본문이 없습니다.")
         return source

@@ -105,8 +105,8 @@ def detail(cursor, company_uuid, ticket_uuid, include_memos=False, *, for_page=F
 
 
 def summary_source(cursor, company_uuid, ticket_uuid):
-    cursor.execute("""
-        SELECT t.assignee_uuid, ch.type AS channel, COALESCE(
+    cursor.execute(f"""
+        SELECT {STATUS_SQL} AS status, ch.type AS channel, COALESCE(
             (SELECT h.model_text FROM voc.model_text_history h
              WHERE h.company_uuid=t.company_uuid AND h.event_id=t.source_event_id
              ORDER BY h.body_version DESC, h.preprocess_version DESC LIMIT 1),
