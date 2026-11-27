@@ -1,0 +1,6 @@
+{
+  "string": ["feature_uuid", "domain_uuid", "ticket_uuid", "bronze_event_id", "silver_event_id", "source_conversation", "seed_ref", "title", "body", "text_sha256", "calculation_version", "calculation_sources", "sentiment_label_uuid", "sentiment_value", "sentiment_evidence", "category_label_uuid", "category_uuid", "category_evidence"],
+  "timestamp[us, tz=UTC]": ["received_at", "available_at", "as_of_at"],
+  "int64": ["silver_schema_version", "body_version", "preprocess_version", "unresolved_count"],
+  "double": ["avg_first_reply_7d_seconds"]
+}

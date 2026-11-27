@@ -314,6 +314,7 @@ CREATE TABLE IF NOT EXISTS voc.model_version (
     artifact_ref text NOT NULL,
     UNIQUE(model_name,registry_version)
 );
+ALTER TABLE voc.training_run ADD COLUMN IF NOT EXISTS review_counts jsonb NOT NULL DEFAULT '{}';
 
 CREATE TABLE IF NOT EXISTS voc.training_progress (
     workflow_ref text NOT NULL,

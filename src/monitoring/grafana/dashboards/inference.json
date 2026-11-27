@@ -67,7 +67,7 @@
         {
           "refId": "A",
           "rawQuery": true,
-          "rawSql": "\nWITH samples AS (\n  SELECT * FROM voc_monitor.inference WHERE api='classification' AND rollout='stable' AND model_name IS NOT NULL AND model_version IS NOT NULL AND traffic='operational'\n  AND ended_at IS NOT NULL AND started_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n)\nSELECT nullif(count(*),0) AS \"호출\",\n       round(count(*) FILTER(WHERE error IS NOT NULL)*100.0/nullif(count(*),0),2) AS \"오류율 (%)\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY extract(epoch FROM (ended_at-started_at))*1000)::numeric,1) AS \"워커 처리 P95 (ms)\"\nFROM samples\n",
+          "rawSql": "\nWITH samples AS (\n  SELECT * FROM voc_monitor.inference WHERE api='classification' AND rollout='stable' AND traffic='operational'\n  AND ended_at IS NOT NULL AND started_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n)\nSELECT nullif(count(*),0) AS \"호출\",\n       round(count(*) FILTER(WHERE error IS NOT NULL)*100.0/nullif(count(*),0),2) AS \"오류율 (%)\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY extract(epoch FROM (ended_at-started_at))*1000)::numeric,1) AS \"워커 처리 P95 (ms)\"\nFROM samples\n",
           "format": "table",
           "editorMode": "code"
         }
@@ -105,7 +105,7 @@
         {
           "refId": "A",
           "rawQuery": true,
-          "rawSql": "\nWITH samples AS (\n  SELECT * FROM voc_monitor.inference WHERE api='classification' AND rollout='canary' AND model_name IS NOT NULL AND model_version IS NOT NULL AND traffic='operational'\n  AND ended_at IS NOT NULL AND started_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n)\nSELECT nullif(count(*),0) AS \"호출\",\n       round(count(*) FILTER(WHERE error IS NOT NULL)*100.0/nullif(count(*),0),2) AS \"오류율 (%)\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY extract(epoch FROM (ended_at-started_at))*1000)::numeric,1) AS \"워커 처리 P95 (ms)\"\nFROM samples\n",
+          "rawSql": "\nWITH samples AS (\n  SELECT * FROM voc_monitor.inference WHERE api='classification' AND rollout='canary' AND traffic='operational'\n  AND ended_at IS NOT NULL AND started_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n)\nSELECT nullif(count(*),0) AS \"호출\",\n       round(count(*) FILTER(WHERE error IS NOT NULL)*100.0/nullif(count(*),0),2) AS \"오류율 (%)\",\n       round(percentile_cont(0.95) WITHIN GROUP(ORDER BY extract(epoch FROM (ended_at-started_at))*1000)::numeric,1) AS \"워커 처리 P95 (ms)\"\nFROM samples\n",
           "format": "table",
           "editorMode": "code"
         }
@@ -432,6 +432,14 @@
       "includeVars": false,
       "keepTime": true,
       "tooltip": "카나리 배포"
+    },
+    {
+      "type": "link",
+      "title": "모델 운영 기록",
+      "url": "/d/voc-model-guard/model-guard",
+      "includeVars": false,
+      "keepTime": true,
+      "tooltip": "모델 운영 기록"
     }
   ],
   "templating": {

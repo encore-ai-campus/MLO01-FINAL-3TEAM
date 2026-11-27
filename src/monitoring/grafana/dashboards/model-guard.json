@@ -1,0 +1,236 @@
+{
+  "uid": "voc-model-guard",
+  "title": "모델 운영 기록",
+  "tags": [
+    "VoC"
+  ],
+  "schemaVersion": 41,
+  "version": 1,
+  "editable": false,
+  "refresh": "15s",
+  "timezone": "Asia/Seoul",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "후보 트래픽과 자동 복귀",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집"
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "voc-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawQuery": true,
+          "rawSql": "\nSELECT candidate_version AS \"후보\",stable_version AS \"기존\", configured_percent AS \"설정 (%)\",\n       effective_percent AS \"실제 배정 (%)\",distinct_failures AS \"연속 실패 문의\",\n       CASE WHEN tripped_at IS NULL THEN '감시 중' ELSE '자동 복귀 완료' END AS \"상태\",\n       CASE reason WHEN 'consecutive_failures' THEN '서로 다른 문의 3건 연속 실패' WHEN 'candidate_error_rate' THEN '후보 오류율 초과'\n            WHEN 'candidate_p95' THEN '후보 p95 초과' END AS \"복귀 사유\",\n       first_failure_at AS \"최초 실패\",tripped_at AS \"복귀 시각\",recovery_ms AS \"최초 실패부터 복귀 (ms)\"\nFROM voc_monitor.rollout WHERE company_uuid::text=${company:sqlstring} AND scope_key=${scope:sqlstring} ORDER BY tripped_at DESC NULLS FIRST,candidate_version",
+          "format": "table",
+          "editorMode": "code"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "저장된 회사 기준",
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 24,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집"
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "voc-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawQuery": true,
+          "rawSql": "\nSELECT revision AS \"개정\", settings->>'min_calls' AS \"최소 완료 호출\",settings->>'error_limit' AS \"오류율 상한 (%)\",\n       settings->>'latency_limit' AS \"p95 상한 (기존 대비 배)\",settings->>'absolute_p95' AS \"p95 절대 상한 (ms)\",\n       settings->>'cost_limit' AS \"비용 상한 (원/1,000건)\",updated_at AS \"저장 시각\"\nFROM voc_monitor.review_policy WHERE company_uuid::text=${company:sqlstring} AND scope_key=${scope:sqlstring}",
+          "format": "table",
+          "editorMode": "code"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "호출·응답시간 30분 / 비용 7일",
+      "gridPos": {
+        "x": 0,
+        "y": 11,
+        "w": 24,
+        "h": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집"
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "voc-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawQuery": true,
+          "rawSql": "\nWITH samples AS (SELECT *,started_at>$__timeTo()::timestamptz-interval '30 minutes' AS recent FROM voc_monitor.inference\n    WHERE company_uuid::text=${company:sqlstring} AND scope_key=${scope:sqlstring} AND started_at>$__timeTo()::timestamptz-interval '7 days' AND ended_at<=$__timeTo()::timestamptz)\nSELECT rollout AS \"배정 경로\",assigned_version AS \"배정 버전\",traffic AS \"출처\",count(*) FILTER (WHERE recent) AS \"종료 호출\",\n       count(*) FILTER (WHERE recent AND error IS NOT NULL) AS \"실패\",\n       CASE WHEN count(response_ms) FILTER (WHERE recent)=count(*) FILTER (WHERE recent)\n            THEN round((percentile_cont(.95) WITHIN GROUP (ORDER BY response_ms) FILTER (WHERE recent))::numeric,2) END AS \"HTTP p95 (ms)\",\n       CASE WHEN count(cost_krw)=count(*) THEN round(avg(cost_krw)*1000,2) END AS \"비용 (원/1,000건)\"\nFROM samples GROUP BY 1,2,3",
+          "format": "table",
+          "editorMode": "code"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "VOC 수집과 모델 호출 기록",
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 24,
+        "h": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "미수집"
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "voc-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawQuery": true,
+          "rawSql": "\nSELECT i.ticket_number AS \"티켓\",i.event_id::text AS \"수집 ID\",r.channel AS \"채널\",r.reconciliation AS \"원본·티켓 대조\",\n       i.rollout AS \"배정\",i.assigned_version AS \"배정 버전\",i.model_version AS \"응답 버전\",i.prediction AS \"분류\",\n       i.error AS \"오류\",round(i.response_ms::numeric,2) AS \"HTTP 시간 (ms)\",i.started_at AS \"호출 시각\"\nFROM voc_monitor.inference i JOIN voc_monitor.source_reconciliation r USING(event_id)\nWHERE company_uuid::text=${company:sqlstring} AND scope_key=${scope:sqlstring} AND i.started_at BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz ORDER BY i.started_at DESC LIMIT 200",
+          "format": "table",
+          "editorMode": "code"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    }
+  ],
+  "links": [
+    {
+      "type": "link",
+      "title": "파이프라인",
+      "url": "/d/voc-pipeline/pipeline",
+      "includeVars": false,
+      "keepTime": true,
+      "tooltip": "파이프라인"
+    },
+    {
+      "type": "link",
+      "title": "AI 추론",
+      "url": "/d/voc-inference/inference",
+      "includeVars": false,
+      "keepTime": true,
+      "tooltip": "AI 추론"
+    },
+    {
+      "type": "link",
+      "title": "카나리 배포",
+      "url": "/d/voc-deployment/deployment",
+      "includeVars": false,
+      "keepTime": true,
+      "tooltip": "카나리 배포"
+    },
+    {
+      "type": "link",
+      "title": "모델 운영 기록",
+      "url": "/d/voc-model-guard/model-guard",
+      "includeVars": false,
+      "keepTime": true,
+      "tooltip": "모델 운영 기록"
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "type": "query",
+        "name": "company",
+        "label": "회사",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "voc-postgres"
+        },
+        "query": "SELECT DISTINCT company_name AS __text,company_uuid::text AS __value\n        FROM voc_monitor.review_scopes ORDER BY 1",
+        "definition": "SELECT DISTINCT company_name AS __text,company_uuid::text AS __value\n        FROM voc_monitor.review_scopes ORDER BY 1",
+        "refresh": 1,
+        "multi": false,
+        "includeAll": false
+      },
+      {
+        "type": "query",
+        "name": "scope",
+        "label": "판정 업무",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "voc-postgres"
+        },
+        "query": "SELECT scope_name AS __text,scope_key AS __value\n        FROM voc_monitor.review_scopes WHERE company_uuid::text=${company:sqlstring} ORDER BY scope_key DESC",
+        "definition": "SELECT scope_name AS __text,scope_key AS __value\n        FROM voc_monitor.review_scopes WHERE company_uuid::text=${company:sqlstring} ORDER BY scope_key DESC",
+        "refresh": 1,
+        "multi": false,
+        "includeAll": false
+      }
+    ]
+  }
+}

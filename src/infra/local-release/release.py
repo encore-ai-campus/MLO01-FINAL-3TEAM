@@ -1,7 +1,6 @@
 """Apply the verified checkout to the existing VoC demo on Docker Desktop."""
 import contextlib
 import copy
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -135,7 +134,7 @@ def release_models(previous, sha, changed, undo):
 
 
 def release_training(sha, changed, undo):
-    if not changed("src/ml/training", "src/ml/serving/voc_models", "src/workers/classification/online_features.py",
+    if not changed("src/ml/training", "src/contracts/training-snapshot.json", "src/ml/serving/voc_models", "src/workers/classification/online_features.py",
                    "src/infra/argo-workflows"):
         return
     previous = kube(TRAIN, "workflowtemplate", TRAIN)
@@ -181,9 +180,10 @@ def pipeline(sha, changed, directory, undo):
     services = profile["services"]
     deploy = []
     if collector:
-        schema_files = [f"src/collector/{s}.sql" for s in ("schema","ticket_schema","training_schema",
-                        "channel_intake_schema","settings_schema","followup_schema")]
-        migrate([f for f in schema_files if changed(f)])
+        manifest = "src/collector/schema-order.txt"
+        schema_files = ["src/" + path for path in (ROOT / manifest).read_text().splitlines() if path]
+        if changed(manifest, *schema_files):
+            migrate(schema_files)
         tag = f"voc-collector:develop-{sha[:12]}"
         build(tag, "src/collector/Dockerfile", "src")
         for name in ("discord", "gmail", "publish", "db-worker"):
@@ -232,6 +232,38 @@ def pipeline(sha, changed, directory, undo):
     compose(file, *deploy)
 
 
+def configure_training_services(profile, tag, directory):
+    services = profile["services"]
+    web = services["web"]
+    env = web.setdefault("environment", {})
+    # Existing installation credentials stay in their local files.
+    read_env = LIVE / "training-read.env"
+    if read_env.is_file():
+        files = web.setdefault("env_file", [])
+        if not any((item if isinstance(item, str) else item["path"]) == str(read_env) for item in files):
+            files.append(str(read_env))
+        for key in ("MLFLOW_S3_ENDPOINT_URL", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+                    "AWS_SESSION_TOKEN", "AWS_DEFAULT_REGION", "VOC_GRAFANA_URL"):
+            if not env.get(key):
+                env.pop(key, None)
+    target = "/config/ticats-training-domains.json"
+    if env.get("VOC_TRAINING_DOMAINS_FILE") in (None, "", target):
+        mapping = kube(TRAIN, "configmap", "voc-training-domains")["data"]["domains.json"]
+        path = directory / "training-domains.json"
+        put(path, json.loads(mapping))
+        volumes = web.setdefault("volumes", [])
+        volumes[:] = [v for v in volumes if not (isinstance(v, dict) and v.get("target") == target)]
+        volumes.append({"type": "bind", "source": str(path), "target": target, "read_only": True})
+        env["VOC_TRAINING_DOMAINS_FILE"] = target
+    scheduler = services.setdefault("retraining-scheduler", {})
+    for key in ("environment", "env_file", "secrets", "volumes", "networks", "extra_hosts", "working_dir", "user"):
+        if key in web:
+            scheduler[key] = copy.deepcopy(web[key])
+    scheduler.update(command=["python", "manage.py", "run_retraining_scheduler"], restart="unless-stopped", init=True)
+    for name in ("web", "assign", "retraining-scheduler"):
+        services[name]["image"] = tag
+
+
 def verify():
     run("docker","exec",WEB,"python","manage.py","check")
     # Call the same registry, tenant dataset query and authenticated Argo API as the web view.
@@ -249,6 +281,9 @@ for (company,) in companies:
     recent_workflows(company)
 print('MLflow, evaluation set and Argo API OK')"""
     run("docker","exec",WEB,"python","manage.py","shell","-v","0","-c",probe)
+    running = read("docker","compose","-f",PROFILE,"ps","--status","running","--services").splitlines()
+    if "retraining-scheduler" not in running:
+        raise RuntimeError("Retraining scheduler is not running")
     # Check both live routes directly, using synthetic text without creating a ticket.
     domain = read("docker", "exec", "encore-voc-collector-postgres-1", "psql", "-XAt", "-U", "voc", "-d", "voc",
                   "-c", "SELECT c.domain_uuid FROM public.company c JOIN public.staff_user s USING(company_uuid) "
@@ -302,13 +337,14 @@ def main(previous, sha):
         release_models(previous, sha, changed, undo)
         release_training(sha, changed, undo)
         profile = json.loads(PROFILE.read_bytes())
-        # Preserve session secrets, MLflow URLs, Argo token mounts, networks and assignment configuration.
-        for service in ("web","assign"):
-            profile["services"][service]["image"] = tag
-        undo.callback(compose, PROFILE, "web","assign")
+        existing = [name for name in ("web","assign","retraining-scheduler") if name in profile["services"]]
+        configure_training_services(profile, tag, directory)
+        undo.callback(compose, PROFILE, *existing)
         undo.callback(atomic, PROFILE, PROFILE.read_bytes())
         put(PROFILE, profile)
-        compose(PROFILE, "web","assign")
+        if "retraining-scheduler" not in existing:
+            undo.callback(run,"docker","compose","-f",PROFILE,"rm","--stop","--force","retraining-scheduler")
+        compose(PROFILE, "web","assign","retraining-scheduler")
         verify()
         if read("docker","inspect","-f",'{{index .Config.Labels "org.opencontainers.image.revision"}}',WEB) != sha:
             raise RuntimeError("Unexpected running revision")
@@ -327,6 +363,7 @@ if __name__ == "__main__":
     if sys.argv[1:] == ["verify"]:
         verify()
     else:
+        import fcntl
         with (LIVE / ".deploy-web.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             main(*sys.argv[1:])

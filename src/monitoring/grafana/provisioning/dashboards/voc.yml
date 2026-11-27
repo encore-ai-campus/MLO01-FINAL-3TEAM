@@ -5,6 +5,7 @@ providers:
     folder: VoC 모니터링
     type: file
     disableDeletion: true
+    updateIntervalSeconds: 15
     allowUiUpdates: false
     options:
       path: /etc/grafana/dashboards

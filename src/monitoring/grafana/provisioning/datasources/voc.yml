@@ -3,12 +3,12 @@ datasources:
   - name: 문의 처리 기록
     uid: voc-postgres
     type: grafana-postgresql-datasource
-    url: postgres:5432
+    url: $VOC_MONITOR_DB_HOST
     user: voc_monitor_reader
     secureJsonData:
       password: $MONITOR_READER_PASSWORD
     jsonData:
-      database: voc
+      database: $VOC_MONITOR_DB_NAME
       postgresVersion: 1600
       sslmode: disable
       maxOpenConns: 4

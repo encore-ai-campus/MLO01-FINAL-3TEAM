@@ -19,7 +19,21 @@
 .training-summary { margin-top: 12px; padding-top: 10px; }
 .training-summary p, .training-run-name { overflow-wrap: anywhere; }
 .training-links { display: flex; flex-wrap: wrap; gap: 8px; }
-.training-links:not(:empty) { margin-top: 12px; }
+.training-footer { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 8px 16px; }
+.training-links:not(:empty), .training-stop { margin-top: 14px; }
+.training-stop { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px 12px; margin-inline-start: auto; }
+.training-stop[hidden], .training-stop button[hidden] { display: none; }
+.training-stop-state { margin: 0; color: var(--desk-muted); font-size: 13px; text-align: end; overflow-wrap: anywhere; }
+.training-stop-state:empty { display: none; }
+.training-stop-button { color: #96362e; border-color: #d9aaa6; background: var(--paper); }
+.training-stop-button:hover { background: #fcf1ef; }
+.training-stop-dialog { width: min(400px, calc(100% - 32px)); padding: 24px; border: 1px solid var(--desk-line); border-radius: 14px; color: var(--heading); background: var(--paper); }
+.training-stop-dialog::backdrop { background: rgb(0 0 0 / 34%); }
+.training-stop-dialog h2 { margin: 0; font-size: 20px; }
+.training-stop-dialog p { margin: 10px 0 22px; color: var(--desk-muted); line-height: 1.6; }
+.training-stop-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.training-stop-confirm { background: #a63730; border-color: #a63730; color: #fff; }
+.training-stop-confirm:hover { background: #872d27; }
 .training-history-list { list-style: none; padding: 0; margin: 0; }
 .training-history-list li { padding: 8px 0; border-top: 1px solid var(--desk-line); }
 .training-history-list a { color: var(--heading); text-decoration: underline; }

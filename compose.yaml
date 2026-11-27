@@ -140,7 +140,24 @@ services:
     restart: unless-stopped
     init: true
     environment:
-      DATABASE_URL: postgresql://voc@postgres/voc
+      <<: &training-environment
+        DATABASE_URL: postgresql://voc@postgres/voc
+        ARGO_WORKFLOWS_URL:
+        ARGO_WORKFLOWS_TOKEN:
+        ARGO_WORKFLOWS_NAMESPACE:
+        MLFLOW_TRACKING_URI:
+        MLFLOW_TRACKING_TOKEN:
+        MLFLOW_S3_ENDPOINT_URL:
+        AWS_ACCESS_KEY_ID:
+        AWS_SECRET_ACCESS_KEY:
+        AWS_SESSION_TOKEN:
+        AWS_DEFAULT_REGION:
+        VOC_TRAINING_DOMAINS_FILE:
+        VOC_GRAFANA_URL:
+        VOC_TRAINING_MODEL_NAME:
+      ARGO_WORKFLOWS_UI_URL:
+      MLFLOW_UI_URL:
+      MINIO_CONSOLE_URL:
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,[::1],ticket-desk}
       TASK3_REPLY_CONNECTIONS:
       VOC_ASSIGNMENT_WORKER_TOKEN:
@@ -152,6 +169,16 @@ services:
       interval: 15s
       timeout: 5s
       retries: 4
+  retraining-scheduler:
+    build:
+      context: ./src
+      dockerfile: backend/Dockerfile
+    command: ["python", "manage.py", "run_retraining_scheduler"]
+    restart: unless-stopped
+    init: true
+    environment: *training-environment
+    secrets: [postgres_password, django_secret_key]
+    depends_on: *initialized
   jobmanager:
     <<: *flink
     command: ["standalone-job","--job-classname","voc.StandardizeJob"]

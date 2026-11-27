@@ -44,7 +44,7 @@ def load():
 def load_checkpoint(model_path, domain_map, kinds=("sentiment", "category")):
     """Load a fine-tuned shared BERT checkpoint and return a stateless predictor."""
     import torch
-    from transformers import AutoTokenizer
+    from transformers import AutoConfig, AutoTokenizer
 
     from .voc_multitask_bert import VocMultitaskBert
 
@@ -52,11 +52,16 @@ def load_checkpoint(model_path, domain_map, kinds=("sentiment", "category")):
     if not (model_path / "config.json").is_file():
         raise ValueError("MODEL_PATH must point to a saved local multitask model directory")
 
-    model, loading = VocMultitaskBert.from_pretrained(
-        model_path, local_files_only=True, use_safetensors=True, output_loading_info=True
-    )
-    if loading["missing_keys"] or loading["mismatched_keys"]:
-        raise ValueError("Checkpoint has no complete set of trained model weights")
+    config = AutoConfig.from_pretrained(model_path, local_files_only=True)
+    if config.model_type == "modernbert":
+        from .voc_multitask_ax import VocMultitaskAX
+        model = VocMultitaskAX(model_path, config)
+    else:
+        model, loading = VocMultitaskBert.from_pretrained(
+            model_path, local_files_only=True, use_safetensors=True, output_loading_info=True
+        )
+        if loading["missing_keys"] or loading["mismatched_keys"]:
+            raise ValueError("Checkpoint has no complete set of trained model weights")
     if set(model.task_labels["sentiment"]) != set(SENTIMENT_CODES):
         raise ValueError("Checkpoint must support the existing three sentiment classes")
     model.to("cpu").eval()

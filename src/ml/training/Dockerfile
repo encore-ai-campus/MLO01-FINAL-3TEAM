@@ -7,6 +7,7 @@ COPY src/ml/training/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.9.1 \
     && pip install --no-cache-dir -r /tmp/requirements.txt
 COPY src/ml/training/ /app/src/ml/training/
+COPY src/contracts/training-snapshot.json /app/src/contracts/
 COPY src/ml/serving/voc_models/ /app/src/ml/serving/voc_models/
 COPY src/workers/classification/online_features.py /app/src/workers/classification/online_features.py
 USER 10001:10001

@@ -3,18 +3,18 @@ from uuid import uuid4
 
 from django import forms
 from django.conf import settings
-from django.db import connection
 from django.http import JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
-from django.views.decorators.http import require_GET, require_http_methods
+from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
 from apps.accounts.presentation.views import session_token
 from apps.accounts.services import current_actor
 from config.http import DeskError
 
 from .. import training
+from ..training_inputs import evaluation_sets
 from ..training_status import OVERALL, points, project
 
 
@@ -33,16 +33,6 @@ class TrainingForm(forms.Form):
         if value > timezone.now():
             raise forms.ValidationError("현재 시각 이전으로 지정해 주세요.")
         return value
-
-
-def evaluation_sets(company):
-    with connection.cursor() as cursor:
-        cursor.execute("""
-            SELECT dataset_version,row_count FROM voc.training_dataset
-            WHERE company_uuid=%s AND purpose='eval' AND finalized_at IS NOT NULL
-            ORDER BY finalized_at DESC, dataset_version DESC
-        """, (company,))
-        return [(version, f"{version} ({count}건)") for version, count in cursor.fetchall()]
 
 
 def training_actor(request):
@@ -90,6 +80,9 @@ def page(request):
         return render(request, template, context, status=400)
     try:
         workflow_name = training.submit(actor, form.cleaned_data)
+    except training.TrainingBusy as error:
+        form.add_error(None, str(error))
+        return render(request, template, context, status=409)
     except (OSError, ValueError, KeyError) as error:
         message = "Argo에서 실행을 확인하지 못했습니다. 같은 입력으로 다시 시도해 주세요."
         if isinstance(error, HTTPError) and error.code in (401, 403):
@@ -135,3 +128,15 @@ def status(request, workflow_name):
         return JsonResponse(training.snapshot(workflow_name, actor["company_uuid"]))
     except (OSError, ValueError, KeyError):
         return JsonResponse({"error": "상태 조회 지연"}, status=503)
+
+
+@require_POST
+def stop(request, workflow_name):
+    try:
+        actor = training_actor(request)
+        state = training.request_stop(actor, workflow_name)
+    except DeskError as exc:
+        return JsonResponse({"error": exc.message, "code": exc.code}, status=exc.status)
+    except (OSError, ValueError, KeyError):
+        return JsonResponse({"error": "학습 실행을 확인하지 못했습니다. 다시 시도해 주세요."}, status=503)
+    return JsonResponse({"stop": state}, status=202 if state["state"] == "requested" else 200)

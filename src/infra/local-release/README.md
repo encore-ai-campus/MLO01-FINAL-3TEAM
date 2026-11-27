@@ -15,6 +15,7 @@ python3 src/infra/local-release/install.py /Users/2eelogan/project/mlo-01-final-
 ## 배포 범위
 
 - Django 웹과 배정 워커는 검증한 커밋으로 빌드한 이미지를 사용한다. 기존 Compose의 MLflow 주소, Argo 서비스 계정 토큰 마운트, DB·업무 채널 설정을 보존한다.
+- 재학습 예약 실행기는 같은 웹 이미지와 연결 설정을 사용한다. 웹과 예약 실행기에는 평가셋과 시작 모델 버킷에 대한 읽기 권한이 필요하다. 기존 웹 환경에서 제공하거나 `web.json` 옆 `training-read.env`에 MinIO 주소(`MLFLOW_S3_ENDPOINT_URL`), 읽기 전용 자격 증명과 브라우저에서 열 수 있는 `VOC_GRAFANA_URL`을 설정한다. 로컬 자격 증명 파일은 해당 사용자만 읽을 수 있도록 보관한다. 학습 도메인은 Argo의 `voc-training-domains` 설정을 읽기 전용으로 연결한다. 새 회사의 자동 예약 기본값은 꺼짐이다.
 - 실모델 분류 앱은 동일 커밋의 Helm 차트를 Argo CD가 동기화한다. 기존 회사, 모델 가중치와 DB Secret을 사용한다. 추론 또는 워커 소스 변경 시 해당 이미지를 빌드해 k3d 노드에 넣는다. 라우팅 정책은 `values-klue.json`에서 관리한다.
 - 학습 소스나 WorkflowTemplate이 변경되면 CPU 학습 이미지를 교체하고 템플릿을 적용한다. Feast의 로컬 SQL 작업은 `voc_training_scratch` 스키마를 쓴다. 진행 중인 학습이 있으면 다음 확인 주기에 배포한다. 병합 자체가 학습이나 후보 모델 승격을 시작하지 않는다.
 - 수집·Flink·모니터링 소스 변경 시 해당 Compose 서비스를 갱신한다. 기존 데이터 볼륨과 자격 증명을 쓴다. 호환되는 버전의 DB 변경은 트랜잭션으로 반영한다. 데이터 삭제나 비호환 마이그레이션은 별도 전환 절차가 필요하다.
