@@ -232,4 +232,4 @@ def _save_dataset(cn, company, purpose, rows):
         return cn.execute("""
             UPDATE voc.training_dataset SET sha256=%s,row_count=%s,finalized_at=clock_timestamp()
             WHERE dataset_id=%s RETURNING *
-        """, (checksum(contents), len(rows), dataset["dataset_uuid"])).fetchone(), reused
+        """, (checksum(contents), len(rows), dataset["dataset_id"])).fetchone(), reused

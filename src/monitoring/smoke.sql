@@ -5,7 +5,7 @@ BEGIN
     ASSERT has_table_privilege(current_user, 'voc_monitor.diagnostics', 'SELECT');
     ASSERT NOT EXISTS (
         SELECT FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-        WHERE (n.nspname,c.relname) IN (('voc','bronze_messages'),('voc','silver_messages'),
+        WHERE (n.nspname,c.relname) IN (('voc','bronze_message'),('voc','silver_message'),
                                        ('public','ticket'),('public','ticket_message'))
           AND has_table_privilege(current_user,c.oid,'SELECT')
     );
