@@ -105,8 +105,8 @@ class LineageDatabaseTests(TestCase):
         with closing(psycopg2.connect(cls.dsn)) as conn, conn.cursor() as c:
             c.execute("""
                 CREATE SCHEMA voc;
-                CREATE TABLE company(company_id uuid, name text, email_domain text);
-                CREATE TABLE ticket(ticket_id uuid, company_id uuid, ticket_number text, title text,
+                CREATE TABLE public.company(company_id uuid, name text, email_domain text);
+                CREATE TABLE public.ticket(ticket_id uuid, company_id uuid, ticket_number text, title text,
                     created_at timestamptz DEFAULT now(), source_event_id uuid, sentiment_status text, category_status text);
                 CREATE TABLE voc.bronze_message(event_id uuid, source_company_id text, source_channel_type text, source_connection_id text,
                     source_message_id text, received_at timestamptz DEFAULT now(), raw_payload_json jsonb DEFAULT '{}');
@@ -124,8 +124,8 @@ class LineageDatabaseTests(TestCase):
                 CREATE TABLE voc.model_version(workflow_ref text, model_name text, registry_version integer);
             """)
             for company, event, title in ((cls.company, cls.event, "내 회사"), (cls.foreign, cls.foreign_event, "다른 회사")):
-                c.execute("INSERT INTO company VALUES (%s,%s,'example.test')", (company, title))
-                c.execute("INSERT INTO ticket(ticket_id,company_id,ticket_number,title,source_event_id) VALUES (%s,%s,'00000012',%s,%s)",
+                c.execute("INSERT INTO public.company VALUES (%s,%s,'example.test')", (company, title))
+                c.execute("INSERT INTO public.ticket(ticket_id,company_id,ticket_number,title,source_event_id) VALUES (%s,%s,'00000012',%s,%s)",
                           (str(uuid4()), company, title, event))
                 c.execute("INSERT INTO voc.bronze_message(event_id,source_message_id,source_channel_type) VALUES (%s,%s,'gmail')", (event, title))
                 feature, dataset = str(uuid4()), str(uuid4())

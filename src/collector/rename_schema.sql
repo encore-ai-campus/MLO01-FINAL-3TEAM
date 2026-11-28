@@ -42,10 +42,7 @@ BEGIN
         ('public.event_type', 'TABLE', ARRAY['event_type_uuid:event_type_id']),
         ('public.followup_contact', 'TABLE', ARRAY['contact_uuid:contact_id','company_uuid:company_id','ticket_uuid:ticket_id','chat_uuid:chat_id','created_by_uuid:created_by_id','assignee_uuid:assignee_id','completed_by_uuid:completed_by_id']),
         ('public.followup_track', 'TABLE', ARRAY['company_uuid:company_id','staff_user_uuid:staff_user_id','ticket_uuid:ticket_id']),
-        ('public.messenger_destination', 'TABLE', ARRAY['company_uuid:company_id','team_uuid:team_id','staff_user_uuid:staff_user_id','channel:messenger_channel']),
         ('public.permission', 'TABLE', ARRAY['permission_uuid:permission_id']),
-        ('public.quick_reply', 'TABLE', ARRAY['reply_uuid:reply_id','company_uuid:company_id','owner_uuid:owner_id','team_uuid:team_id','domain_uuid:domain_id','category_uuid:category_id']),
-        ('public.staff_assignment_policy', 'TABLE', ARRAY['company_uuid:company_id','staff_user_uuid:staff_user_id','enabled:is_enabled']),
         ('public.staff_permission', 'TABLE', ARRAY['staff_user_uuid:staff_user_id','permission_uuid:permission_id']),
         ('public.staff_session', 'TABLE', ARRAY['staff_user_uuid:staff_user_id']),
         ('public.staff_user', 'TABLE', ARRAY['staff_user_uuid:staff_user_id','company_uuid:company_id','team_uuid:team_id','display_preferences:display_preferences_json']),
@@ -86,6 +83,15 @@ BEGIN
         ('voc.training_stop_request', 'TABLE', ARRAY['company_uuid:company_id']),
         ('voc.training_ticket_baseline', 'TABLE', ARRAY['ticket_uuid:ticket_id'])
     ) AS relations(name,kind,columns)
+    UNION ALL
+    -- Settings tables were created in the installer's first schema.
+    SELECT schema_name || '.' || settings.name, 'TABLE', settings.columns
+    FROM (VALUES
+        ('messenger_destination', ARRAY['company_uuid:company_id','team_uuid:team_id','staff_user_uuid:staff_user_id','channel:messenger_channel']),
+        ('quick_reply', ARRAY['reply_uuid:reply_id','company_uuid:company_id','owner_uuid:owner_id','team_uuid:team_id','domain_uuid:domain_id','category_uuid:category_id']),
+        ('staff_assignment_policy', ARRAY['company_uuid:company_id','staff_user_uuid:staff_user_id','enabled:is_enabled'])
+    ) AS settings(name,columns)
+    CROSS JOIN (VALUES ('voc'), ('public')) AS schemas(schema_name)
     LOOP
         relation := to_regclass(target.name);
         IF relation IS NULL THEN
